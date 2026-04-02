@@ -87,11 +87,22 @@
 		{ length: skeletonRowCount },
 		(_, index) => index,
 	);
+	let editingCellHasPendingChange = $derived.by(() => {
+		if (!editingCell) return false;
+		const { rowId, column } = editingCell;
+		const row = displayResult.rows.find(
+			(item) => String(item['_querycastle_ctid'] ?? '') === rowId,
+		);
+		if (!row) return false;
+		const nextValue = coerceValue(editDraft, sampleValue(column));
+		return !valuesEqual(nextValue, row[column]);
+	});
 	let hasPendingChanges = $derived.by(
 		() =>
 			pendingUpdates.size > 0 ||
 			pendingDeletes.size > 0 ||
-			pendingInserts.length > 0,
+			pendingInserts.length > 0 ||
+			editingCellHasPendingChange,
 	);
 
 	function quoteIdent(value: string) {
@@ -406,6 +417,7 @@
 
 	async function syncChanges() {
 		if (!resultContext || !onApplyTableChanges || !hasPendingChanges) return;
+		if (editingCell) commitEdit();
 		syncingChanges = true;
 		syncError = '';
 		try {
