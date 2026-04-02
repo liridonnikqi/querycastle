@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount } from "svelte";
+	import { onDestroy, onMount } from 'svelte';
 	import type {
 		ApplyTableChangesResult,
 		ConnectionInput,
@@ -7,15 +7,15 @@
 		DatabaseExplorer,
 		QueryResultPayload,
 		TableChangesPayload,
-	} from "./lib/rpc";
-	import { rpc } from "./lib/rpc-client";
-	import type { QueryHistoryItem, SavedQueryItem } from "./lib/types";
-	import SqlEditor from "./components/SqlEditor.svelte";
-	import ExplorerSidebar from "./components/ExplorerSidebar.svelte";
-	import ResultsPane from "./components/ResultsPane.svelte";
-	import ConnectionHub from "./components/ConnectionHub.svelte";
-	import ConnectionModal from "./components/ConnectionModal.svelte";
-	import { format as formatSql } from "sql-formatter";
+	} from './lib/rpc';
+	import { rpc } from './lib/rpc-client';
+	import type { QueryHistoryItem, SavedQueryItem } from './lib/types';
+	import SqlEditor from './components/SqlEditor.svelte';
+	import ExplorerSidebar from './components/ExplorerSidebar.svelte';
+	import ResultsPane from './components/ResultsPane.svelte';
+	import ConnectionHub from './components/ConnectionHub.svelte';
+	import ConnectionModal from './components/ConnectionModal.svelte';
+	import { format as formatSql } from 'sql-formatter';
 	import {
 		Database,
 		Plus,
@@ -26,18 +26,15 @@
 		ChevronRight,
 		Star,
 		Trash2,
-	} from "@lucide/svelte";
+	} from '@lucide/svelte';
 
-	const SAVED_CONNECTIONS_KEY = "querycastle.savedConnections.v1";
-	const QUERY_TABS_KEY = "querycastle.queryTabs.v2";
-	const QUERY_FAVORITES_KEY = "querycastle.queryFavorites.v1";
-	const QUERY_HISTORY_KEY = "querycastle.queryHistory.v1";
+	const SAVED_CONNECTIONS_KEY = 'querycastle.savedConnections.v1';
+	const QUERY_TABS_KEY = 'querycastle.queryTabs.v2';
+	const QUERY_FAVORITES_KEY = 'querycastle.queryFavorites.v1';
+	const QUERY_HISTORY_KEY = 'querycastle.queryHistory.v1';
 
-	type TabKind = "query" | "data";
-	type MainView =
-		| "sql"
-		| "saved_queries"
-		| "last_queries";
+	type TabKind = 'query' | 'data';
+	type MainView = 'sql' | 'saved_queries' | 'last_queries';
 	type WorkspaceTab = {
 		id: string;
 		title: string;
@@ -55,21 +52,18 @@
 	};
 
 	type TableAction =
-		| "view_data"
-		| "view_structure"
-		| "export_file"
-		| "import_file"
-		| "copy_name"
-		| "hide"
-		| "sql_create"
-		| "rename"
-		| "drop"
-		| "truncate"
-		| "duplicate";
-	type SchemaAction =
-		| "copy_name"
-		| "copy_quoted_name"
-		| "sql_list_tables";
+		| 'view_data'
+		| 'view_structure'
+		| 'export_file'
+		| 'import_file'
+		| 'copy_name'
+		| 'hide'
+		| 'sql_create'
+		| 'rename'
+		| 'drop'
+		| 'truncate'
+		| 'duplicate';
+	type SchemaAction = 'copy_name' | 'copy_quoted_name' | 'sql_list_tables';
 
 	function emptyResult(): QueryResultPayload {
 		return { columns: [], rows: [], rowCount: 0, durationMs: 0 };
@@ -77,29 +71,29 @@
 
 	const DEFAULT_TAB: WorkspaceTab = {
 		id: crypto.randomUUID(),
-		title: "Query 1",
-		kind: "query",
-		sql: "SELECT 1;",
-		lastRunSql: "",
+		title: 'Query 1',
+		kind: 'query',
+		sql: 'SELECT 1;',
+		lastRunSql: '',
 		result: emptyResult(),
-		sqlError: "",
+		sqlError: '',
 		resultContext: null,
 	};
 
 	let connectionStatus = $state<ConnectionStatus>({
 		connected: false,
-		name: "Disconnected",
-		host: "",
+		name: 'Disconnected',
+		host: '',
 		port: 5432,
-		database: "",
-		user: "",
+		database: '',
+		user: '',
 		serverVersion: null,
 	});
 
-	let explorerSearch = $state("");
-	let connectionSearch = $state("");
+	let explorerSearch = $state('');
+	let connectionSearch = $state('');
 	let tabs = $state<WorkspaceTab[]>([]);
-	let activeTabId = $state("");
+	let activeTabId = $state('');
 	let queryHistory = $state<QueryHistoryItem[]>([]);
 	let queryFavorites = $state<SavedQueryItem[]>([]);
 	let explorer = $state<DatabaseExplorer | null>(null);
@@ -114,36 +108,38 @@
 	let isTestingConnection = $state(false);
 	let isConnecting = $state(false);
 	let isRunningQuery = $state(false);
-	let testConnectionMessage = $state("");
+	let testConnectionMessage = $state('');
 	let testConnectionOk = $state(false);
-	let globalError = $state("");
+	let globalError = $state('');
 	let connectingName = $state<string | null>(null);
 	let showRenameModal = $state(false);
 	let renameTarget = $state<{ schema: string; table: string } | null>(null);
-	let renameValue = $state("");
+	let renameValue = $state('');
 	let tabContextMenu = $state<TabContextMenu>(null);
 
 	let queryDurationMs = $state(0);
-	let connectionInputMode = $state<"fields" | "string">("fields");
-	let connectionStringInput = $state("");
-	let mainView = $state<MainView>("sql");
+	let connectionInputMode = $state<'fields' | 'string'>('fields');
+	let connectionStringInput = $state('');
+	let mainView = $state<MainView>('sql');
 	let sqlSplitContainer = $state<HTMLDivElement | null>(null);
 	let resultsPaneHeight = $state(320);
 	let resizingResults = $state(false);
 
 	let connectionForm = $state<ConnectionInput>({
-		name: "local_pg",
-		host: "localhost",
+		name: 'local_pg',
+		host: 'localhost',
 		port: 5432,
-		user: "postgres",
-		password: "",
-		database: "postgres",
+		user: 'postgres',
+		password: '',
+		database: 'postgres',
 		ssl: false,
 	});
 
-	let activeTab = $derived.by(() => tabs.find((tab) => tab.id === activeTabId) ?? null);
+	let activeTab = $derived.by(
+		() => tabs.find((tab) => tab.id === activeTabId) ?? null,
+	);
 	let activeConnectionKey = $derived.by(() => {
-		if (!connectionStatus.connected) return "disconnected";
+		if (!connectionStatus.connected) return 'disconnected';
 		return `${connectionStatus.host}:${connectionStatus.port}/${connectionStatus.database}/${connectionStatus.user}`;
 	});
 	let sqlCompletions = $derived.by(() => {
@@ -161,36 +157,51 @@
 	});
 	let favoritesForConnection = $derived.by(() =>
 		connectionStatus.connected
-			? queryFavorites.filter((item) => item.connectionKey === activeConnectionKey)
+			? queryFavorites.filter(
+					(item) => item.connectionKey === activeConnectionKey,
+				)
 			: queryFavorites,
 	);
 	let historyForConnection = $derived.by(() =>
 		connectionStatus.connected
-			? queryHistory.filter((item) => !item.connectionKey || item.connectionKey === activeConnectionKey)
+			? queryHistory.filter(
+					(item) =>
+						!item.connectionKey || item.connectionKey === activeConnectionKey,
+				)
 			: queryHistory,
 	);
-	let selectedSavedQueryId = $state("");
+	let selectedSavedQueryId = $state('');
 	let selectedHistoryIndex = $state(0);
 	let selectedSavedQuery = $derived.by(
-		() => favoritesForConnection.find((item) => item.id === selectedSavedQueryId) ?? favoritesForConnection[0] ?? null,
+		() =>
+			favoritesForConnection.find((item) => item.id === selectedSavedQueryId) ??
+			favoritesForConnection[0] ??
+			null,
 	);
-	let selectedHistoryQuery = $derived.by(() => historyForConnection[selectedHistoryIndex] ?? historyForConnection[0] ?? null);
+	let selectedHistoryQuery = $derived.by(
+		() =>
+			historyForConnection[selectedHistoryIndex] ??
+			historyForConnection[0] ??
+			null,
+	);
 	let moveListener: ((event: PointerEvent) => void) | null = null;
 	let upListener: (() => void) | null = null;
 
 	$effect(() => {
-		if (mainView !== "saved_queries") return;
+		if (mainView !== 'saved_queries') return;
 		if (favoritesForConnection.length === 0) {
-			selectedSavedQueryId = "";
+			selectedSavedQueryId = '';
 			return;
 		}
-		if (!favoritesForConnection.some((item) => item.id === selectedSavedQueryId)) {
+		if (
+			!favoritesForConnection.some((item) => item.id === selectedSavedQueryId)
+		) {
 			selectedSavedQueryId = favoritesForConnection[0].id;
 		}
 	});
 
 	$effect(() => {
-		if (mainView !== "last_queries") return;
+		if (mainView !== 'last_queries') return;
 		if (historyForConnection.length === 0) {
 			selectedHistoryIndex = 0;
 			return;
@@ -219,17 +230,23 @@
 		for (const schema of explorer.schemas) {
 			for (const table of schema.tables) {
 				if (table.name === tableName) exactMatches.push(schema.name);
-				if (table.name.toLowerCase() === tableName.toLowerCase()) lowerMatches.push(schema.name);
+				if (table.name.toLowerCase() === tableName.toLowerCase())
+					lowerMatches.push(schema.name);
 			}
 		}
 		if (exactMatches.length === 1) return exactMatches[0];
-		if (exactMatches.length > 1) return exactMatches.includes("public") ? "public" : null;
+		if (exactMatches.length > 1)
+			return exactMatches.includes('public') ? 'public' : null;
 		if (lowerMatches.length === 1) return lowerMatches[0];
-		if (lowerMatches.length > 1) return lowerMatches.includes("public") ? "public" : null;
+		if (lowerMatches.length > 1)
+			return lowerMatches.includes('public') ? 'public' : null;
 		return null;
 	}
 
-	function resolvePreferredOrderColumn(schema: string, table: string): string | null {
+	function resolvePreferredOrderColumn(
+		schema: string,
+		table: string,
+	): string | null {
 		const tableMeta = explorer?.schemas
 			.find((item) => item.name === schema)
 			?.tables.find((item) => item.name === table);
@@ -237,16 +254,23 @@
 	}
 
 	function tryBuildEditableQuery(sql: string): EditableQueryPlan | null {
-		const cleaned = sql.trim().replace(/;+\s*$/, "");
+		const cleaned = sql.trim().replace(/;+\s*$/, '');
 		if (!/^select\b/i.test(cleaned)) return null;
 
-		const selectMatch = cleaned.match(/^\s*select\s+([\s\S]+?)\s+from\s+([\s\S]+)$/i);
+		const selectMatch = cleaned.match(
+			/^\s*select\s+([\s\S]+?)\s+from\s+([\s\S]+)$/i,
+		);
 		if (!selectMatch) return null;
 
 		const selectPart = selectMatch[1];
 		const fromAndTail = selectMatch[2];
 		if (/\bdistinct\b/i.test(selectPart)) return null;
-		if (/\b(with|join|group\s+by|having|union|intersect|except)\b/i.test(fromAndTail)) return null;
+		if (
+			/\b(with|join|group\s+by|having|union|intersect|except)\b/i.test(
+				fromAndTail,
+			)
+		)
+			return null;
 
 		const tableMatch = fromAndTail.match(
 			/^\s*((?:"(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*)(?:\s*\.\s*(?:"(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*))?)([\s\S]*)$/s,
@@ -254,7 +278,7 @@
 		if (!tableMatch) return null;
 
 		const tableRef = tableMatch[1];
-		const tail = tableMatch[2] ?? "";
+		const tail = tableMatch[2] ?? '';
 		if (/\bfrom\b/i.test(tail)) return null;
 		if (/^\s*,/.test(tail)) return null;
 
@@ -265,16 +289,22 @@
 			/^\s*(?:"((?:[^"]|"")*)"|([A-Za-z_][A-Za-z0-9_$]*))\s*$/s,
 		);
 
-		let contextSchema = "";
-		let contextTable = "";
+		let contextSchema = '';
+		let contextTable = '';
 		if (qualifiedIdMatch) {
-			const rawSchema = qualifiedIdMatch[1] ? `"${qualifiedIdMatch[1]}"` : qualifiedIdMatch[2] ?? "";
-			const rawTable = qualifiedIdMatch[3] ? `"${qualifiedIdMatch[3]}"` : qualifiedIdMatch[4] ?? "";
+			const rawSchema = qualifiedIdMatch[1]
+				? `"${qualifiedIdMatch[1]}"`
+				: (qualifiedIdMatch[2] ?? '');
+			const rawTable = qualifiedIdMatch[3]
+				? `"${qualifiedIdMatch[3]}"`
+				: (qualifiedIdMatch[4] ?? '');
 			if (!rawSchema || !rawTable) return null;
 			contextSchema = unquoteIdent(rawSchema);
 			contextTable = unquoteIdent(rawTable);
 		} else if (unqualifiedIdMatch) {
-			const rawTable = unqualifiedIdMatch[1] ? `"${unqualifiedIdMatch[1]}"` : unqualifiedIdMatch[2] ?? "";
+			const rawTable = unqualifiedIdMatch[1]
+				? `"${unqualifiedIdMatch[1]}"`
+				: (unqualifiedIdMatch[2] ?? '');
 			const tableName = unquoteIdent(rawTable);
 			const resolvedSchema = resolveTableSchema(tableName);
 			if (!resolvedSchema) return null;
@@ -286,10 +316,13 @@
 
 		let effectiveTail = tail;
 		if (!/\border\s+by\b/i.test(effectiveTail)) {
-			const preferredOrderColumn = resolvePreferredOrderColumn(contextSchema, contextTable);
+			const preferredOrderColumn = resolvePreferredOrderColumn(
+				contextSchema,
+				contextTable,
+			);
 			const orderByClause = preferredOrderColumn
 				? ` order by ${quoteIdent(preferredOrderColumn)} asc nulls last`
-				: " order by ctid asc";
+				: ' order by ctid asc';
 			const limitLikeMatch = effectiveTail.match(/\b(limit|offset|fetch)\b/i);
 			if (limitLikeMatch && limitLikeMatch.index !== undefined) {
 				const insertAt = limitLikeMatch.index;
@@ -331,15 +364,18 @@
 			const parsed = JSON.parse(raw) as Array<Partial<WorkspaceTab>>;
 			if (!Array.isArray(parsed)) return;
 			const restored = parsed
-				.filter((item) => typeof item.id === "string" && typeof item.title === "string")
+				.filter(
+					(item) =>
+						typeof item.id === 'string' && typeof item.title === 'string',
+				)
 				.map((item) => ({
 					id: item.id!,
 					title: item.title!,
-					kind: (item.kind === "data" ? "data" : "query") as TabKind,
-					sql: typeof item.sql === "string" ? item.sql : "",
-					lastRunSql: "",
+					kind: (item.kind === 'data' ? 'data' : 'query') as TabKind,
+					sql: typeof item.sql === 'string' ? item.sql : '',
+					lastRunSql: '',
 					result: emptyResult(),
-					sqlError: "",
+					sqlError: '',
 					resultContext: item.resultContext ?? null,
 				}));
 			if (restored.length === 0) return;
@@ -363,12 +399,21 @@
 				return;
 			}
 			queryFavorites = parsed
-				.filter((item) => typeof item.id === "string" && typeof item.sql === "string" && typeof item.connectionKey === "string")
+				.filter(
+					(item) =>
+						typeof item.id === 'string' &&
+						typeof item.sql === 'string' &&
+						typeof item.connectionKey === 'string',
+				)
 				.map((item) => ({
 					id: item.id!,
-					title: typeof item.title === "string" && item.title.trim().length > 0 ? item.title : "Saved Query",
+					title:
+						typeof item.title === 'string' && item.title.trim().length > 0
+							? item.title
+							: 'Saved Query',
 					sql: item.sql!,
-					createdAt: typeof item.createdAt === "number" ? item.createdAt : Date.now(),
+					createdAt:
+						typeof item.createdAt === 'number' ? item.createdAt : Date.now(),
 					connectionKey: item.connectionKey!,
 				}));
 		} catch {
@@ -391,18 +436,21 @@
 			queryHistory = parsed
 				.filter(
 					(item) =>
-						typeof item.time === "string" &&
-						typeof item.sql === "string" &&
-						typeof item.durationMs === "number" &&
-						typeof item.success === "boolean",
+						typeof item.time === 'string' &&
+						typeof item.sql === 'string' &&
+						typeof item.durationMs === 'number' &&
+						typeof item.success === 'boolean',
 				)
 				.map((item) => ({
 					time: item.time!,
 					sql: item.sql!,
 					durationMs: item.durationMs!,
 					success: item.success!,
-					error: typeof item.error === "string" ? item.error : undefined,
-					connectionKey: typeof item.connectionKey === "string" ? item.connectionKey : undefined,
+					error: typeof item.error === 'string' ? item.error : undefined,
+					connectionKey:
+						typeof item.connectionKey === 'string'
+							? item.connectionKey
+							: undefined,
 				}));
 		} catch {
 			queryHistory = [];
@@ -410,11 +458,16 @@
 	}
 
 	function persistSavedConnections() {
-		localStorage.setItem(SAVED_CONNECTIONS_KEY, JSON.stringify(savedConnections));
+		localStorage.setItem(
+			SAVED_CONNECTIONS_KEY,
+			JSON.stringify(savedConnections),
+		);
 	}
 
 	function upsertSavedConnection(connection: ConnectionInput) {
-		const index = savedConnections.findIndex((item) => item.name === connection.name);
+		const index = savedConnections.findIndex(
+			(item) => item.name === connection.name,
+		);
 		if (index === -1) savedConnections = [connection, ...savedConnections];
 		else {
 			savedConnections[index] = connection;
@@ -438,26 +491,27 @@
 
 	function deriveFavoriteTitle(sql: string) {
 		const firstLine = sql
-			.split("\n")
+			.split('\n')
 			.map((line) => line.trim())
 			.find((line) => line.length > 0);
-		if (!firstLine) return "Saved Query";
+		if (!firstLine) return 'Saved Query';
 		return firstLine.length > 56 ? `${firstLine.slice(0, 56)}...` : firstLine;
 	}
 
 	function saveActiveQuery() {
 		if (!connectionStatus.connected) {
-			globalError = "Connect to a database before saving queries.";
+			globalError = 'Connect to a database before saving queries.';
 			return;
 		}
 		const sql = getActiveSql().trim();
 		if (!sql) return;
 
 		const duplicate = queryFavorites.find(
-			(item) => item.connectionKey === activeConnectionKey && item.sql.trim() === sql,
+			(item) =>
+				item.connectionKey === activeConnectionKey && item.sql.trim() === sql,
 		);
 		if (duplicate) {
-			globalError = "This query is already saved for the current connection.";
+			globalError = 'This query is already saved for the current connection.';
 			return;
 		}
 
@@ -470,11 +524,14 @@
 		};
 		queryFavorites = [next, ...queryFavorites].slice(0, 200);
 		persistQueryFavorites();
-		globalError = "";
+		globalError = '';
 	}
 
 	function nowLabel() {
-		return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+		return new Date().toLocaleTimeString([], {
+			hour: '2-digit',
+			minute: '2-digit',
+		});
 	}
 
 	function pushHistory(item: QueryHistoryItem) {
@@ -483,19 +540,19 @@
 	}
 
 	function getActiveSql() {
-		if (!activeTab || activeTab.kind !== "query") return "";
+		if (!activeTab || activeTab.kind !== 'query') return '';
 		return activeTab.sql;
 	}
 
-	function addQueryTab(initialSql = "") {
+	function addQueryTab(initialSql = '') {
 		const nextTab: WorkspaceTab = {
 			id: crypto.randomUUID(),
-			title: `Query ${tabs.filter((t) => t.kind === "query").length + 1}`,
-			kind: "query",
+			title: `Query ${tabs.filter((t) => t.kind === 'query').length + 1}`,
+			kind: 'query',
 			sql: initialSql,
-			lastRunSql: "",
+			lastRunSql: '',
 			result: emptyResult(),
-			sqlError: "",
+			sqlError: '',
 			resultContext: null,
 		};
 		tabs = [...tabs, nextTab];
@@ -504,26 +561,32 @@
 
 	function setSqlInReusableQueryTab(sql: string) {
 		const targetTab =
-			(activeTab && activeTab.kind === "query" ? activeTab : null) ??
-			tabs.find((tab) => tab.kind === "query") ??
+			(activeTab && activeTab.kind === 'query' ? activeTab : null) ??
+			tabs.find((tab) => tab.kind === 'query') ??
 			null;
 		if (!targetTab) {
 			addQueryTab(sql);
 			return;
 		}
-		tabs = tabs.map((tab) => (tab.id === targetTab.id ? { ...tab, sql } : tab));
+		tabs = tabs.map((tab) =>
+			tab.id === targetTab.id ? { ...tab, sql, sqlError: '' } : tab,
+		);
 		activeTabId = targetTab.id;
 	}
 
-	function addDataTab(title: string, sql: string, context: { schema: string; table: string } | null) {
+	function addDataTab(
+		title: string,
+		sql: string,
+		context: { schema: string; table: string } | null,
+	) {
 		const nextTab: WorkspaceTab = {
 			id: crypto.randomUUID(),
 			title,
-			kind: "data",
+			kind: 'data',
 			sql,
-			lastRunSql: "",
+			lastRunSql: '',
 			result: emptyResult(),
-			sqlError: "",
+			sqlError: '',
 			resultContext: context,
 		};
 		tabs = [...tabs, nextTab];
@@ -538,11 +601,11 @@
 		tabs = nextTabs;
 		if (activeTabId === tabId) {
 			if (nextTabs.length === 0) {
-				activeTabId = "";
+				activeTabId = '';
 				return;
 			}
 			const nextIndex = Math.max(0, index - 1);
-			activeTabId = nextTabs[nextIndex]?.id ?? nextTabs[0]?.id ?? "";
+			activeTabId = nextTabs[nextIndex]?.id ?? nextTabs[0]?.id ?? '';
 		}
 	}
 
@@ -553,7 +616,7 @@
 
 	function closeAllTabs() {
 		tabs = [];
-		activeTabId = "";
+		activeTabId = '';
 		tabContextMenu = null;
 	}
 
@@ -570,13 +633,13 @@
 	}
 
 	function formatActiveQuery() {
-		if (!activeTab || activeTab.kind !== "query") return;
+		if (!activeTab || activeTab.kind !== 'query') return;
 		const sql = activeTab.sql.trim();
 		if (!sql) return;
 		try {
-			const nextSql = formatSql(sql, { language: "postgresql" });
+			const nextSql = formatSql(sql, { language: 'postgresql' });
 			setActiveSql(nextSql);
-			globalError = "";
+			globalError = '';
 		} catch (error) {
 			globalError = error instanceof Error ? error.message : String(error);
 		}
@@ -589,7 +652,7 @@
 
 	function openSavedQuery(sql: string) {
 		setSqlInReusableQueryTab(sql);
-		mainView = "sql";
+		mainView = 'sql';
 	}
 
 	function clampResultsHeight(height: number, total: number) {
@@ -601,12 +664,12 @@
 	function stopResultsResize() {
 		resizingResults = false;
 		if (moveListener) {
-			window.removeEventListener("pointermove", moveListener);
+			window.removeEventListener('pointermove', moveListener);
 			moveListener = null;
 		}
 		if (upListener) {
-			window.removeEventListener("pointerup", upListener);
-			window.removeEventListener("pointercancel", upListener);
+			window.removeEventListener('pointerup', upListener);
+			window.removeEventListener('pointercancel', upListener);
 			upListener = null;
 		}
 	}
@@ -624,15 +687,18 @@
 			resultsPaneHeight = clampResultsHeight(nextHeight, total);
 		};
 		upListener = () => stopResultsResize();
-		window.addEventListener("pointermove", moveListener);
-		window.addEventListener("pointerup", upListener);
-		window.addEventListener("pointercancel", upListener);
+		window.addEventListener('pointermove', moveListener);
+		window.addEventListener('pointerup', upListener);
+		window.addEventListener('pointercancel', upListener);
 	}
 
 	function applyConnectionToForm(connection: ConnectionInput) {
 		connectionForm = { ...connection };
-		connectionInputMode = connection.useConnectionString && connection.connectionString ? "string" : "fields";
-		connectionStringInput = connection.connectionString ?? "";
+		connectionInputMode =
+			connection.useConnectionString && connection.connectionString
+				? 'string'
+				: 'fields';
+		connectionStringInput = connection.connectionString ?? '';
 	}
 
 	function startCreateConnection() {
@@ -647,10 +713,18 @@
 	}
 
 	function buildConnectionPayload(): ConnectionInput {
-		if (connectionInputMode === "string") {
-			return { ...connectionForm, useConnectionString: true, connectionString: connectionStringInput.trim() };
+		if (connectionInputMode === 'string') {
+			return {
+				...connectionForm,
+				useConnectionString: true,
+				connectionString: connectionStringInput.trim(),
+			};
 		}
-		return { ...connectionForm, useConnectionString: false, connectionString: "" };
+		return {
+			...connectionForm,
+			useConnectionString: false,
+			connectionString: '',
+		};
 	}
 
 	function toggleSchema(schemaName: string) {
@@ -685,7 +759,7 @@
 		try {
 			const nextExplorer = await rpc.request.getDatabaseExplorer();
 			explorer = nextExplorer;
-			globalError = "";
+			globalError = '';
 			if (nextExplorer.schemas.length > 0 && expandedSchemas.size === 0) {
 				expandedSchemas = new Set([nextExplorer.schemas[0].name]);
 			}
@@ -711,16 +785,19 @@
 
 	async function handleTestConnection() {
 		isTestingConnection = true;
-		testConnectionMessage = "";
+		testConnectionMessage = '';
 		try {
-			const response = await rpc.request.testConnection(buildConnectionPayload());
+			const response = await rpc.request.testConnection(
+				buildConnectionPayload(),
+			);
 			testConnectionOk = response.ok;
 			testConnectionMessage = response.ok
-				? `Connected successfully${response.serverVersion ? ` (PostgreSQL ${response.serverVersion})` : ""}`
+				? `Connected successfully${response.serverVersion ? ` (PostgreSQL ${response.serverVersion})` : ''}`
 				: response.message;
 		} catch (error) {
 			testConnectionOk = false;
-			testConnectionMessage = error instanceof Error ? error.message : String(error);
+			testConnectionMessage =
+				error instanceof Error ? error.message : String(error);
 		} finally {
 			isTestingConnection = false;
 		}
@@ -728,22 +805,24 @@
 
 	async function handleConnect(saveConnection: boolean) {
 		isConnecting = true;
-		testConnectionMessage = "";
+		testConnectionMessage = '';
 		try {
 			const payload = buildConnectionPayload();
 			connectionStatus = await rpc.request.connect(payload);
 			if (saveConnection) {
-				if (editingConnectionName && editingConnectionName !== payload.name) removeSavedConnection(editingConnectionName);
+				if (editingConnectionName && editingConnectionName !== payload.name)
+					removeSavedConnection(editingConnectionName);
 				upsertSavedConnection(payload);
 			}
 			showConnectionModal = false;
 			editingConnectionName = null;
-			mainView = "sql";
+			mainView = 'sql';
 			await loadDatabases();
 			await loadExplorer();
 		} catch (error) {
 			testConnectionOk = false;
-			testConnectionMessage = error instanceof Error ? error.message : String(error);
+			testConnectionMessage =
+				error instanceof Error ? error.message : String(error);
 		} finally {
 			isConnecting = false;
 		}
@@ -765,10 +844,10 @@
 		explorer = null;
 		databases = [];
 		tabs = [];
-		activeTabId = "";
-		mainView = "sql";
+		activeTabId = '';
+		mainView = 'sql';
 		editingConnectionName = null;
-		globalError = "";
+		globalError = '';
 	}
 
 	async function executeQuery(
@@ -785,16 +864,16 @@
 		try {
 			const queryResult = await rpc.request.runQuery({ sql: query });
 			queryDurationMs = queryResult.durationMs;
-			globalError = "";
+			globalError = '';
 			tabs = tabs.map((tab) =>
 				tab.id === targetTabId
 					? {
-						...tab,
-						result: queryResult,
-						lastRunSql: query,
-						sqlError: "",
-						resultContext: options?.context ?? tab.resultContext,
-					}
+							...tab,
+							result: queryResult,
+							lastRunSql: query,
+							sqlError: '',
+							resultContext: options?.context ?? tab.resultContext,
+						}
 					: tab,
 			);
 			if (options?.pushToHistory !== false) {
@@ -809,7 +888,9 @@
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			globalError = message;
-			tabs = tabs.map((tab) => (tab.id === targetTabId ? { ...tab, sqlError: message } : tab));
+			tabs = tabs.map((tab) =>
+				tab.id === targetTabId ? { ...tab, sqlError: message } : tab,
+			);
 			if (options?.pushToHistory !== false) {
 				pushHistory({
 					time: nowLabel(),
@@ -827,14 +908,14 @@
 
 	async function handleRunQuery(queryOverride?: string) {
 		if (!connectionStatus.connected) {
-			globalError = "No active connection";
+			globalError = 'No active connection';
 			return;
 		}
 		ensureTab();
-		if (!activeTab || activeTab.kind !== "query") return;
+		if (!activeTab || activeTab.kind !== 'query') return;
 		const sqlToRun = (queryOverride ?? activeTab.sql).trim();
 		if (!sqlToRun) {
-			globalError = "Query is empty";
+			globalError = 'Query is empty';
 			return;
 		}
 
@@ -849,90 +930,108 @@
 		});
 	}
 
-	async function handleTableAction(action: TableAction, schema: string, table: string) {
+	async function handleTableAction(
+		action: TableAction,
+		schema: string,
+		table: string,
+	) {
 		const safeSchema = quoteIdent(schema);
 		const safeTable = quoteIdent(table);
-		if (action === "copy_name") {
+		if (action === 'copy_name') {
 			await navigator.clipboard.writeText(`${schema}.${table}`);
 			return;
 		}
-		if (action === "hide") {
+		if (action === 'hide') {
 			globalError = `Hide is not implemented yet for ${schema}.${table}`;
 			return;
 		}
-		if (action === "import_file") {
-			globalError = "Import from file is not implemented yet.";
+		if (action === 'import_file') {
+			globalError = 'Import from file is not implemented yet.';
 			return;
 		}
-		if (action === "rename") {
+		if (action === 'rename') {
 			renameTarget = { schema, table };
 			renameValue = table;
 			showRenameModal = true;
 			return;
 		}
 
-		if (action === "drop") {
+		if (action === 'drop') {
 			setActiveSql(`drop table ${safeSchema}.${safeTable};`);
-			globalError = "Drop statement inserted into editor. Review before running.";
+			globalError =
+				'Drop statement inserted into editor. Review before running.';
 			return;
 		}
-		if (action === "truncate") {
+		if (action === 'truncate') {
 			setActiveSql(`truncate table ${safeSchema}.${safeTable};`);
-			globalError = "Truncate statement inserted into editor. Review before running.";
+			globalError =
+				'Truncate statement inserted into editor. Review before running.';
 			return;
 		}
-		if (action === "duplicate") {
-			setActiveSql(`create table ${safeSchema}.${safeTable}_copy as select * from ${safeSchema}.${safeTable};`);
-			globalError = "Duplicate statement inserted into editor. Review before running.";
+		if (action === 'duplicate') {
+			setActiveSql(
+				`create table ${safeSchema}.${safeTable}_copy as select * from ${safeSchema}.${safeTable};`,
+			);
+			globalError =
+				'Duplicate statement inserted into editor. Review before running.';
 			return;
 		}
-		if (action === "sql_create") {
-			setActiveSql(`-- Table definition helper\nselect column_name, data_type, is_nullable\nfrom information_schema.columns\nwhere table_schema = '${schema.replaceAll("'", "''")}'\n  and table_name = '${table.replaceAll("'", "''")}'\norder by ordinal_position;`);
-			globalError = "";
+		if (action === 'sql_create') {
+			setActiveSql(
+				`-- Table definition helper\nselect column_name, data_type, is_nullable\nfrom information_schema.columns\nwhere table_schema = '${schema.replaceAll("'", "''")}'\n  and table_name = '${table.replaceAll("'", "''")}'\norder by ordinal_position;`,
+			);
+			globalError = '';
 			return;
 		}
 
-		let query = "";
+		let query = '';
 		let title = `${table}`;
 		let context: { schema: string; table: string } | null = null;
-		if (action === "view_data") {
+		if (action === 'view_data') {
 			const firstOrderColumn = explorer?.schemas
 				.find((item) => item.name === schema)
-				?.tables.find((item) => item.name === table)
-				?.columns[0]?.name;
+				?.tables.find((item) => item.name === table)?.columns[0]?.name;
 			const orderByClause = firstOrderColumn
 				? ` order by ${quoteIdent(firstOrderColumn)} asc nulls last`
-				: "";
+				: '';
 			query = `select ctid::text as _querycastle_ctid, * from ${safeSchema}.${safeTable}${orderByClause} limit 100;`;
 			title = `${table} [all]`;
 			context = { schema, table };
 		}
-		if (action === "view_structure") {
+		if (action === 'view_structure') {
 			query = `select column_name, data_type, is_nullable from information_schema.columns where table_schema = '${schema.replaceAll("'", "''")}' and table_name = '${table.replaceAll("'", "''")}' order by ordinal_position;`;
 			title = `${table} [structure]`;
 		}
-		if (action === "export_file") {
+		if (action === 'export_file') {
 			query = `select * from ${safeSchema}.${safeTable} limit 1000;`;
 			title = `${table} [export]`;
 		}
 		const tabId = addDataTab(title, query, context);
-		await executeQuery(query, { targetTabId: tabId, pushToHistory: false, context });
+		await executeQuery(query, {
+			targetTabId: tabId,
+			pushToHistory: false,
+			context,
+		});
 	}
 
 	async function handleSchemaAction(action: SchemaAction, schema: string) {
-		if (action === "copy_name") {
+		if (action === 'copy_name') {
 			await navigator.clipboard.writeText(schema);
 			return;
 		}
-		if (action === "copy_quoted_name") {
+		if (action === 'copy_quoted_name') {
 			await navigator.clipboard.writeText(quoteIdent(schema));
 			return;
 		}
-		if (action === "sql_list_tables") {
+		if (action === 'sql_list_tables') {
 			const query = `select tablename as table_name\nfrom pg_catalog.pg_tables\nwhere schemaname = '${schema.replaceAll("'", "''")}'\norder by tablename;`;
 			const tabId = addDataTab(`${schema} [tables]`, query, null);
-			await executeQuery(query, { targetTabId: tabId, pushToHistory: false, context: null });
-			globalError = "";
+			await executeQuery(query, {
+				targetTabId: tabId,
+				pushToHistory: false,
+				context: null,
+			});
+			globalError = '';
 		}
 	}
 
@@ -940,17 +1039,17 @@
 		if (!renameTarget) return;
 		const nextName = renameValue.trim();
 		if (!nextName) {
-			globalError = "New table name is required.";
+			globalError = 'New table name is required.';
 			return;
 		}
 		showRenameModal = false;
 		const sql = `alter table ${quoteIdent(renameTarget.schema)}.${quoteIdent(renameTarget.table)} rename to ${quoteIdent(nextName)};`;
-		if (!activeTab || activeTab.kind !== "query") addQueryTab(sql);
+		if (!activeTab || activeTab.kind !== 'query') addQueryTab(sql);
 		else setActiveSql(sql);
 	}
 
 	async function followForeignKey(schema: string, table: string) {
-		await handleTableAction("view_data", schema, table);
+		await handleTableAction('view_data', schema, table);
 	}
 
 	async function applyTableChanges(
@@ -966,7 +1065,7 @@
 
 	async function handleDatabaseChange(database: string) {
 		if (!database || database === connectionStatus.database) return;
-		globalError = "";
+		globalError = '';
 		isExplorerLoading = true;
 		explorer = null;
 		expandedSchemas = new Set();
@@ -983,7 +1082,9 @@
 
 	async function restoreDataTabResults() {
 		if (!connectionStatus.connected) return;
-		const dataTabs = tabs.filter((tab) => tab.kind === "data" && tab.sql.trim().length > 0);
+		const dataTabs = tabs.filter(
+			(tab) => tab.kind === 'data' && tab.sql.trim().length > 0,
+		);
 		for (const tab of dataTabs) {
 			await executeQuery(tab.sql, {
 				pushToHistory: false,
@@ -1005,7 +1106,7 @@
 				await loadExplorer();
 				await restoreDataTabResults();
 			} catch (error) {
-				console.error("Failed to initialize app", error);
+				console.error('Failed to initialize app', error);
 			}
 		})();
 
@@ -1014,9 +1115,9 @@
 			const total = sqlSplitContainer.clientHeight;
 			resultsPaneHeight = clampResultsHeight(resultsPaneHeight, total);
 		};
-		window.addEventListener("resize", onWindowResize);
+		window.addEventListener('resize', onWindowResize);
 		return () => {
-			window.removeEventListener("resize", onWindowResize);
+			window.removeEventListener('resize', onWindowResize);
 		};
 	});
 
@@ -1036,30 +1137,51 @@
 	});
 </script>
 
-<main class="h-screen w-full flex flex-col bg-gray-50 overflow-hidden text-sm text-gray-800 antialiased">
-	<header class="flex items-center h-12 bg-[#1c1c1e] text-gray-300 px-4 shrink-0 shadow-sm z-30 relative">
+<main
+	class="h-screen w-full flex flex-col bg-gray-50 overflow-hidden text-sm text-gray-800 antialiased"
+>
+	<header
+		class="flex items-center h-12 bg-[#1c1c1e] text-gray-300 px-4 shrink-0 shadow-sm z-30 relative"
+	>
 		<div class="flex items-center space-x-3 min-w-0">
 			<div class="bg-emerald-500 rounded p-1 flex items-center justify-center">
 				<Database size={16} class="text-[#1c1c1e]" />
 			</div>
 			<div class="flex items-center text-sm min-w-0">
-				<span class="text-gray-400 cursor-default hover:text-gray-200 truncate">{connectionStatus.connected ? connectionStatus.host : "Disconnected"}</span>
+				<span class="text-gray-400 cursor-default hover:text-gray-200 truncate"
+					>{connectionStatus.connected
+						? connectionStatus.host
+						: 'Disconnected'}</span
+				>
 				<ChevronRight size={14} class="mx-1 text-gray-600 shrink-0" />
-				<span class="font-medium text-gray-100 cursor-default flex items-center truncate">
-					{connectionStatus.connected ? connectionStatus.database : "Database IDE"}
-					
+				<span
+					class="font-medium text-gray-100 cursor-default flex items-center truncate"
+				>
+					{connectionStatus.connected
+						? connectionStatus.database
+						: 'Database IDE'}
 				</span>
 			</div>
-			<div class=" bg-emerald-900/40 border border-emerald-800/50 text-emerald-400 text-xs px-2 py-0.5 rounded shadow-sm">Demo</div>
+			<div
+				class=" bg-emerald-900/40 border border-emerald-800/50 text-emerald-400 text-xs px-2 py-0.5 rounded shadow-sm"
+			>
+				Demo
+			</div>
 		</div>
 		<div class="flex-1"></div>
 		<div class="flex items-center gap-2">
-			<button onclick={startCreateConnection} class="h-7 px-2 rounded border border-white/15 text-xs text-gray-300 hover:text-white hover:bg-white/10 inline-flex items-center gap-1">
+			<button
+				onclick={startCreateConnection}
+				class="h-7 px-2 rounded border border-white/15 text-xs text-gray-300 hover:text-white hover:bg-white/10 inline-flex items-center gap-1"
+			>
 				<Plus size={12} />
 				Connection
 			</button>
 			{#if connectionStatus.connected}
-				<button onclick={handleDisconnect} class="h-7 px-2 rounded border border-white/15 text-xs text-gray-300 hover:text-white hover:bg-white/10 inline-flex items-center gap-1">
+				<button
+					onclick={handleDisconnect}
+					class="h-7 px-2 rounded border border-white/15 text-xs text-gray-300 hover:text-white hover:bg-white/10 inline-flex items-center gap-1"
+				>
 					<Unplug size={12} />
 					Disconnect
 				</button>
@@ -1069,45 +1191,66 @@
 
 	{#if !connectionStatus.connected}
 		<div class="flex flex-1 overflow-hidden">
-			<aside class="w-14 bg-white border-r border-gray-200 flex flex-col items-center py-4 space-y-3 shrink-0 z-20 shadow-[1px_0_5px_rgba(0,0,0,0.02)]">
-				<button class="text-gray-900 bg-gray-100 p-1.5 rounded-md shadow-sm border border-gray-200/50 flex items-center justify-center"><Home size={20} /></button>
-				<button class="text-gray-400 p-1.5 rounded-md flex items-center justify-center"><Star size={20} /></button>
-				<button class="text-gray-400 p-1.5 rounded-md flex items-center justify-center"><FolderKanban size={20} /></button>
+			<aside
+				class="w-14 bg-white border-r border-gray-200 flex flex-col items-center py-4 space-y-3 shrink-0 z-20 shadow-[1px_0_5px_rgba(0,0,0,0.02)]"
+			>
+				<button
+					class="text-gray-900 bg-gray-100 p-1.5 rounded-md shadow-sm border border-gray-200/50 flex items-center justify-center"
+					><Home size={20} /></button
+				>
+				<button
+					class="text-gray-400 p-1.5 rounded-md flex items-center justify-center"
+					><Star size={20} /></button
+				>
+				<button
+					class="text-gray-400 p-1.5 rounded-md flex items-center justify-center"
+					><FolderKanban size={20} /></button
+				>
 			</aside>
 			<section class="flex-1 overflow-auto border-l border-gray-100 bg-white">
 				<ConnectionHub
-					savedConnections={savedConnections}
+					{savedConnections}
 					onConnect={connectSaved}
 					onCreate={startCreateConnection}
 					onEdit={startEditConnection}
 					onDelete={removeSavedConnection}
-					connectingName={connectingName}
+					{connectingName}
 					searchQuery={connectionSearch}
 				/>
 			</section>
 		</div>
 	{:else}
 		<div class="flex flex-1 overflow-hidden">
-			<aside class="w-14 bg-white border-r border-gray-200 flex flex-col items-center py-4 space-y-6 shrink-0 z-20 shadow-[1px_0_5px_rgba(0,0,0,0.02)]">
+			<aside
+				class="w-14 bg-white border-r border-gray-200 flex flex-col items-center py-4 space-y-6 shrink-0 z-20 shadow-[1px_0_5px_rgba(0,0,0,0.02)]"
+			>
 				<button
-					onclick={() => (mainView = "sql")}
-					class={`transition-colors p-1.5 rounded-md flex items-center justify-center ${mainView === "sql" ? "text-gray-900 bg-gray-100 shadow-sm border border-gray-200/50" : "text-gray-400 hover:text-gray-900 hover:bg-gray-100"}`}
+					onclick={() => (mainView = 'sql')}
+					class={`transition-colors p-1.5 rounded-md flex items-center justify-center ${mainView === 'sql' ? 'text-gray-900 bg-gray-100 shadow-sm border border-gray-200/50' : 'text-gray-400 hover:text-gray-900 hover:bg-gray-100'}`}
 				>
 					<Home size={20} />
 				</button>
-				<button onclick={() => (mainView = "saved_queries")} class={`transition-colors p-1.5 rounded-md flex items-center justify-center ${mainView === "saved_queries" ? "text-gray-900 bg-gray-100 shadow-sm border border-gray-200/50" : "text-gray-400 hover:text-gray-900 hover:bg-gray-100"}`}><Star size={20} /></button>
-				<button onclick={() => (mainView = "last_queries")} class={`transition-colors p-1.5 rounded-md flex items-center justify-center ${mainView === "last_queries" ? "text-gray-900 bg-gray-100 shadow-sm border border-gray-200/50" : "text-gray-400 hover:text-gray-900 hover:bg-gray-100"}`}><FolderKanban size={20} /></button>
+				<button
+					onclick={() => (mainView = 'saved_queries')}
+					class={`transition-colors p-1.5 rounded-md flex items-center justify-center ${mainView === 'saved_queries' ? 'text-gray-900 bg-gray-100 shadow-sm border border-gray-200/50' : 'text-gray-400 hover:text-gray-900 hover:bg-gray-100'}`}
+					><Star size={20} /></button
+				>
+				<button
+					onclick={() => (mainView = 'last_queries')}
+					class={`transition-colors p-1.5 rounded-md flex items-center justify-center ${mainView === 'last_queries' ? 'text-gray-900 bg-gray-100 shadow-sm border border-gray-200/50' : 'text-gray-400 hover:text-gray-900 hover:bg-gray-100'}`}
+					><FolderKanban size={20} /></button
+				>
 			</aside>
 
-			{#if mainView === "sql"}
+			{#if mainView === 'sql'}
 				<ExplorerSidebar
-					connectionStatus={connectionStatus}
-					explorer={explorer}
+					{connectionStatus}
+					{explorer}
 					loadingExplorer={isExplorerLoading}
-					databases={databases}
+					{databases}
 					searchQuery={explorerSearch}
-					expandedSchemas={expandedSchemas}
-					expandedTables={expandedTables}
+					{expandedSchemas}
+					{expandedTables}
 					onChangeDatabase={handleDatabaseChange}
 					onSearchChange={(value) => (explorerSearch = value)}
 					onToggleSchema={toggleSchema}
@@ -1118,40 +1261,76 @@
 					onFollowForeignKey={followForeignKey}
 				/>
 
-				<section class="flex-1 relative flex flex-col min-w-0 min-h-0 bg-white border-l border-gray-100">
-					<div class="flex items-center bg-gray-50/80 border-b border-gray-200 overflow-x-auto hide-scrollbar shrink-0">
+				<section
+					class="flex-1 relative flex flex-col min-w-0 min-h-0 bg-white border-l border-gray-100"
+				>
+					<div
+						class="flex items-center bg-gray-50/80 border-b border-gray-200 overflow-x-auto hide-scrollbar shrink-0"
+					>
 						{#each tabs as tab}
-							<div class={`flex items-center min-w-0 max-w-72 px-4 py-2 border-r border-gray-200 border-t-2 text-sm font-medium relative z-10 -mb-[1px] ${tab.id === activeTabId ? "bg-white border-t-emerald-500 text-gray-800" : "border-t-transparent text-gray-500 hover:bg-gray-100/50 hover:text-gray-700"}`}>
+							<div
+								class={`flex items-center min-w-0 max-w-72 px-4 py-2 border-r border-gray-200 border-t-2 text-sm font-medium relative z-10 -mb-[1px] ${tab.id === activeTabId ? 'bg-white border-t-emerald-500 text-gray-800' : 'border-t-transparent text-gray-500 hover:bg-gray-100/50 hover:text-gray-700'}`}
+							>
 								<button
-									onclick={() => { activeTabId = tab.id; tabContextMenu = null; }}
+									onclick={() => {
+										activeTabId = tab.id;
+										tabContextMenu = null;
+									}}
 									oncontextmenu={(event) => openTabContextMenu(event, tab.id)}
 									class="inline-flex items-center space-x-2 min-w-0 flex-1"
 								>
-									<FileCode2 size={16} class={`shrink-0 ${tab.id === activeTabId ? "text-emerald-500" : ""}`} />
+									<FileCode2
+										size={16}
+										class={`shrink-0 ${tab.id === activeTabId ? 'text-emerald-500' : ''}`}
+									/>
 									<span class="truncate">{tab.title}</span>
 								</button>
-								<button onclick={() => { closeTab(tab.id); tabContextMenu = null; }} class="text-gray-400 hover:text-gray-600 ml-2 shrink-0" aria-label={`Close ${tab.title}`}>x</button>
+								<button
+									onclick={() => {
+										closeTab(tab.id);
+										tabContextMenu = null;
+									}}
+									class="text-gray-400 hover:text-gray-600 ml-2 shrink-0"
+									aria-label={`Close ${tab.title}`}>x</button
+								>
 							</div>
 						{/each}
-						<button onclick={() => addQueryTab()} class="px-3 py-2 text-gray-400 hover:text-gray-600 transition-colors">+</button>
+						<button
+							onclick={() => addQueryTab()}
+							class="px-3 py-2 text-gray-400 hover:text-gray-600 transition-colors"
+							>+</button
+						>
 					</div>
 					{#if tabContextMenu}
-						<button class="fixed inset-0 z-40" aria-label="Close tab menu" onclick={() => (tabContextMenu = null)}></button>
+						<button
+							class="fixed inset-0 z-40"
+							aria-label="Close tab menu"
+							onclick={() => (tabContextMenu = null)}
+						></button>
 						<div
 							class="fixed z-50 min-w-[180px] bg-white rounded-md border border-gray-200 shadow-[0_8px_24px_rgba(0,0,0,0.12)] py-1"
 							style={`left:${tabContextMenu.x}px;top:${tabContextMenu.y}px;`}
 						>
-							<button onclick={closeAllTabs} class="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50">
+							<button
+								onclick={closeAllTabs}
+								class="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+							>
 								Close all
 							</button>
-							<button onclick={() => closeAllTabsBut(tabContextMenu?.tabId ?? "")} class="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50">
+							<button
+								onclick={() => closeAllTabsBut(tabContextMenu?.tabId ?? '')}
+								class="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+							>
 								Close all but this
 							</button>
 						</div>
 					{/if}
 
-					{#if activeTab?.kind === "query"}
-						<div bind:this={sqlSplitContainer} class={`flex-1 flex flex-col min-h-0 bg-white ${resizingResults ? "select-none cursor-row-resize" : ""}`}>
+					{#if activeTab?.kind === 'query'}
+						<div
+							bind:this={sqlSplitContainer}
+							class={`flex-1 flex flex-col min-h-0 bg-white ${resizingResults ? 'select-none cursor-row-resize' : ''}`}
+						>
 							<SqlEditor
 								value={activeTab.sql}
 								onChange={setActiveSql}
@@ -1169,17 +1348,27 @@
 								onpointerdown={startResultsResize}
 								class="h-1.5 bg-gray-100 border-y border-gray-200 hover:bg-emerald-400/50 cursor-row-resize transition-colors shrink-0 z-20 relative flex items-center justify-center"
 							>
-								<div class="w-8 h-0.5 bg-gray-300 rounded-full pointer-events-none"></div>
+								<div
+									class="w-8 h-0.5 bg-gray-300 rounded-full pointer-events-none"
+								></div>
 							</button>
 
-							<div style={`height:${resultsPaneHeight}px;`} class="flex flex-col bg-white shrink-0 min-h-0">
+							<div
+								style={`height:${resultsPaneHeight}px;`}
+								class="flex flex-col bg-white shrink-0 min-h-0"
+							>
 								<ResultsPane
 									result={activeTab.result}
 									sqlError={activeTab.sqlError || globalError}
 									resultContext={activeTab.resultContext}
 									loading={isRunningQuery}
 									refreshSql={activeTab.lastRunSql}
-									onRunSql={(query) => executeQuery(query, { pushToHistory: false, targetTabId: activeTab.id, context: activeTab.resultContext })}
+									onRunSql={(query) =>
+										executeQuery(query, {
+											pushToHistory: false,
+											targetTabId: activeTab.id,
+											context: activeTab.resultContext,
+										})}
 									onApplyTableChanges={applyTableChanges}
 									durationMs={activeTab.result.durationMs || queryDurationMs}
 								/>
@@ -1193,48 +1382,106 @@
 								resultContext={activeTab.resultContext}
 								loading={isRunningQuery}
 								refreshSql={activeTab.lastRunSql}
-								onRunSql={(query) => executeQuery(query, { pushToHistory: false, targetTabId: activeTab.id, context: activeTab.resultContext })}
+								onRunSql={(query) =>
+									executeQuery(query, {
+										pushToHistory: false,
+										targetTabId: activeTab.id,
+										context: activeTab.resultContext,
+									})}
 								onApplyTableChanges={applyTableChanges}
 								durationMs={activeTab.result.durationMs || queryDurationMs}
 							/>
 						</div>
 					{:else}
 						<div class="flex-1 flex items-center justify-center p-6 bg-gray-50">
-							<div class="w-full max-w-md rounded-xl border border-gray-200 bg-white p-5">
-								<div class="text-sm font-semibold text-gray-900 mb-3">Quick Shortcuts</div>
+							<div
+								class="w-full max-w-md rounded-xl border border-gray-200 bg-white p-5"
+							>
+								<div class="text-sm font-semibold text-gray-900 mb-3">
+									Quick Shortcuts
+								</div>
 								<div class="space-y-2 text-xs text-gray-600">
-									<div class="flex items-center justify-between"><span>Run Query</span><span class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono-code">Ctrl+Enter</span></div>
-									<div class="flex items-center justify-between"><span>Save Query</span><span class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono-code">Ctrl+S</span></div>
-									<div class="flex items-center justify-between"><span>Format SQL</span><span class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono-code">Shift+Alt+F</span></div>
-									<div class="flex items-center justify-between"><span>New Query Tab</span><span class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono-code">+</span></div>
+									<div class="flex items-center justify-between">
+										<span>Run Query</span><span
+											class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono-code"
+											>Ctrl+Enter</span
+										>
+									</div>
+									<div class="flex items-center justify-between">
+										<span>Save Query</span><span
+											class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono-code"
+											>Ctrl+S</span
+										>
+									</div>
+									<div class="flex items-center justify-between">
+										<span>Format SQL</span><span
+											class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono-code"
+											>Shift+Alt+F</span
+										>
+									</div>
+									<div class="flex items-center justify-between">
+										<span>New Query Tab</span><span
+											class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono-code"
+											>+</span
+										>
+									</div>
 								</div>
 								<div class="mt-4">
-									<button onclick={() => addQueryTab("SELECT 1;")} class="h-8 px-3 rounded-md border border-emerald-500 bg-emerald-500 text-white text-xs hover:bg-emerald-600 hover:border-emerald-600">Open Query Tab</button>
+									<button
+										onclick={() => addQueryTab('SELECT 1;')}
+										class="h-8 px-3 rounded-md border border-emerald-500 bg-emerald-500 text-white text-xs hover:bg-emerald-600 hover:border-emerald-600"
+										>Open Query Tab</button
+									>
 								</div>
 							</div>
 						</div>
 					{/if}
 				</section>
 			{:else}
-				<section class="flex-1 min-w-0 flex border-l border-gray-100 bg-gray-50">
-					<aside class="w-[260px] border-r border-gray-200 bg-white flex flex-col shrink-0">
-						<div class="h-11 px-4 border-b border-gray-200 flex items-center text-xs font-semibold tracking-[0.08em] text-gray-500 uppercase">Explorer</div>
+				<section
+					class="flex-1 min-w-0 flex border-l border-gray-100 bg-gray-50"
+				>
+					<aside
+						class="w-[260px] border-r border-gray-200 bg-white flex flex-col shrink-0"
+					>
+						<div
+							class="h-11 px-4 border-b border-gray-200 flex items-center text-xs font-semibold tracking-[0.08em] text-gray-500 uppercase"
+						>
+							Explorer
+						</div>
 						<div class="p-4 text-sm overflow-auto">
-							{#if mainView === "saved_queries"}
+							{#if mainView === 'saved_queries'}
 								<div class="space-y-3">
 									<div>
-									<div class="text-gray-700 font-medium mb-2">Saved Queries</div>
+										<div class="text-gray-700 font-medium mb-2">
+											Saved Queries
+										</div>
 										<div class="space-y-1">
 											{#if favoritesForConnection.length === 0}
-												<div class="text-xs text-gray-500">No saved queries</div>
+												<div class="text-xs text-gray-500">
+													No saved queries
+												</div>
 											{:else}
 												{#each favoritesForConnection as item}
-													<div class={`w-full px-2 py-1.5 rounded-md flex items-center gap-2 min-w-0 ${selectedSavedQueryId === item.id ? "bg-gray-100 text-gray-900" : "text-gray-700 hover:bg-gray-50"}`}>
-														<button onclick={() => (selectedSavedQueryId = item.id)} class="min-w-0 flex-1 text-left inline-flex items-center gap-2">
-															<FileCode2 size={14} class="shrink-0 text-emerald-500" />
+													<div
+														class={`w-full px-2 py-1.5 rounded-md flex items-center gap-2 min-w-0 ${selectedSavedQueryId === item.id ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'}`}
+													>
+														<button
+															onclick={() => (selectedSavedQueryId = item.id)}
+															class="min-w-0 flex-1 text-left inline-flex items-center gap-2"
+														>
+															<FileCode2
+																size={14}
+																class="shrink-0 text-emerald-500"
+															/>
 															<span class="truncate">{item.title}</span>
 														</button>
-														<button onclick={() => deleteSavedQuery(item.id)} class="shrink-0 text-gray-400 hover:text-red-600" aria-label={`Delete ${item.title}`} title="Delete saved query">
+														<button
+															onclick={() => deleteSavedQuery(item.id)}
+															class="shrink-0 text-gray-400 hover:text-red-600"
+															aria-label={`Delete ${item.title}`}
+															title="Delete saved query"
+														>
 															<Trash2 size={14} />
 														</button>
 													</div>
@@ -1243,7 +1490,7 @@
 										</div>
 									</div>
 								</div>
-							{:else if mainView === "last_queries"}
+							{:else if mainView === 'last_queries'}
 								<div class="space-y-2">
 									<div class="text-gray-700 font-medium mb-2">Last Queries</div>
 									<div class="space-y-1">
@@ -1251,9 +1498,16 @@
 											<div class="text-xs text-gray-500">No query history</div>
 										{:else}
 											{#each historyForConnection as item, index}
-												<button onclick={() => (selectedHistoryIndex = index)} class={`w-full text-left px-2 py-1.5 rounded-md min-w-0 ${selectedHistoryIndex === index ? "bg-gray-100 text-gray-900" : "text-gray-700 hover:bg-gray-50"}`}>
-													<div class="truncate font-mono-code text-xs">{item.sql}</div>
-													<div class="mt-1 text-[10px] text-gray-500">{item.time} • {item.durationMs}ms</div>
+												<button
+													onclick={() => (selectedHistoryIndex = index)}
+													class={`w-full text-left px-2 py-1.5 rounded-md min-w-0 ${selectedHistoryIndex === index ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'}`}
+												>
+													<div class="truncate font-mono-code text-xs">
+														{item.sql}
+													</div>
+													<div class="mt-1 text-[10px] text-gray-500">
+														{item.time} • {item.durationMs}ms
+													</div>
 												</button>
 											{/each}
 										{/if}
@@ -1264,16 +1518,21 @@
 					</aside>
 
 					<div class="flex-1 min-w-0 flex flex-col">
-						{#if mainView === "saved_queries"}
-							<div class="h-11 px-6 border-b border-gray-200 bg-white flex items-center justify-between">
+						{#if mainView === 'saved_queries'}
+							<div
+								class="h-11 px-6 border-b border-gray-200 bg-white flex items-center justify-between"
+							>
 								<div class="inline-flex items-center gap-2 min-w-0">
 									<FileCode2 size={15} class="text-emerald-500 shrink-0" />
-									<span class="text-sm font-semibold text-gray-900 truncate">{selectedSavedQuery?.title ?? "saved_query.sql"}</span>
+									<span class="text-sm font-semibold text-gray-900 truncate"
+										>{selectedSavedQuery?.title ?? 'saved_query.sql'}</span
+									>
 								</div>
 								<div class="flex items-center gap-2">
 									<button
 										onclick={() => {
-											if (selectedSavedQuery) deleteSavedQuery(selectedSavedQuery.id);
+											if (selectedSavedQuery)
+												deleteSavedQuery(selectedSavedQuery.id);
 										}}
 										disabled={!selectedSavedQuery}
 										class="h-8 px-3 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-60"
@@ -1282,7 +1541,8 @@
 									</button>
 									<button
 										onclick={() => {
-											if (selectedSavedQuery) openSavedQuery(selectedSavedQuery.sql);
+											if (selectedSavedQuery)
+												openSavedQuery(selectedSavedQuery.sql);
 										}}
 										disabled={!selectedSavedQuery}
 										class="h-8 px-3 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-60"
@@ -1294,30 +1554,49 @@
 							<div class="flex-1 overflow-auto p-6">
 								{#if selectedSavedQuery}
 									<div class="rounded-xl border border-gray-200 bg-white p-4">
-										<pre class="font-mono-code text-sm leading-7 text-gray-700 whitespace-pre-wrap">{selectedSavedQuery.sql}</pre>
+										<pre
+											class="font-mono-code text-sm leading-7 text-gray-700 whitespace-pre-wrap">{selectedSavedQuery.sql}</pre>
 									</div>
 								{:else}
-									<div class="h-full flex items-center justify-center text-sm text-gray-500">No saved queries yet for this connection.</div>
+									<div
+										class="h-full flex items-center justify-center text-sm text-gray-500"
+									>
+										No saved queries yet for this connection.
+									</div>
 								{/if}
 							</div>
-						{:else if mainView === "last_queries"}
-							<div class="h-11 px-6 border-b border-gray-200 bg-white flex items-center">
+						{:else if mainView === 'last_queries'}
+							<div
+								class="h-11 px-6 border-b border-gray-200 bg-white flex items-center"
+							>
 								<div class="inline-flex items-center gap-2 min-w-0">
 									<FileCode2 size={15} class="text-emerald-500 shrink-0" />
-									<span class="text-sm font-semibold text-gray-900 truncate">last_queries.sql</span>
+									<span class="text-sm font-semibold text-gray-900 truncate"
+										>last_queries.sql</span
+									>
 								</div>
 							</div>
 							<div class="flex-1 overflow-auto p-6">
 								{#if selectedHistoryQuery}
 									<div class="rounded-xl border border-gray-200 bg-white p-4">
-										<div class="text-xs text-gray-500 mb-3">{selectedHistoryQuery.time} • {selectedHistoryQuery.durationMs}ms • {selectedHistoryQuery.success ? "Success" : "Error"}</div>
-										<pre class="font-mono-code text-sm leading-7 text-gray-700 whitespace-pre-wrap">{selectedHistoryQuery.sql}</pre>
+										<div class="text-xs text-gray-500 mb-3">
+											{selectedHistoryQuery.time} • {selectedHistoryQuery.durationMs}ms
+											• {selectedHistoryQuery.success ? 'Success' : 'Error'}
+										</div>
+										<pre
+											class="font-mono-code text-sm leading-7 text-gray-700 whitespace-pre-wrap">{selectedHistoryQuery.sql}</pre>
 										{#if selectedHistoryQuery.error}
-											<div class="mt-3 text-xs text-red-600">{selectedHistoryQuery.error}</div>
+											<div class="mt-3 text-xs text-red-600">
+												{selectedHistoryQuery.error}
+											</div>
 										{/if}
 									</div>
 								{:else}
-									<div class="h-full flex items-center justify-center text-sm text-gray-500">No query history for this connection.</div>
+									<div
+										class="h-full flex items-center justify-center text-sm text-gray-500"
+									>
+										No query history for this connection.
+									</div>
 								{/if}
 							</div>
 						{/if}
@@ -1331,12 +1610,12 @@
 		visible={showConnectionModal}
 		editing={editingConnectionName !== null}
 		mode={connectionInputMode}
-		connectionForm={connectionForm}
-		connectionStringInput={connectionStringInput}
-		testConnectionMessage={testConnectionMessage}
-		testConnectionOk={testConnectionOk}
-		isTestingConnection={isTestingConnection}
-		isConnecting={isConnecting}
+		{connectionForm}
+		{connectionStringInput}
+		{testConnectionMessage}
+		{testConnectionOk}
+		{isTestingConnection}
+		{isConnecting}
 		onClose={() => {
 			showConnectionModal = false;
 			editingConnectionName = null;
@@ -1349,23 +1628,47 @@
 	/>
 
 	{#if showRenameModal && renameTarget}
-		<div class="fixed inset-0 z-70 bg-black/55 backdrop-blur-[1px] flex items-center justify-center p-4">
-			<div class="w-full max-w-md rounded-xl border border-gray-200 bg-white shadow-[0_24px_60px_rgba(16,37,70,0.26)]">
-				<div class="h-10 px-4 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+		<div
+			class="fixed inset-0 z-70 bg-black/55 backdrop-blur-[1px] flex items-center justify-center p-4"
+		>
+			<div
+				class="w-full max-w-md rounded-xl border border-gray-200 bg-white shadow-[0_24px_60px_rgba(16,37,70,0.26)]"
+			>
+				<div
+					class="h-10 px-4 border-b border-gray-200 flex items-center justify-between bg-gray-50"
+				>
 					<h3 class="text-sm font-semibold text-gray-900">Rename Table</h3>
-					<button onclick={() => (showRenameModal = false)} class="text-gray-500 hover:text-gray-900">x</button>
+					<button
+						onclick={() => (showRenameModal = false)}
+						class="text-gray-500 hover:text-gray-900">x</button
+					>
 				</div>
 				<div class="p-4 space-y-3">
-					<div class="text-xs text-gray-500">Current table: <span class="text-gray-900">{renameTarget.schema}.{renameTarget.table}</span></div>
-					<input bind:value={renameValue} placeholder="New table name" class="ui-input w-full h-9 text-sm px-2" />
+					<div class="text-xs text-gray-500">
+						Current table: <span class="text-gray-900"
+							>{renameTarget.schema}.{renameTarget.table}</span
+						>
+					</div>
+					<input
+						bind:value={renameValue}
+						placeholder="New table name"
+						class="ui-input w-full h-9 text-sm px-2"
+					/>
 				</div>
-				<div class="h-12 px-4 border-t border-gray-200 flex items-center justify-end gap-2 bg-gray-50">
-					<button onclick={() => (showRenameModal = false)} class="btn-secondary h-8 px-3 rounded-md text-xs">Cancel</button>
-					<button onclick={submitRename} class="btn-primary h-8 px-3 rounded-md text-xs font-medium">Rename</button>
+				<div
+					class="h-12 px-4 border-t border-gray-200 flex items-center justify-end gap-2 bg-gray-50"
+				>
+					<button
+						onclick={() => (showRenameModal = false)}
+						class="btn-secondary h-8 px-3 rounded-md text-xs">Cancel</button
+					>
+					<button
+						onclick={submitRename}
+						class="btn-primary h-8 px-3 rounded-md text-xs font-medium"
+						>Rename</button
+					>
 				</div>
 			</div>
 		</div>
 	{/if}
 </main>
-
-
