@@ -1,0 +1,116 @@
+@import "tailwindcss";
+
+* {
+	box-sizing: border-box;
+}
+
+:root {
+	color-scheme: light;
+	--canvas: #f9fafb;
+	--surface-0: #ffffff;
+	--surface-1: #f8fafc;
+	--surface-2: #f1f5f9;
+	--border-soft: #e5e7eb;
+	--border-strong: #d1d5db;
+	--text: #1f2937;
+	--text-muted: #6b7280;
+	--title: #111827;
+	--accent: #10b981;
+	--danger: #dc2626;
+}
+
+body {
+	margin: 0;
+	padding: 0;
+	background: var(--canvas);
+	color: var(--text);
+	font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+	-webkit-font-smoothing: antialiased;
+}
+
+#app {
+	min-height: 100vh;
+}
+
+button,
+[role="button"] {
+	cursor: pointer;
+	transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+button:disabled {
+	cursor: not-allowed;
+}
+
+::-webkit-scrollbar {
+	width: 6px;
+	height: 6px;
+}
+
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+	background: #d1d5db;
+	border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: #9ca3af;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+	display: none;
+}
+
+.hide-scrollbar {
+	-ms-overflow-style: none;
+	scrollbar-width: none;
+}
+
+.canvas-grid {
+	background-image: radial-gradient(circle, #cbd5e1 1px, transparent 1px);
+	background-size: 24px 24px;
+}
+
+.font-mono-code {
+	font-family: "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.ui-input {
+	background: #f9fafb;
+	border: 1px solid var(--border-soft);
+	border-radius: 6px;
+	color: var(--text);
+	transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.ui-input:focus {
+	outline: none;
+	border-color: #10b981;
+	box-shadow: 0 0 0 1px #10b981;
+}
+
+.btn-primary {
+	background: #111827;
+	border: 1px solid #111827;
+	color: #ffffff;
+	border-radius: 6px;
+}
+
+.btn-primary:hover {
+	background: #0b1220;
+	border-color: #0b1220;
+}
+
+.btn-secondary {
+	background: #ffffff;
+	border: 1px solid var(--border-soft);
+	color: var(--text);
+	border-radius: 6px;
+}
+
+.btn-secondary:hover {
+	background: #f9fafb;
+}

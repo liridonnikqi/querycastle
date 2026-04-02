@@ -1,0 +1,20 @@
+# Dependencies and build outputs
+node_modules/
+dist/
+.cargo-target/
+src-tauri/target/
+
+# Environment
+.env
+.env.local
+
+# IDE/editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

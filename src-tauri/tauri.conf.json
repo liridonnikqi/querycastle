@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "DBX",
+  "version": "0.1.0",
+  "identifier": "com.dbx.app",
+  "build": {
+    "beforeDevCommand": "bun run dev:frontend",
+    "beforeBuildCommand": "bun run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "DBX",
+        "width": 1280,
+        "height": 800,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": "v1Compatible",
+    "targets": "all",
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYxQTE4ODZFMTRDMjUxMTcKUldRWFVjSVVib2loOFovSFB0VU44TmNacCtGbGJwN2x6Sm8rWGZ3RC84SmdMZUpjMVk4bFBzMDAK",
+      "endpoints": [
+        "https://github.com/liridonnikqi/cookpg-releases/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

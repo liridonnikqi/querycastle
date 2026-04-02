@@ -1,0 +1,109 @@
+<script lang="ts">
+	import { Database, Pencil, Plug, Plus, Trash2 } from "@lucide/svelte";
+	import type { ConnectionInput } from "../lib/rpc";
+
+	let {
+		savedConnections,
+		onConnect,
+		onCreate,
+		onEdit,
+		onDelete,
+		connectingName,
+		searchQuery,
+	}: {
+		savedConnections: ConnectionInput[];
+		onConnect: (connection: ConnectionInput) => void;
+		onCreate: () => void;
+		onEdit: (connection: ConnectionInput) => void;
+		onDelete: (name: string) => void;
+		connectingName: string | null;
+		searchQuery: string;
+	} = $props();
+
+	let filteredConnections = $derived.by(() => {
+		const query = searchQuery.trim().toLowerCase();
+		if (!query) return savedConnections;
+		return savedConnections.filter((connection) => {
+			return (
+				connection.name.toLowerCase().includes(query) ||
+				connection.host.toLowerCase().includes(query) ||
+				connection.database.toLowerCase().includes(query)
+			);
+		});
+	});
+</script>
+
+<section class="flex-1 overflow-auto px-8 py-10 bg-transparent flex flex-col items-center justify-center">
+	<div class="w-full max-w-5xl mx-auto">
+		<div class="flex items-start justify-between gap-4 mb-8">
+			<div>
+				<p class="text-xs uppercase tracking-[0.12em] text-gray-500 font-semibold mb-3">Database Workspace</p>
+				<h1 class="text-gray-900 text-4xl font-semibold tracking-[-0.02em]">Choose a connection</h1>
+				<p class="text-gray-500 text-[15px] mt-2 max-w-md leading-relaxed">Start from a saved connection, then browse tables or run SQL in one place.</p>
+			</div>
+			<button onclick={onCreate} class="h-10 px-5 rounded-lg text-sm font-medium inline-flex items-center gap-2 shadow-sm border border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-600 hover:border-emerald-600">
+				<Plus size={16} />
+				New Connection
+			</button>
+		</div>
+
+		{#if savedConnections.length === 0}
+			<div class="rounded-2xl border border-gray-200 bg-white p-12 text-center shadow-sm">
+				<div class="w-14 h-14 mx-auto rounded-xl bg-gray-50 border border-gray-200 flex items-center justify-center text-gray-700 mb-5 shadow-inner">
+					<Database size={24} strokeWidth={1.5} />
+				</div>
+				<h2 class="text-gray-900 text-xl font-semibold tracking-tight">No saved connections</h2>
+				<p class="text-gray-500 text-[15px] mt-2">Create your first PostgreSQL connection to continue.</p>
+				<button onclick={onCreate} class="mt-6 h-10 px-6 rounded-lg text-sm font-medium shadow-sm border border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-600 hover:border-emerald-600">Create Connection</button>
+			</div>
+		{:else if filteredConnections.length === 0}
+			<div class="rounded-2xl border border-dashed border-gray-300 bg-white p-12 text-center text-gray-500 text-[15px] font-medium">
+				No saved connections match your search.
+			</div>
+		{:else}
+			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+				{#each filteredConnections as connection}
+					<div class="group rounded-xl border border-gray-200 bg-white p-5 hover:border-gray-300 hover:shadow-md transition-all duration-300 relative overflow-hidden flex flex-col">
+						<div class="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+							<button onclick={() => onEdit(connection)} class="text-gray-500 hover:text-gray-900 bg-white/80 backdrop-blur rounded p-1.5 shadow-sm border border-gray-200" aria-label="Edit connection" title="Edit connection">
+								<Pencil size={14} />
+							</button>
+							<button onclick={() => onDelete(connection.name)} class="text-gray-500 hover:text-red-600 bg-white/80 backdrop-blur rounded p-1.5 shadow-sm border border-gray-200" aria-label="Delete connection" title="Delete connection">
+								<Trash2 size={14} />
+							</button>
+						</div>
+						<div class="flex items-start gap-4 mb-6">
+							<div class="w-10 h-10 rounded-lg bg-gray-50 border border-gray-200 flex items-center justify-center text-gray-700 shrink-0">
+								<Database size={18} strokeWidth={1.5} />
+							</div>
+							<div class="min-w-0 flex-1">
+								<div class="text-gray-900 text-[15px] font-semibold truncate tracking-tight">{connection.name}</div>
+								<div class="text-gray-500 text-[13px] mt-1 truncate font-mono-code">{connection.user}@{connection.host}</div>
+							</div>
+						</div>
+						
+						<div class="mt-auto">
+							<div class="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg mb-4 text-[13px] text-gray-500 font-mono-code border border-gray-200">
+								<div class="w-2 h-2 rounded-full bg-emerald-500"></div>
+								<span class="truncate">{connection.database}</span>
+							</div>
+							<button
+								onclick={() => onConnect(connection)}
+								disabled={connectingName === connection.name}
+								class="w-full h-10 rounded-lg text-[13px] font-semibold disabled:opacity-60 inline-flex items-center justify-center gap-2 border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-colors"
+							>
+								{#if connectingName === connection.name}
+									<div class="w-4 h-4 border-2 border-gray-300 border-t-gray-700 rounded-full animate-spin"></div>
+									Connecting...
+								{:else}
+									<Plug size={14} />
+									Connect
+								{/if}
+							</button>
+						</div>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</div>
+</section>
