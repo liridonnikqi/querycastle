@@ -64,8 +64,13 @@
 		<div class="flex items-start justify-between gap-4 mb-8">
 			<div>
 				<p
-					class="text-xs uppercase tracking-[0.12em] text-gray-500 font-semibold mb-3"
+					class="text-xs uppercase tracking-[0.12em] text-gray-500 font-semibold mb-3 flex items-center gap-2"
 				>
+					<span
+						class="inline-flex items-center justify-center w-5 h-5 rounded bg-emerald-100"
+					>
+						<Database size={14} strokeWidth={2} color="#059669" />
+					</span>
 					Database Workspace
 				</p>
 				<h1 class="text-gray-900 text-4xl font-semibold tracking-[-0.02em]">
