@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    dbx_tauri_lib::run();
+    querycastle_tauri_lib::run();
 }
+
+

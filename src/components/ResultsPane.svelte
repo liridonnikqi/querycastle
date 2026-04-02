@@ -56,12 +56,12 @@
 	let activeView = $state<ResultView>("results");
 
 	let editable = $derived.by(
-		() => !!resultContext && displayResult.columns.includes("_dbx_ctid"),
+		() => !!resultContext && displayResult.columns.includes("_querycastle_ctid"),
 	);
-	let visibleColumns = $derived.by(() => displayResult.columns.filter((column) => column !== "_dbx_ctid"));
-	let editableColumns = $derived.by(() => displayResult.columns.filter((column) => column !== "_dbx_ctid"));
+	let visibleColumns = $derived.by(() => displayResult.columns.filter((column) => column !== "_querycastle_ctid"));
+	let editableColumns = $derived.by(() => displayResult.columns.filter((column) => column !== "_querycastle_ctid"));
 	let visibleRows = $derived.by(() =>
-		displayResult.rows.filter((row) => !pendingDeletes.has(String(row["_dbx_ctid"] ?? ""))),
+		displayResult.rows.filter((row) => !pendingDeletes.has(String(row["_querycastle_ctid"] ?? ""))),
 	);
 	const skeletonRowCount = 10;
 	const skeletonRows = Array.from({ length: skeletonRowCount }, (_, index) => index);
@@ -107,7 +107,7 @@
 		const orderByClause = firstVisibleColumn
 			? ` order by ${quoteIdent(firstVisibleColumn)} asc nulls last`
 			: "";
-		return `select ctid::text as _dbx_ctid, * from ${quoteIdent(resultContext.schema)}.${quoteIdent(resultContext.table)}${orderByClause} limit 100;`;
+		return `select ctid::text as _querycastle_ctid, * from ${quoteIdent(resultContext.schema)}.${quoteIdent(resultContext.table)}${orderByClause} limit 100;`;
 	}
 
 	$effect(() => {
@@ -187,7 +187,7 @@
 	}
 
 	function beginEdit(rowId: string, column: string, currentValue: unknown) {
-		if (!editable || column === "_dbx_ctid") return;
+		if (!editable || column === "_querycastle_ctid") return;
 		editingCell = { rowId, column };
 		editDraft = displayValue(currentValue);
 	}
@@ -197,7 +197,7 @@
 		const { rowId, column } = editingCell;
 		const nextValue = coerceValue(editDraft, sampleValue(column));
 		const map = new Map(pendingUpdates);
-		const row = displayResult.rows.find((item) => String(item["_dbx_ctid"] ?? "") === rowId);
+		const row = displayResult.rows.find((item) => String(item["_querycastle_ctid"] ?? "") === rowId);
 		const baseValue = row ? row[column] : undefined;
 		const prev = { ...(pendingUpdates.get(rowId) ?? {}) };
 
@@ -232,7 +232,7 @@
 
 	function toggleSelectAllVisible() {
 		const ids = visibleRows
-			.map((row) => String(row["_dbx_ctid"] ?? ""))
+			.map((row) => String(row["_querycastle_ctid"] ?? ""))
 			.filter((id) => id.length > 0);
 		const allSelected = ids.length > 0 && ids.every((id) => selectedRows.has(id));
 		selectedRows = allSelected ? new Set() : new Set(ids);
@@ -352,11 +352,11 @@
 			const nextHighlights: Array<{ rowId: string; column: string }> = [];
 			const nextRows = displayResult.rows
 				.filter((row) => {
-					const ctid = String(row["_dbx_ctid"] ?? "");
+					const ctid = String(row["_querycastle_ctid"] ?? "");
 					return !ctid || !deleteSet.has(ctid);
 				})
 				.map((row) => {
-					const ctid = String(row["_dbx_ctid"] ?? "");
+					const ctid = String(row["_querycastle_ctid"] ?? "");
 					const updatedRow = ctid ? updatedRowsByOldCtid.get(ctid) : undefined;
 					if (!updatedRow) return row;
 					const optimisticValues = ctid ? updatesByOldCtid.get(ctid) : undefined;
@@ -364,7 +364,7 @@
 						...row,
 						...(optimisticValues ?? {}),
 						...updatedRow.values,
-						_dbx_ctid: updatedRow.newCtid,
+						_querycastle_ctid: updatedRow.newCtid,
 					};
 					for (const column of Object.keys(optimisticValues ?? {})) {
 						nextHighlights.push({ rowId: updatedRow.newCtid, column });
@@ -541,7 +541,7 @@
 									<input
 										type="checkbox"
 										onchange={toggleSelectAllVisible}
-										checked={visibleRows.length > 0 && visibleRows.every((row) => selectedRows.has(String(row["_dbx_ctid"] ?? "")))}
+										checked={visibleRows.length > 0 && visibleRows.every((row) => selectedRows.has(String(row["_querycastle_ctid"] ?? "")))}
 									/>
 								</th>
 							{/if}
@@ -559,8 +559,8 @@
 						</tr>
 					</thead>
 					<tbody class="text-gray-700">
-						{#each visibleRows as row, rowIndex (String(row["_dbx_ctid"] ?? `row-${rowIndex}`))}
-							{@const rowId = String(row["_dbx_ctid"] ?? "")}
+						{#each visibleRows as row, rowIndex (String(row["_querycastle_ctid"] ?? `row-${rowIndex}`))}
+							{@const rowId = String(row["_querycastle_ctid"] ?? "")}
 							<tr class="border-b border-gray-100 hover:bg-gray-50" oncontextmenu={(event) => openRowContextMenu(event, rowId)}>
 								{#if editable}
 									<td class="px-3 py-1.5 border-r border-gray-100">
@@ -573,7 +573,7 @@
 									{@const isEditing = editingCell && editingCell.rowId === rowId && editingCell.column === column}
 									{@const isRecentlyUpdated = highlightCells.has(cellKey(rowId, column))}
 									<td
-										class={`px-4 py-1.5 border-r border-gray-100 font-mono-code text-[12px] transition-colors duration-700 ${editable && column !== "_dbx_ctid" ? "cursor-text" : ""} ${isEditing ? "outline outline-1 -outline-offset-1 outline-emerald-400 bg-white" : ""} ${isRecentlyUpdated ? "bg-emerald-50/70" : ""}`}
+										class={`px-4 py-1.5 border-r border-gray-100 font-mono-code text-[12px] transition-colors duration-700 ${editable && column !== "_querycastle_ctid" ? "cursor-text" : ""} ${isEditing ? "outline outline-1 -outline-offset-1 outline-emerald-400 bg-white" : ""} ${isRecentlyUpdated ? "bg-emerald-50/70" : ""}`}
 										onclick={() => beginEdit(rowId, column, currentValue)}
 									>
 										{#if isEditing}
@@ -675,3 +675,5 @@
 		</div>
 	{/if}
 </div>
+
+

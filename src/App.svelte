@@ -16,7 +16,6 @@
 	import ConnectionHub from "./components/ConnectionHub.svelte";
 	import ConnectionModal from "./components/ConnectionModal.svelte";
 	import { format as formatSql } from "sql-formatter";
-	import { check } from "@tauri-apps/plugin-updater";
 	import {
 		Database,
 		Plus,
@@ -29,10 +28,10 @@
 		Trash2,
 	} from "@lucide/svelte";
 
-	const SAVED_CONNECTIONS_KEY = "dbx.savedConnections.v1";
-	const QUERY_TABS_KEY = "dbx.queryTabs.v2";
-	const QUERY_FAVORITES_KEY = "dbx.queryFavorites.v1";
-	const QUERY_HISTORY_KEY = "dbx.queryHistory.v1";
+	const SAVED_CONNECTIONS_KEY = "querycastle.savedConnections.v1";
+	const QUERY_TABS_KEY = "querycastle.queryTabs.v2";
+	const QUERY_FAVORITES_KEY = "querycastle.queryFavorites.v1";
+	const QUERY_HISTORY_KEY = "querycastle.queryHistory.v1";
 
 	type TabKind = "query" | "data";
 	type MainView =
@@ -118,8 +117,6 @@
 	let testConnectionMessage = $state("");
 	let testConnectionOk = $state(false);
 	let globalError = $state("");
-	let updaterMessage = $state("");
-	let checkingUpdates = $state(false);
 	let connectingName = $state<string | null>(null);
 	let showRenameModal = $state(false);
 	let renameTarget = $state<{ schema: string; table: string } | null>(null);
@@ -303,7 +300,7 @@
 		}
 
 		return {
-			sql: `select ctid::text as _dbx_ctid, ${selectPart} from ${tableRef}${effectiveTail};`,
+			sql: `select ctid::text as _querycastle_ctid, ${selectPart} from ${tableRef}${effectiveTail};`,
 			context: {
 				schema: contextSchema,
 				table: contextTable,
@@ -774,25 +771,6 @@
 		globalError = "";
 	}
 
-	async function checkForUpdates() {
-		checkingUpdates = true;
-		updaterMessage = "";
-		try {
-			const update = await check();
-			if (!update) {
-				updaterMessage = "You already have the latest version.";
-				return;
-			}
-			updaterMessage = `Update found: v${update.version}. Downloading...`;
-			await update.downloadAndInstall();
-			updaterMessage = "Update installed. Please restart the app to apply it.";
-		} catch (error) {
-			updaterMessage = error instanceof Error ? error.message : String(error);
-		} finally {
-			checkingUpdates = false;
-		}
-	}
-
 	async function executeQuery(
 		query: string,
 		options?: {
@@ -925,7 +903,7 @@
 			const orderByClause = firstOrderColumn
 				? ` order by ${quoteIdent(firstOrderColumn)} asc nulls last`
 				: "";
-			query = `select ctid::text as _dbx_ctid, * from ${safeSchema}.${safeTable}${orderByClause} limit 100;`;
+			query = `select ctid::text as _querycastle_ctid, * from ${safeSchema}.${safeTable}${orderByClause} limit 100;`;
 			title = `${table} [all]`;
 			context = { schema, table };
 		}
@@ -1076,9 +1054,6 @@
 		</div>
 		<div class="flex-1"></div>
 		<div class="flex items-center gap-2">
-			<button onclick={checkForUpdates} disabled={checkingUpdates} class="h-7 px-2 rounded border border-white/15 text-xs text-gray-300 hover:text-white hover:bg-white/10 disabled:opacity-60 inline-flex items-center gap-1">
-				{checkingUpdates ? "Checking..." : "Check Updates"}
-			</button>
 			<button onclick={startCreateConnection} class="h-7 px-2 rounded border border-white/15 text-xs text-gray-300 hover:text-white hover:bg-white/10 inline-flex items-center gap-1">
 				<Plus size={12} />
 				Connection
@@ -1352,12 +1327,6 @@
 		</div>
 	{/if}
 
-	{#if updaterMessage}
-		<div class="fixed right-4 bottom-4 max-w-md rounded-md border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700 shadow-lg z-[120]">
-			{updaterMessage}
-		</div>
-	{/if}
-
 	<ConnectionModal
 		visible={showConnectionModal}
 		editing={editingConnectionName !== null}
@@ -1398,3 +1367,5 @@
 		</div>
 	{/if}
 </main>
+
+

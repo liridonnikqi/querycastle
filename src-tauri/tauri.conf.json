@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "DBX",
+  "productName": "QueryCastle",
   "version": "0.1.0",
-  "identifier": "com.dbx.app",
+  "identifier": "com.querycastle.app",
   "build": {
     "beforeDevCommand": "bun run dev:frontend",
     "beforeBuildCommand": "bun run build",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "DBX",
+        "title": "QueryCastle",
         "width": 1280,
         "height": 800,
         "resizable": true
@@ -37,8 +37,10 @@
       "active": true,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYxQTE4ODZFMTRDMjUxMTcKUldRWFVjSVVib2loOFovSFB0VU44TmNacCtGbGJwN2x6Sm8rWGZ3RC84SmdMZUpjMVk4bFBzMDAK",
       "endpoints": [
-        "https://github.com/liridonnikqi/cookpg-releases/releases/latest/download/latest.json"
+        "https://github.com/liridonnikqi/querycastle/releases/latest/download/latest.json"
       ]
     }
   }
 }
+
+

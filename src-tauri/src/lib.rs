@@ -789,7 +789,7 @@ async fn apply_table_changes(
         let entries: Vec<_> = update
             .values
             .iter()
-            .filter(|(key, _)| key.as_str() != "_dbx_ctid")
+            .filter(|(key, _)| key.as_str() != "_querycastle_ctid")
             .collect();
         if entries.is_empty() {
             continue;
@@ -801,7 +801,7 @@ async fn apply_table_changes(
             .collect::<Vec<_>>()
             .join(", ");
         let query = format!(
-            "update {safe_table} as t set {set_clause} where t.ctid = '{}'::tid returning t.ctid::text as _dbx_ctid, to_jsonb(t)::text as _dbx_row_json",
+            "update {safe_table} as t set {set_clause} where t.ctid = '{}'::tid returning t.ctid::text as _querycastle_ctid, to_jsonb(t)::text as _querycastle_row_json",
             escape_sql_string(update.ctid.as_str())
         );
         let updated_row = tx.query_opt(query.as_str(), &[]).await.map_err(sanitize_pg_error)?;
@@ -811,8 +811,8 @@ async fn apply_table_changes(
                 update.ctid
             ));
         };
-        let new_ctid: String = updated_row.try_get("_dbx_ctid").map_err(sanitize_pg_error)?;
-        let row_json: String = updated_row.try_get("_dbx_row_json").map_err(sanitize_pg_error)?;
+        let new_ctid: String = updated_row.try_get("_querycastle_ctid").map_err(sanitize_pg_error)?;
+        let row_json: String = updated_row.try_get("_querycastle_row_json").map_err(sanitize_pg_error)?;
         let values: HashMap<String, Value> = serde_json::from_str(&row_json).map_err(sanitize_error)?;
         updated_rows.push(UpdatedRowCtid {
             old_ctid: update.ctid.clone(),
@@ -840,7 +840,7 @@ async fn apply_table_changes(
     for row in &params.changes.inserts {
         let entries: Vec<_> = row
             .iter()
-            .filter(|(key, _)| key.as_str() != "_dbx_ctid")
+            .filter(|(key, _)| key.as_str() != "_querycastle_ctid")
             .collect();
         if entries.is_empty() {
             continue;
@@ -891,3 +891,5 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+

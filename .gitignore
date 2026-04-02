@@ -18,3 +18,6 @@ src-tauri/target/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Script 
+latese.ps1

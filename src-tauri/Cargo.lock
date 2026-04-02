@@ -585,24 +585,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dbx-tauri"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "native-tls",
- "postgres-native-tls",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-updater",
- "tokio",
- "tokio-postgres",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2830,6 +2812,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "querycastle-tauri"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "native-tls",
+ "postgres-native-tls",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-updater",
+ "tokio",
+ "tokio-postgres",
+ "url",
+ "uuid",
 ]
 
 [[package]]
