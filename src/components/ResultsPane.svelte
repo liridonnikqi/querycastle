@@ -1,11 +1,20 @@
 <script lang="ts">
-	import { Database, KeyRound, Play, Timer, Trash2 } from "@lucide/svelte";
-	import type { ApplyTableChangesResult, QueryResultPayload, TableChangesPayload } from "../lib/rpc";
+	import { Database, KeyRound, Play, Timer, Trash2 } from '@lucide/svelte';
+	import type {
+		ApplyTableChangesResult,
+		QueryResultPayload,
+		TableChangesPayload,
+	} from '../lib/rpc';
 
 	type RowContextMenu = { x: number; y: number; rowId: string } | null;
 	type EditingCell = { rowId: string; column: string } | null;
 	type PendingInsertRow = { id: string; values: Record<string, unknown> };
-	type ResultView = "results" | "messages" | "explain";
+	type ResultView = 'results' | 'messages' | 'explain';
+	type ColumnResizeState = {
+		column: string;
+		startX: number;
+		startWidth: number;
+	} | null;
 
 	let {
 		result,
@@ -15,7 +24,7 @@
 		onApplyTableChanges,
 		durationMs = 0,
 		loading = false,
-		refreshSql = "",
+		refreshSql = '',
 	}: {
 		result: QueryResultPayload;
 		sqlError: string;
@@ -40,34 +49,49 @@
 	let rerunning = $state(false);
 	let runningExplain = $state(false);
 	let syncingChanges = $state(false);
-	let syncError = $state("");
+	let syncError = $state('');
 	let selectedRows = $state(new Set<string>());
 	let pendingUpdates = $state(new Map<string, Record<string, unknown>>());
 	let pendingDeletes = $state(new Set<string>());
 	let pendingInserts = $state<PendingInsertRow[]>([]);
 	let rowContextMenu = $state<RowContextMenu>(null);
 	let editingCell = $state<EditingCell>(null);
-	let editDraft = $state("");
+	let editDraft = $state('');
+	let columnWidths = $state<Record<string, number>>({});
+	let columnResizeState = $state<ColumnResizeState>(null);
 	let addRowDraft = $state<Record<string, string>>({});
 	let addingNewRow = $state(false);
 	let highlightCells = $state(new Set<string>());
 	let highlightTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
-	let lastExternalResultSignature = $state("");
-	let activeView = $state<ResultView>("results");
+	let lastExternalResultSignature = $state('');
+	let activeView = $state<ResultView>('results');
+	const minColumnWidth = 120;
 
 	let editable = $derived.by(
-		() => !!resultContext && displayResult.columns.includes("_querycastle_ctid"),
+		() =>
+			!!resultContext && displayResult.columns.includes('_querycastle_ctid'),
 	);
-	let visibleColumns = $derived.by(() => displayResult.columns.filter((column) => column !== "_querycastle_ctid"));
-	let editableColumns = $derived.by(() => displayResult.columns.filter((column) => column !== "_querycastle_ctid"));
+	let visibleColumns = $derived.by(() =>
+		displayResult.columns.filter((column) => column !== '_querycastle_ctid'),
+	);
+	let editableColumns = $derived.by(() =>
+		displayResult.columns.filter((column) => column !== '_querycastle_ctid'),
+	);
 	let visibleRows = $derived.by(() =>
-		displayResult.rows.filter((row) => !pendingDeletes.has(String(row["_querycastle_ctid"] ?? ""))),
+		displayResult.rows.filter(
+			(row) => !pendingDeletes.has(String(row['_querycastle_ctid'] ?? '')),
+		),
 	);
 	const skeletonRowCount = 10;
-	const skeletonRows = Array.from({ length: skeletonRowCount }, (_, index) => index);
+	const skeletonRows = Array.from(
+		{ length: skeletonRowCount },
+		(_, index) => index,
+	);
 	let hasPendingChanges = $derived.by(
 		() =>
-			pendingUpdates.size > 0 || pendingDeletes.size > 0 || pendingInserts.length > 0,
+			pendingUpdates.size > 0 ||
+			pendingDeletes.size > 0 ||
+			pendingInserts.length > 0,
 	);
 
 	function quoteIdent(value: string) {
@@ -79,7 +103,7 @@
 		payload: QueryResultPayload,
 	): string {
 		return JSON.stringify({
-			context: context ? `${context.schema}.${context.table}` : "",
+			context: context ? `${context.schema}.${context.table}` : '',
 			columns: payload.columns,
 			rowCount: payload.rowCount,
 			rows: payload.rows,
@@ -93,20 +117,20 @@
 		pendingInserts = [];
 		rowContextMenu = null;
 		editingCell = null;
-		editDraft = "";
-		syncError = "";
+		editDraft = '';
+		syncError = '';
 		const nextDraft: Record<string, string> = {};
-		for (const column of editableColumns) nextDraft[column] = "";
+		for (const column of editableColumns) nextDraft[column] = '';
 		addRowDraft = nextDraft;
 		addingNewRow = false;
 	}
 
 	function buildDefaultContextSql() {
-		if (!resultContext) return "";
+		if (!resultContext) return '';
 		const firstVisibleColumn = visibleColumns[0];
 		const orderByClause = firstVisibleColumn
 			? ` order by ${quoteIdent(firstVisibleColumn)} asc nulls last`
-			: "";
+			: '';
 		return `select ctid::text as _querycastle_ctid, * from ${quoteIdent(resultContext.schema)}.${quoteIdent(resultContext.table)}${orderByClause} limit 100;`;
 	}
 
@@ -122,28 +146,30 @@
 		};
 		clearCellHighlights();
 		resetDraftState();
-		activeView = "results";
+		activeView = 'results';
 	});
 
 	function coerceValue(raw: string, sample: unknown): unknown {
-		if (raw.trim() === "") return null;
-		if (typeof sample === "number") {
+		if (raw.trim() === '') return null;
+		if (typeof sample === 'number') {
 			const num = Number(raw);
 			return Number.isNaN(num) ? raw : num;
 		}
-		if (typeof sample === "boolean") {
-			return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase());
+		if (typeof sample === 'boolean') {
+			return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
 		}
 		return raw;
 	}
 
 	function sampleValue(column: string): unknown {
-		const firstRow = displayResult.rows.find((row) => row[column] !== undefined);
+		const firstRow = displayResult.rows.find(
+			(row) => row[column] !== undefined,
+		);
 		return firstRow ? firstRow[column] : null;
 	}
 
 	function displayValue(value: unknown): string {
-		if (value === null || value === undefined) return "";
+		if (value === null || value === undefined) return '';
 		return String(value);
 	}
 
@@ -153,7 +179,11 @@
 		return false;
 	}
 
-	function getRowValue(row: Record<string, unknown>, rowId: string, column: string): unknown {
+	function getRowValue(
+		row: Record<string, unknown>,
+		rowId: string,
+		column: string,
+	): unknown {
 		return pendingUpdates.get(rowId)?.[column] ?? row[column];
 	}
 
@@ -161,7 +191,9 @@
 		return `${rowId}::${column}`;
 	}
 
-	function markCellsRecentlyUpdated(cells: Array<{ rowId: string; column: string }>) {
+	function markCellsRecentlyUpdated(
+		cells: Array<{ rowId: string; column: string }>,
+	) {
 		const ttlMs = 2400;
 		const next = new Set(highlightCells);
 		for (const cell of cells) {
@@ -186,8 +218,46 @@
 		highlightCells = new Set();
 	}
 
+	function getColumnWidth(column: string): number {
+		return (
+			columnWidths[column] ??
+			Math.max(minColumnWidth, Math.min(260, column.length * 11 + 56))
+		);
+	}
+
+	function setColumnWidth(column: string, width: number) {
+		const nextWidth = Math.max(minColumnWidth, Math.round(width));
+		if ((columnWidths[column] ?? getColumnWidth(column)) === nextWidth) return;
+		columnWidths = { ...columnWidths, [column]: nextWidth };
+	}
+
+	function beginColumnResize(event: PointerEvent, column: string) {
+		if (event.button !== 0) return;
+		event.preventDefault();
+		event.stopPropagation();
+		columnResizeState = {
+			column,
+			startX: event.clientX,
+			startWidth: getColumnWidth(column),
+		};
+	}
+
+	function handleColumnResizeMove(event: PointerEvent) {
+		if (!columnResizeState) return;
+		const deltaX = event.clientX - columnResizeState.startX;
+		setColumnWidth(
+			columnResizeState.column,
+			columnResizeState.startWidth + deltaX,
+		);
+	}
+
+	function stopColumnResize() {
+		if (!columnResizeState) return;
+		columnResizeState = null;
+	}
+
 	function beginEdit(rowId: string, column: string, currentValue: unknown) {
-		if (!editable || column === "_querycastle_ctid") return;
+		if (!editable || column === '_querycastle_ctid') return;
 		editingCell = { rowId, column };
 		editDraft = displayValue(currentValue);
 	}
@@ -197,7 +267,9 @@
 		const { rowId, column } = editingCell;
 		const nextValue = coerceValue(editDraft, sampleValue(column));
 		const map = new Map(pendingUpdates);
-		const row = displayResult.rows.find((item) => String(item["_querycastle_ctid"] ?? "") === rowId);
+		const row = displayResult.rows.find(
+			(item) => String(item['_querycastle_ctid'] ?? '') === rowId,
+		);
 		const baseValue = row ? row[column] : undefined;
 		const prev = { ...(pendingUpdates.get(rowId) ?? {}) };
 
@@ -215,12 +287,12 @@
 		pendingUpdates = map;
 
 		editingCell = null;
-		editDraft = "";
+		editDraft = '';
 	}
 
 	function discardEdit() {
 		editingCell = null;
-		editDraft = "";
+		editDraft = '';
 	}
 
 	function toggleRowSelected(rowId: string) {
@@ -232,9 +304,10 @@
 
 	function toggleSelectAllVisible() {
 		const ids = visibleRows
-			.map((row) => String(row["_querycastle_ctid"] ?? ""))
+			.map((row) => String(row['_querycastle_ctid'] ?? ''))
 			.filter((id) => id.length > 0);
-		const allSelected = ids.length > 0 && ids.every((id) => selectedRows.has(id));
+		const allSelected =
+			ids.length > 0 && ids.every((id) => selectedRows.has(id));
 		selectedRows = allSelected ? new Set() : new Set(ids);
 	}
 
@@ -262,16 +335,19 @@
 	function submitAddRow() {
 		if (editableColumns.length === 0) return;
 		const hasAnyValue = editableColumns.some(
-			(column) => (addRowDraft[column] ?? "").trim().length > 0,
+			(column) => (addRowDraft[column] ?? '').trim().length > 0,
 		);
 		if (!hasAnyValue) return;
 		const values: Record<string, unknown> = {};
 		for (const column of editableColumns) {
-			values[column] = coerceValue(addRowDraft[column] ?? "", sampleValue(column));
+			values[column] = coerceValue(
+				addRowDraft[column] ?? '',
+				sampleValue(column),
+			);
 		}
 		pendingInserts = [...pendingInserts, { id: crypto.randomUUID(), values }];
 		const nextDraft: Record<string, string> = {};
-		for (const column of editableColumns) nextDraft[column] = "";
+		for (const column of editableColumns) nextDraft[column] = '';
 		addRowDraft = nextDraft;
 		addingNewRow = true;
 	}
@@ -284,14 +360,15 @@
 		if (editableColumns.length === 0) return;
 		addingNewRow = true;
 		const nextDraft: Record<string, string> = {};
-		for (const column of editableColumns) nextDraft[column] = addRowDraft[column] ?? "";
+		for (const column of editableColumns)
+			nextDraft[column] = addRowDraft[column] ?? '';
 		addRowDraft = nextDraft;
 	}
 
 	function cancelInlineAddRow() {
 		addingNewRow = false;
 		const nextDraft: Record<string, string> = {};
-		for (const column of editableColumns) nextDraft[column] = "";
+		for (const column of editableColumns) nextDraft[column] = '';
 		addRowDraft = nextDraft;
 	}
 
@@ -311,16 +388,17 @@
 	}
 
 	async function runExplain() {
-		const sourceSql = refreshSql.trim().length > 0 ? refreshSql : buildDefaultContextSql();
+		const sourceSql =
+			refreshSql.trim().length > 0 ? refreshSql : buildDefaultContextSql();
 		if (!sourceSql) return;
-		const normalized = sourceSql.trim().replace(/;+\s*$/, "");
+		const normalized = sourceSql.trim().replace(/;+\s*$/, '');
 		const explainSql = /^\s*explain\b/i.test(normalized)
 			? normalized
 			: `explain (costs true, verbose false, format text) ${normalized}`;
 		runningExplain = true;
 		try {
 			await onRunSql(explainSql);
-			activeView = "results";
+			activeView = 'results';
 		} finally {
 			runningExplain = false;
 		}
@@ -329,10 +407,13 @@
 	async function syncChanges() {
 		if (!resultContext || !onApplyTableChanges || !hasPendingChanges) return;
 		syncingChanges = true;
-		syncError = "";
+		syncError = '';
 		try {
 			const payload: TableChangesPayload = {
-				updates: Array.from(pendingUpdates.entries()).map(([ctid, values]) => ({ ctid, values })),
+				updates: Array.from(pendingUpdates.entries()).map(([ctid, values]) => ({
+					ctid,
+					values,
+				})),
 				deletes: Array.from(pendingDeletes),
 				inserts: pendingInserts.map((row) => row.values),
 			};
@@ -347,19 +428,23 @@
 			const updatedRowsByOldCtid = new Map(
 				applyResult.updatedRows.map((entry) => [entry.oldCtid, entry]),
 			);
-			const updatesByOldCtid = new Map(payload.updates.map((entry) => [entry.ctid, entry.values]));
+			const updatesByOldCtid = new Map(
+				payload.updates.map((entry) => [entry.ctid, entry.values]),
+			);
 			const deleteSet = new Set(payload.deletes);
 			const nextHighlights: Array<{ rowId: string; column: string }> = [];
 			const nextRows = displayResult.rows
 				.filter((row) => {
-					const ctid = String(row["_querycastle_ctid"] ?? "");
+					const ctid = String(row['_querycastle_ctid'] ?? '');
 					return !ctid || !deleteSet.has(ctid);
 				})
 				.map((row) => {
-					const ctid = String(row["_querycastle_ctid"] ?? "");
+					const ctid = String(row['_querycastle_ctid'] ?? '');
 					const updatedRow = ctid ? updatedRowsByOldCtid.get(ctid) : undefined;
 					if (!updatedRow) return row;
-					const optimisticValues = ctid ? updatesByOldCtid.get(ctid) : undefined;
+					const optimisticValues = ctid
+						? updatesByOldCtid.get(ctid)
+						: undefined;
 					const merged = {
 						...row,
 						...(optimisticValues ?? {}),
@@ -386,7 +471,35 @@
 	}
 
 	$effect(() => {
+		const columnsSet = new Set(visibleColumns);
+		const nextWidths: Record<string, number> = {};
+		for (const [column, width] of Object.entries(columnWidths)) {
+			if (columnsSet.has(column)) nextWidths[column] = width;
+		}
+		if (Object.keys(nextWidths).length !== Object.keys(columnWidths).length) {
+			columnWidths = nextWidths;
+		}
+	});
+
+	$effect(() => {
+		if (!columnResizeState) return;
+		const moveListener = (event: PointerEvent) => handleColumnResizeMove(event);
+		const upListener = () => stopColumnResize();
+		window.addEventListener('pointermove', moveListener);
+		window.addEventListener('pointerup', upListener);
+		document.body.style.userSelect = 'none';
+		document.body.style.cursor = 'col-resize';
 		return () => {
+			window.removeEventListener('pointermove', moveListener);
+			window.removeEventListener('pointerup', upListener);
+			document.body.style.userSelect = '';
+			document.body.style.cursor = '';
+		};
+	});
+
+	$effect(() => {
+		return () => {
+			stopColumnResize();
 			clearCellHighlights();
 		};
 	});
@@ -395,91 +508,134 @@
 <div class="flex-1 flex flex-col bg-white min-w-[320px] min-h-0">
 	<div class="flex border-b border-gray-200 bg-gray-50/80 px-2 pt-2 shrink-0">
 		<button
-			onclick={() => (activeView = "results")}
-			class={`px-4 py-1.5 border-b-2 text-sm font-medium rounded-t-md relative z-10 -mb-[1px] ${activeView === "results" ? "border-emerald-500 text-gray-900 bg-white shadow-[0_-1px_2px_rgba(0,0,0,0.02)]" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+			onclick={() => (activeView = 'results')}
+			class={`px-4 py-1.5 border-b-2 text-sm font-medium rounded-t-md relative z-10 -mb-[1px] ${activeView === 'results' ? 'border-emerald-500 text-gray-900 bg-white shadow-[0_-1px_2px_rgba(0,0,0,0.02)]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
 		>
 			Results
 		</button>
 		<button
-			onclick={() => (activeView = "messages")}
-			class={`px-4 py-1.5 border-b-2 text-sm font-medium ${activeView === "messages" ? "border-emerald-500 text-gray-900 bg-white rounded-t-md shadow-[0_-1px_2px_rgba(0,0,0,0.02)] -mb-[1px]" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+			onclick={() => (activeView = 'messages')}
+			class={`px-4 py-1.5 border-b-2 text-sm font-medium ${activeView === 'messages' ? 'border-emerald-500 text-gray-900 bg-white rounded-t-md shadow-[0_-1px_2px_rgba(0,0,0,0.02)] -mb-[1px]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
 		>
 			Messages
 		</button>
 		<button
-			onclick={() => (activeView = "explain")}
-			class={`px-4 py-1.5 border-b-2 text-sm font-medium ${activeView === "explain" ? "border-emerald-500 text-gray-900 bg-white rounded-t-md shadow-[0_-1px_2px_rgba(0,0,0,0.02)] -mb-[1px]" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+			onclick={() => (activeView = 'explain')}
+			class={`px-4 py-1.5 border-b-2 text-sm font-medium ${activeView === 'explain' ? 'border-emerald-500 text-gray-900 bg-white rounded-t-md shadow-[0_-1px_2px_rgba(0,0,0,0.02)] -mb-[1px]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
 		>
 			Explain
 		</button>
 		<div class="flex-1 border-b-2 border-transparent -mb-[1px]"></div>
-		<div class="flex items-center space-x-2 px-2 border-b-2 border-transparent text-xs text-gray-500 font-medium -mb-[1px]">
+		<div
+			class="flex items-center space-x-2 px-2 border-b-2 border-transparent text-xs text-gray-500 font-medium -mb-[1px]"
+		>
 			{#if editable}
-				<button onclick={() => queueDeleteRows(Array.from(selectedRows))} disabled={selectedRows.size === 0} class="h-7 px-2 rounded border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50 inline-flex items-center gap-1"><Trash2 size={12} />Delete Selected</button>
+				<button
+					onclick={() => queueDeleteRows(Array.from(selectedRows))}
+					disabled={selectedRows.size === 0}
+					class="h-7 px-2 rounded border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50 inline-flex items-center gap-1"
+					><Trash2 size={12} />Delete Selected</button
+				>
 			{/if}
-			<span class="flex items-center"><Timer size={14} class="mr-1.5 text-gray-400" /> {durationMs}ms</span>
-			<span class="flex items-center"><Database size={14} class="mr-1.5 text-gray-400" /> {displayResult.rowCount} rows</span>
+			<span class="flex items-center"
+				><Timer size={14} class="mr-1.5 text-gray-400" /> {durationMs}ms</span
+			>
+			<span class="flex items-center"
+				><Database size={14} class="mr-1.5 text-gray-400" />
+				{displayResult.rowCount} rows</span
+			>
 			{#if resultContext}
-				<button onclick={rerunContextQuery} disabled={rerunning} class="text-gray-500 hover:text-gray-800 disabled:opacity-60 inline-flex items-center gap-1">
+				<button
+					onclick={rerunContextQuery}
+					disabled={rerunning}
+					class="text-gray-500 hover:text-gray-800 disabled:opacity-60 inline-flex items-center gap-1"
+				>
 					<Play size={12} />
-					{rerunning ? "Running" : "Refresh"}
+					{rerunning ? 'Running' : 'Refresh'}
 				</button>
 			{/if}
 		</div>
 	</div>
 
 	{#if sqlError}
-		<div class="px-4 py-2 text-xs text-red-600 border-b border-red-100 bg-red-50">{sqlError}</div>
+		<div
+			class="px-4 py-2 text-xs text-red-600 border-b border-red-100 bg-red-50"
+		>
+			{sqlError}
+		</div>
 	{/if}
 	{#if syncError}
-		<div class="px-4 py-2 text-xs text-red-600 border-b border-red-100 bg-red-50">{syncError}</div>
+		<div
+			class="px-4 py-2 text-xs text-red-600 border-b border-red-100 bg-red-50"
+		>
+			{syncError}
+		</div>
 	{/if}
 
 	<div class="flex-1 overflow-auto bg-white min-h-0">
-		{#if activeView === "messages"}
+		{#if activeView === 'messages'}
 			<div class="h-full p-4 text-xs text-gray-700 space-y-2">
 				{#if sqlError || syncError}
 					{#if sqlError}
-						<div class="rounded border border-red-200 bg-red-50 px-3 py-2 text-red-700">
+						<div
+							class="rounded border border-red-200 bg-red-50 px-3 py-2 text-red-700"
+						>
 							<div class="font-semibold mb-1">SQL Error</div>
 							<div class="whitespace-pre-wrap">{sqlError}</div>
 						</div>
 					{/if}
 					{#if syncError}
-						<div class="rounded border border-red-200 bg-red-50 px-3 py-2 text-red-700">
+						<div
+							class="rounded border border-red-200 bg-red-50 px-3 py-2 text-red-700"
+						>
 							<div class="font-semibold mb-1">Sync Error</div>
 							<div class="whitespace-pre-wrap">{syncError}</div>
 						</div>
 					{/if}
 				{:else}
 					<div class="rounded border border-gray-200 bg-gray-50 px-3 py-2">
-						Last query executed successfully in {durationMs}ms and returned {displayResult.rowCount} rows.
+						Last query executed successfully in {durationMs}ms and returned {displayResult.rowCount}
+						rows.
 					</div>
 				{/if}
 			</div>
-		{:else if activeView === "explain"}
+		{:else if activeView === 'explain'}
 			<div class="h-full p-4 space-y-3">
-				<div class="text-xs text-gray-600">Run `EXPLAIN` for the current query/result source.</div>
+				<div class="text-xs text-gray-600">
+					Run `EXPLAIN` for the current query/result source.
+				</div>
 				<button
 					onclick={runExplain}
 					disabled={runningExplain || loading}
 					class="h-8 px-3 rounded border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-60"
 				>
-					{runningExplain ? "Running EXPLAIN..." : "Run EXPLAIN"}
+					{runningExplain ? 'Running EXPLAIN...' : 'Run EXPLAIN'}
 				</button>
 				{#if refreshSql.trim().length > 0 || resultContext}
 					<div class="rounded border border-gray-200 bg-gray-50 p-3">
-						<div class="text-[11px] font-semibold text-gray-500 mb-1">Source SQL</div>
-						<pre class="font-mono-code text-[11px] text-gray-700 whitespace-pre-wrap break-words">{refreshSql.trim().length > 0 ? refreshSql : buildDefaultContextSql()}</pre>
+						<div class="text-[11px] font-semibold text-gray-500 mb-1">
+							Source SQL
+						</div>
+						<pre
+							class="font-mono-code text-[11px] text-gray-700 whitespace-pre-wrap break-words">{refreshSql.trim()
+								.length > 0
+								? refreshSql
+								: buildDefaultContextSql()}</pre>
 					</div>
 				{:else}
-					<div class="text-xs text-gray-500">Run a query first to generate an explain plan.</div>
+					<div class="text-xs text-gray-500">
+						Run a query first to generate an explain plan.
+					</div>
 				{/if}
 			</div>
 		{:else if loading}
 			<div class="min-w-max animate-pulse">
-				<table class="min-w-full text-left border-collapse text-sm whitespace-nowrap">
-					<thead class="sticky top-0 bg-gray-50 border-b border-gray-200 shadow-sm z-10">
+				<table
+					class="min-w-full text-left border-collapse text-sm whitespace-nowrap"
+				>
+					<thead
+						class="sticky top-0 bg-gray-50 border-b border-gray-200 shadow-sm z-10"
+					>
 						<tr>
 							{#if editable}
 								<th class="px-3 py-2 w-8 border-r border-gray-200"></th>
@@ -487,7 +643,10 @@
 							<th class="px-4 py-2 w-12 border-r border-gray-200"></th>
 							{#if visibleColumns.length > 0}
 								{#each visibleColumns as _}
-									<th class="px-4 py-2 border-r border-gray-200">
+									<th
+										class="px-4 py-2 border-r border-gray-200"
+										style={`width:${getColumnWidth(_)}px;min-width:${getColumnWidth(_)}px;`}
+									>
 										<div class="h-3.5 w-24 rounded bg-gray-200"></div>
 									</th>
 								{/each}
@@ -513,14 +672,21 @@
 								</td>
 								{#if visibleColumns.length > 0}
 									{#each visibleColumns as _}
-										<td class="px-4 py-1.5 border-r border-gray-100">
-											<div class="h-3.5 w-full max-w-[180px] rounded bg-gray-200"></div>
+										<td
+											class="px-4 py-1.5 border-r border-gray-100"
+											style={`width:${getColumnWidth(_)}px;min-width:${getColumnWidth(_)}px;`}
+										>
+											<div
+												class="h-3.5 w-full max-w-[180px] rounded bg-gray-200"
+											></div>
 										</td>
 									{/each}
 								{:else}
 									{#each Array.from({ length: 6 }) as _}
 										<td class="px-4 py-1.5 border-r border-gray-100">
-											<div class="h-3.5 w-full max-w-[180px] rounded bg-gray-200"></div>
+											<div
+												class="h-3.5 w-full max-w-[180px] rounded bg-gray-200"
+											></div>
 										</td>
 									{/each}
 								{/if}
@@ -530,50 +696,94 @@
 				</table>
 			</div>
 		{:else if displayResult.columns.length === 0}
-			<div class="h-full flex items-center justify-center text-sm text-gray-500">Run a query to see results.</div>
+			<div
+				class="h-full flex items-center justify-center text-sm text-gray-500"
+			>
+				Run a query to see results.
+			</div>
 		{:else}
 			<div class="min-w-max">
-				<table class="min-w-full text-left border-collapse text-sm whitespace-nowrap">
-					<thead class="sticky top-0 bg-gray-50 border-b border-gray-200 shadow-sm z-10">
+				<table
+					class="min-w-full text-left border-collapse text-sm whitespace-nowrap"
+				>
+					<thead
+						class="sticky top-0 bg-gray-50 border-b border-gray-200 shadow-sm z-10"
+					>
 						<tr>
 							{#if editable}
-								<th class="px-3 py-2 font-medium text-gray-500 border-r border-gray-200 text-xs w-8">
+								<th
+									class="px-3 py-2 font-medium text-gray-500 border-r border-gray-200 text-xs w-8"
+								>
 									<input
 										type="checkbox"
 										onchange={toggleSelectAllVisible}
-										checked={visibleRows.length > 0 && visibleRows.every((row) => selectedRows.has(String(row["_querycastle_ctid"] ?? "")))}
+										checked={visibleRows.length > 0 &&
+											visibleRows.every((row) =>
+												selectedRows.has(
+													String(row['_querycastle_ctid'] ?? ''),
+												),
+											)}
 									/>
 								</th>
 							{/if}
-							<th class="px-4 py-2 font-medium text-gray-500 w-12 border-r border-gray-200 text-xs">#</th>
+							<th
+								class="px-4 py-2 font-medium text-gray-500 w-12 border-r border-gray-200 text-xs"
+								>#</th
+							>
 							{#each visibleColumns as column}
-								<th class="px-4 py-2 font-medium text-gray-500 border-r border-gray-200 text-xs">
-									<div class="flex items-center">
-										{#if column.endsWith("_id")}
+								<th
+									class="px-4 py-2 font-medium text-gray-500 border-r border-gray-200 text-xs relative"
+									style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;`}
+								>
+									<div class="flex items-center pr-3">
+										{#if column.endsWith('_id')}
 											<KeyRound size={12} class="mr-1.5 text-gray-400" />
 										{/if}
 										{column}
 									</div>
+									<button
+										type="button"
+										class="absolute right-0 top-0 h-full w-2 !cursor-col-resize touch-none"
+										style="cursor: col-resize"
+										onpointerdown={(event) => beginColumnResize(event, column)}
+										aria-label={`Resize ${column} column`}
+									></button>
 								</th>
 							{/each}
 						</tr>
 					</thead>
 					<tbody class="text-gray-700">
-						{#each visibleRows as row, rowIndex (String(row["_querycastle_ctid"] ?? `row-${rowIndex}`))}
-							{@const rowId = String(row["_querycastle_ctid"] ?? "")}
-							<tr class="border-b border-gray-100 hover:bg-gray-50" oncontextmenu={(event) => openRowContextMenu(event, rowId)}>
+						{#each visibleRows as row, rowIndex (String(row['_querycastle_ctid'] ?? `row-${rowIndex}`))}
+							{@const rowId = String(row['_querycastle_ctid'] ?? '')}
+							<tr
+								class="border-b border-gray-100 hover:bg-gray-50"
+								oncontextmenu={(event) => openRowContextMenu(event, rowId)}
+							>
 								{#if editable}
 									<td class="px-3 py-1.5 border-r border-gray-100">
-										<input type="checkbox" checked={selectedRows.has(rowId)} onchange={() => toggleRowSelected(rowId)} />
+										<input
+											type="checkbox"
+											checked={selectedRows.has(rowId)}
+											onchange={() => toggleRowSelected(rowId)}
+										/>
 									</td>
 								{/if}
-								<td class="px-4 py-1.5 text-gray-400 border-r border-gray-100 text-xs bg-gray-50/30">{rowIndex + 1}</td>
+								<td
+									class="px-4 py-1.5 text-gray-400 border-r border-gray-100 text-xs bg-gray-50/30"
+									>{rowIndex + 1}</td
+								>
 								{#each visibleColumns as column (column)}
 									{@const currentValue = getRowValue(row, rowId, column)}
-									{@const isEditing = editingCell && editingCell.rowId === rowId && editingCell.column === column}
-									{@const isRecentlyUpdated = highlightCells.has(cellKey(rowId, column))}
+									{@const isEditing =
+										editingCell &&
+										editingCell.rowId === rowId &&
+										editingCell.column === column}
+									{@const isRecentlyUpdated = highlightCells.has(
+										cellKey(rowId, column),
+									)}
 									<td
-										class={`px-4 py-1.5 border-r border-gray-100 font-mono-code text-[12px] transition-colors duration-700 ${editable && column !== "_querycastle_ctid" ? "cursor-text" : ""} ${isEditing ? "outline outline-1 -outline-offset-1 outline-emerald-400 bg-white" : ""} ${isRecentlyUpdated ? "bg-emerald-50/70" : ""}`}
+										class={`px-4 py-1.5 border-r border-gray-100 font-mono-code text-[12px] transition-colors duration-700 ${editable && column !== '_querycastle_ctid' ? 'cursor-text' : ''} ${isEditing ? 'outline outline-1 -outline-offset-1 outline-emerald-400 bg-white' : ''} ${isRecentlyUpdated ? 'bg-emerald-50/70' : ''}`}
+										style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;`}
 										onclick={() => beginEdit(rowId, column, currentValue)}
 									>
 										{#if isEditing}
@@ -581,14 +791,16 @@
 												value={editDraft}
 												onblur={commitEdit}
 												onkeydown={(event) => {
-													if (event.key === "Enter") commitEdit();
-													if (event.key === "Escape") discardEdit();
+													if (event.key === 'Enter') commitEdit();
+													if (event.key === 'Escape') discardEdit();
 												}}
-												oninput={(event) => (editDraft = (event.currentTarget as HTMLInputElement).value)}
+												oninput={(event) =>
+													(editDraft = (event.currentTarget as HTMLInputElement)
+														.value)}
 												class="w-full border-0 bg-transparent text-[12px] leading-[1.25rem] outline-none p-0 m-0"
 											/>
 										{:else}
-											{currentValue == null ? "NULL" : String(currentValue)}
+											{currentValue == null ? 'NULL' : String(currentValue)}
 										{/if}
 									</td>
 								{/each}
@@ -598,13 +810,27 @@
 						{#if editable && pendingInserts.length > 0}
 							{#each pendingInserts as insertRow, insertIndex}
 								<tr class="border-b border-emerald-100 bg-emerald-50/30">
-									<td class="px-3 py-1.5 border-r border-gray-100 text-gray-400 text-xs">
-										<button onclick={() => removePendingInsert(insertRow.id)} class="text-red-500 hover:text-red-700" aria-label="Remove pending insert">x</button>
+									<td
+										class="px-3 py-1.5 border-r border-gray-100 text-gray-400 text-xs"
+									>
+										<button
+											onclick={() => removePendingInsert(insertRow.id)}
+											class="text-red-500 hover:text-red-700"
+											aria-label="Remove pending insert">x</button
+										>
 									</td>
-									<td class="px-4 py-1.5 text-gray-400 border-r border-gray-100 text-xs bg-gray-50/30">N{insertIndex + 1}</td>
+									<td
+										class="px-4 py-1.5 text-gray-400 border-r border-gray-100 text-xs bg-gray-50/30"
+										>N{insertIndex + 1}</td
+									>
 									{#each visibleColumns as column}
-										<td class="px-4 py-1.5 border-r border-gray-100 font-mono-code text-[12px]">
-											{insertRow.values[column] == null ? "NULL" : String(insertRow.values[column])}
+										<td
+											class="px-4 py-1.5 border-r border-gray-100 font-mono-code text-[12px]"
+											style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;`}
+										>
+											{insertRow.values[column] == null
+												? 'NULL'
+												: String(insertRow.values[column])}
 										</td>
 									{/each}
 								</tr>
@@ -614,8 +840,14 @@
 					{#if editable && !addingNewRow}
 						<tbody>
 							<tr class="border-b border-dashed border-gray-300 bg-gray-50/50">
-								<td colspan={visibleColumns.length + (editable ? 2 : 1)} class="px-3 py-2">
-									<button onclick={startInlineAddRow} class="w-full h-9 rounded-md text-left px-3 text-xs text-gray-500 hover:text-gray-700 hover:bg-white border border-dashed border-transparent hover:border-gray-300">
+								<td
+									colspan={visibleColumns.length + (editable ? 2 : 1)}
+									class="px-3 py-2"
+								>
+									<button
+										onclick={startInlineAddRow}
+										class="w-full h-9 rounded-md text-left px-3 text-xs text-gray-500 hover:text-gray-700 hover:bg-white border border-dashed border-transparent hover:border-gray-300"
+									>
 										+ Click here to add a new row
 									</button>
 								</td>
@@ -624,15 +856,29 @@
 					{:else if editable && addingNewRow}
 						<tbody>
 							<tr class="border-b border-dashed border-gray-300 bg-gray-50/60">
-								<td class="px-3 py-2 border-r border-gray-100 text-gray-400 text-xs">+</td>
-								<td class="px-4 py-2 border-r border-gray-100 text-gray-500 text-xs">New</td>
+								<td
+									class="px-3 py-2 border-r border-gray-100 text-gray-400 text-xs"
+									>+</td
+								>
+								<td
+									class="px-4 py-2 border-r border-gray-100 text-gray-500 text-xs"
+									>New</td
+								>
 								{#each visibleColumns as column}
-									<td class="px-2 py-1.5 border-r border-gray-100">
+									<td
+										class="px-2 py-1.5 border-r border-gray-100"
+										style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;`}
+									>
 										<input
-											value={addRowDraft[column] ?? ""}
-											oninput={(event) => (addRowDraft = { ...addRowDraft, [column]: (event.currentTarget as HTMLInputElement).value })}
+											value={addRowDraft[column] ?? ''}
+											oninput={(event) =>
+												(addRowDraft = {
+													...addRowDraft,
+													[column]: (event.currentTarget as HTMLInputElement)
+														.value,
+												})}
 											onkeydown={(event) => {
-												if (event.key === "Enter") submitAddRow();
+												if (event.key === 'Enter') submitAddRow();
 											}}
 											placeholder={column}
 											class="w-full h-8 px-2 rounded-md border border-gray-200 bg-white text-[12px] text-gray-800 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
@@ -641,10 +887,21 @@
 								{/each}
 							</tr>
 							<tr class="bg-white">
-								<td colspan={visibleColumns.length + (editable ? 2 : 1)} class="px-3 py-2 border-b border-gray-100">
+								<td
+									colspan={visibleColumns.length + (editable ? 2 : 1)}
+									class="px-3 py-2 border-b border-gray-100"
+								>
 									<div class="flex justify-end gap-2">
-										<button onclick={cancelInlineAddRow} class="h-8 px-3 rounded border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-100">Cancel</button>
-										<button onclick={submitAddRow} class="h-8 px-3 rounded border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-100">Add Staged Row</button>
+										<button
+											onclick={cancelInlineAddRow}
+											class="h-8 px-3 rounded border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-100"
+											>Cancel</button
+										>
+										<button
+											onclick={submitAddRow}
+											class="h-8 px-3 rounded border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-100"
+											>Add Staged Row</button
+										>
 									</div>
 								</td>
 							</tr>
@@ -656,24 +913,46 @@
 	</div>
 
 	{#if hasPendingChanges}
-		<div class="shrink-0 border-t border-amber-200 bg-amber-50 px-3 py-2 flex items-center justify-between">
-			<div class="text-xs text-amber-700">You have unsaved changes. Please Save/Commit.</div>
+		<div
+			class="shrink-0 border-t border-amber-200 bg-amber-50 px-3 py-2 flex items-center justify-between"
+		>
+			<div class="text-xs text-amber-700">
+				You have unsaved changes. Please Save/Commit.
+			</div>
 			<div class="flex items-center gap-2">
-				<button onclick={resetDraftState} class="h-8 px-3 rounded border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-100">Discard</button>
-				<button onclick={syncChanges} disabled={syncingChanges} class="h-8 px-3 rounded border border-emerald-500 bg-emerald-500 text-xs text-white hover:bg-emerald-600 disabled:opacity-60">{syncingChanges ? "Committing..." : "Save / Commit"}</button>
+				<button
+					onclick={resetDraftState}
+					class="h-8 px-3 rounded border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-100"
+					>Discard</button
+				>
+				<button
+					onclick={syncChanges}
+					disabled={syncingChanges}
+					class="h-8 px-3 rounded border border-emerald-500 bg-emerald-500 text-xs text-white hover:bg-emerald-600 disabled:opacity-60"
+					>{syncingChanges ? 'Committing...' : 'Save / Commit'}</button
+				>
 			</div>
 		</div>
 	{/if}
 
 	{#if rowContextMenu}
-		<button class="fixed inset-0 z-40" aria-label="Close row menu" onclick={() => (rowContextMenu = null)}></button>
-		<div class="fixed z-50 min-w-[170px] bg-white rounded-md border border-gray-200 shadow-[0_8px_24px_rgba(0,0,0,0.12)] py-1" style={`left:${rowContextMenu?.x ?? 0}px;top:${rowContextMenu?.y ?? 0}px;`}>
-			<button onclick={() => rowContextMenu && queueDeleteRows([rowContextMenu.rowId])} class="w-full px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50 inline-flex items-center gap-2">
+		<button
+			class="fixed inset-0 z-40"
+			aria-label="Close row menu"
+			onclick={() => (rowContextMenu = null)}
+		></button>
+		<div
+			class="fixed z-50 min-w-[170px] bg-white rounded-md border border-gray-200 shadow-[0_8px_24px_rgba(0,0,0,0.12)] py-1"
+			style={`left:${rowContextMenu?.x ?? 0}px;top:${rowContextMenu?.y ?? 0}px;`}
+		>
+			<button
+				onclick={() =>
+					rowContextMenu && queueDeleteRows([rowContextMenu.rowId])}
+				class="w-full px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50 inline-flex items-center gap-2"
+			>
 				<Trash2 size={14} />
 				Delete Row
 			</button>
 		</div>
 	{/if}
 </div>
-
-
