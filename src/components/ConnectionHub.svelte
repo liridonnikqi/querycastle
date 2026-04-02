@@ -26,7 +26,8 @@
 		try {
 			const url = new URL(connectionString);
 			const host = url.hostname;
-			const port = url.port ? parseInt(url.port) : 5432;
+			const defaultPort = url.protocol === 'mysql:' ? 3306 : 5432;
+			const port = url.port ? parseInt(url.port) : defaultPort;
 			const user = url.username;
 			return { host, port, user };
 		} catch {
@@ -96,7 +97,7 @@
 					No saved connections
 				</h2>
 				<p class="text-gray-500 text-[15px] mt-2">
-					Create your first PostgreSQL connection to continue.
+					Create your first database connection to continue.
 				</p>
 				<button
 					onclick={onCreate}
@@ -213,7 +214,7 @@
 							Create New Connection
 						</div>
 						<div class="text-gray-500 text-[13px] mt-1">
-							Add another PostgreSQL connection
+							Add another database connection
 						</div>
 					</button>
 				{/if}

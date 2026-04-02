@@ -4,6 +4,7 @@
 		ApplyTableChangesResult,
 		ConnectionInput,
 		ConnectionStatus,
+		DatabaseType,
 		DatabaseExplorer,
 		QueryResultPayload,
 		TableChangesPayload,
@@ -82,6 +83,7 @@
 
 	let connectionStatus = $state<ConnectionStatus>({
 		connected: false,
+		databaseType: 'postgres',
 		name: 'Disconnected',
 		host: '',
 		port: 5432,
@@ -126,6 +128,7 @@
 	let resizingResults = $state(false);
 
 	let connectionForm = $state<ConnectionInput>({
+		databaseType: 'postgres',
 		name: 'local_pg',
 		host: 'localhost',
 		port: 5432,
@@ -140,7 +143,7 @@
 	);
 	let activeConnectionKey = $derived.by(() => {
 		if (!connectionStatus.connected) return 'disconnected';
-		return `${connectionStatus.host}:${connectionStatus.port}/${connectionStatus.database}/${connectionStatus.user}`;
+		return `${connectionStatus.databaseType}:${connectionStatus.host}:${connectionStatus.port}/${connectionStatus.database}/${connectionStatus.user}`;
 	});
 	let sqlCompletions = $derived.by(() => {
 		if (!explorer) return [];
@@ -348,10 +351,43 @@
 		activeTabId = nextTab.id;
 	}
 
+	function normalizeConnectionInput(input: Partial<ConnectionInput>): ConnectionInput {
+		const databaseType: DatabaseType =
+			input.databaseType === 'mysql' || input.databaseType === 'sqlite'
+				? input.databaseType
+				: 'postgres';
+		const defaultPort = databaseType === 'mysql' ? 3306 : 5432;
+		const defaultName = databaseType === 'mysql' ? 'local_mysql' : 'local_pg';
+		const defaultUser = databaseType === 'mysql' ? 'root' : 'postgres';
+		const defaultDatabase =
+			databaseType === 'mysql' ? 'mysql' : databaseType === 'sqlite' ? 'main' : 'postgres';
+		return {
+			databaseType,
+			name: input.name ?? defaultName,
+			host: input.host ?? 'localhost',
+			port: input.port ?? defaultPort,
+			user: input.user ?? defaultUser,
+			password: input.password ?? '',
+			database: input.database ?? defaultDatabase,
+			ssl: input.ssl ?? false,
+			useConnectionString: input.useConnectionString ?? false,
+			connectionString: input.connectionString ?? '',
+		};
+	}
+
 	function loadSavedConnections() {
 		try {
 			const raw = localStorage.getItem(SAVED_CONNECTIONS_KEY);
-			savedConnections = raw ? (JSON.parse(raw) as ConnectionInput[]) : [];
+			if (!raw) {
+				savedConnections = [];
+				return;
+			}
+			const parsed = JSON.parse(raw) as Array<Partial<ConnectionInput>>;
+			if (!Array.isArray(parsed)) {
+				savedConnections = [];
+				return;
+			}
+			savedConnections = parsed.map((entry) => normalizeConnectionInput(entry));
 		} catch {
 			savedConnections = [];
 		}
@@ -637,7 +673,9 @@
 		const sql = activeTab.sql.trim();
 		if (!sql) return;
 		try {
-			const nextSql = formatSql(sql, { language: 'postgresql' });
+			const language =
+				connectionStatus.databaseType === 'mysql' ? 'mysql' : 'postgresql';
+			const nextSql = formatSql(sql, { language });
 			setActiveSql(nextSql);
 			globalError = '';
 		} catch (error) {
@@ -693,7 +731,7 @@
 	}
 
 	function applyConnectionToForm(connection: ConnectionInput) {
-		connectionForm = { ...connection };
+		connectionForm = normalizeConnectionInput(connection);
 		connectionInputMode =
 			connection.useConnectionString && connection.connectionString
 				? 'string'
@@ -787,12 +825,14 @@
 		isTestingConnection = true;
 		testConnectionMessage = '';
 		try {
+			const engine = buildConnectionPayload().databaseType;
+			const engineLabel = engine === 'mysql' ? 'MySQL' : engine === 'sqlite' ? 'SQLite' : 'PostgreSQL';
 			const response = await rpc.request.testConnection(
 				buildConnectionPayload(),
 			);
 			testConnectionOk = response.ok;
 			testConnectionMessage = response.ok
-				? `Connected successfully${response.serverVersion ? ` (PostgreSQL ${response.serverVersion})` : ''}`
+				? `Connected successfully${response.serverVersion ? ` (${engineLabel} ${response.serverVersion})` : ''}`
 				: response.message;
 		} catch (error) {
 			testConnectionOk = false;

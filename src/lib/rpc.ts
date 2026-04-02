@@ -1,4 +1,7 @@
+export type DatabaseType = "postgres" | "mysql" | "sqlite";
+
 export type ConnectionInput = {
+  databaseType: DatabaseType;
   name: string;
   host: string;
   port: number;
@@ -12,6 +15,7 @@ export type ConnectionInput = {
 
 export type ConnectionStatus = {
   connected: boolean;
+  databaseType: DatabaseType;
   name: string;
   host: string;
   port: number;

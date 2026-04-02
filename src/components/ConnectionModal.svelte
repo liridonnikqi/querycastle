@@ -39,6 +39,14 @@
 	function updateField<K extends keyof ConnectionInput>(key: K, value: ConnectionInput[K]) {
 		onConnectionFormChange({ ...connectionForm, [key]: value });
 	}
+
+	const engineLabel = $derived.by(() =>
+		connectionForm.databaseType === "mysql"
+			? "MySQL"
+			: connectionForm.databaseType === "sqlite"
+				? "SQLite"
+				: "PostgreSQL",
+	);
 </script>
 
 {#if visible}
@@ -52,8 +60,8 @@
 								<DatabaseZap size={16} />
 							</span>
 							{editing
-								? "Edit PostgreSQL Connection"
-								: "New PostgreSQL Connection"}
+								? `Edit ${engineLabel} Connection`
+								: `New ${engineLabel} Connection`}
 						</h3>
 					</div>
 					<button
@@ -68,6 +76,33 @@
 			</div>
 
 			<div class="space-y-4 p-5 text-[13px]">
+				<label class="flex flex-col gap-1 text-slate-600">
+					<span class="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Database Type</span>
+					<select
+						value={connectionForm.databaseType}
+						onchange={(e) => {
+							const nextType = (e.currentTarget as HTMLSelectElement).value as ConnectionInput["databaseType"];
+							if (nextType === connectionForm.databaseType) return;
+							const nextPort = nextType === "mysql" ? 3306 : 5432;
+							const nextUser = nextType === "mysql" ? "root" : "postgres";
+							const nextDatabase = nextType === "mysql" ? "mysql" : nextType === "sqlite" ? "main" : "postgres";
+							onConnectionFormChange({
+								...connectionForm,
+								databaseType: nextType,
+								port: nextPort,
+								user: nextUser,
+								database: nextDatabase,
+								host: nextType === "sqlite" ? "" : connectionForm.host || "localhost",
+							});
+						}}
+						class="ui-input h-9 bg-white px-3"
+					>
+						<option value="postgres">PostgreSQL</option>
+						<option value="mysql">MySQL</option>
+						<option value="sqlite">SQLite (coming next phase)</option>
+					</select>
+				</label>
+
 				<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
 					<button
 						onclick={() => onModeChange("fields")}
@@ -89,7 +124,7 @@
 						}`}
 					>
 						<p class="text-[12px] font-semibold">Use Connection String</p>
-						<p class="mt-0.5 text-[11px] text-slate-500">Paste a full PostgreSQL URL</p>
+						<p class="mt-0.5 text-[11px] text-slate-500">Paste a full {engineLabel} URL</p>
 					</button>
 				</div>
 
@@ -111,33 +146,39 @@
 								value={connectionStringInput}
 								oninput={(e) =>
 									onConnectionStringChange((e.currentTarget as HTMLInputElement).value)}
-								placeholder="postgresql://postgres:password@host:5432/dbname"
+								placeholder={connectionForm.databaseType === "mysql"
+									? "mysql://root:password@host:3306/dbname"
+									: connectionForm.databaseType === "sqlite"
+										? "sqlite:///absolute/path/to/database.db"
+										: "postgresql://postgres:password@host:5432/dbname"}
 								class="ui-input h-9 bg-white px-3 font-mono-code text-[12px]"
 							/>
 						</label>
 					{:else}
-						<label class="flex flex-col gap-1 text-slate-600">
-							<span class="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Host</span>
-							<input
-								value={connectionForm.host}
-								oninput={(e) =>
-									updateField("host", (e.currentTarget as HTMLInputElement).value)}
-								class="ui-input h-9 bg-white px-3"
-							/>
-						</label>
-						<label class="flex flex-col gap-1 text-slate-600">
-							<span class="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Port</span>
-							<input
-								type="number"
-								value={connectionForm.port}
-								oninput={(e) =>
-									updateField(
-										"port",
-										Number((e.currentTarget as HTMLInputElement).value) || 5432,
-									)}
-								class="ui-input h-9 bg-white px-3"
-							/>
-						</label>
+						{#if connectionForm.databaseType !== "sqlite"}
+							<label class="flex flex-col gap-1 text-slate-600">
+								<span class="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Host</span>
+								<input
+									value={connectionForm.host}
+									oninput={(e) =>
+										updateField("host", (e.currentTarget as HTMLInputElement).value)}
+									class="ui-input h-9 bg-white px-3"
+								/>
+							</label>
+							<label class="flex flex-col gap-1 text-slate-600">
+								<span class="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Port</span>
+								<input
+									type="number"
+									value={connectionForm.port}
+									oninput={(e) =>
+										updateField(
+											"port",
+											Number((e.currentTarget as HTMLInputElement).value) || (connectionForm.databaseType === "mysql" ? 3306 : 5432),
+										)}
+									class="ui-input h-9 bg-white px-3"
+								/>
+							</label>
+						{/if}
 						<label class="flex flex-col gap-1 text-slate-600">
 							<span class="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Database</span>
 							<input
@@ -166,17 +207,19 @@
 								class="ui-input h-9 bg-white px-3"
 							/>
 						</label>
-						<label class="sm:col-span-2 mt-1 inline-flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-600">
-							<input
-								type="checkbox"
-								checked={connectionForm.ssl}
-								onchange={(e) =>
-									updateField("ssl", (e.currentTarget as HTMLInputElement).checked)}
-								class="accent-slate-700"
-							/>
-							<Shield size={13} class="text-slate-600" />
-							Use SSL
-						</label>
+						{#if connectionForm.databaseType !== "sqlite"}
+							<label class="sm:col-span-2 mt-1 inline-flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-600">
+								<input
+									type="checkbox"
+									checked={connectionForm.ssl}
+									onchange={(e) =>
+										updateField("ssl", (e.currentTarget as HTMLInputElement).checked)}
+									class="accent-slate-700"
+								/>
+								<Shield size={13} class="text-slate-600" />
+								Use SSL
+							</label>
+						{/if}
 					{/if}
 				</div>
 
