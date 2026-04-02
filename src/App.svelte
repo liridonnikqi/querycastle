@@ -1154,18 +1154,6 @@
 						: 'Disconnected'}</span
 				>
 				<ChevronRight size={14} class="mx-1 text-gray-600 shrink-0" />
-				<span
-					class="font-medium text-gray-100 cursor-default flex items-center truncate"
-				>
-					{connectionStatus.connected
-						? connectionStatus.database
-						: 'Database IDE'}
-				</span>
-			</div>
-			<div
-				class=" bg-emerald-900/40 border border-emerald-800/50 text-emerald-400 text-xs px-2 py-0.5 rounded shadow-sm"
-			>
-				Demo
 			</div>
 		</div>
 		<div class="flex-1"></div>
@@ -1191,23 +1179,7 @@
 
 	{#if !connectionStatus.connected}
 		<div class="flex flex-1 overflow-hidden">
-			<aside
-				class="w-14 bg-white border-r border-gray-200 flex flex-col items-center py-4 space-y-3 shrink-0 z-20 shadow-[1px_0_5px_rgba(0,0,0,0.02)]"
-			>
-				<button
-					class="text-gray-900 bg-gray-100 p-1.5 rounded-md shadow-sm border border-gray-200/50 flex items-center justify-center"
-					><Home size={20} /></button
-				>
-				<button
-					class="text-gray-400 p-1.5 rounded-md flex items-center justify-center"
-					><Star size={20} /></button
-				>
-				<button
-					class="text-gray-400 p-1.5 rounded-md flex items-center justify-center"
-					><FolderKanban size={20} /></button
-				>
-			</aside>
-			<section class="flex-1 overflow-auto border-l border-gray-100 bg-white">
+			<section class="flex-1 overflow-auto bg-white">
 				<ConnectionHub
 					{savedConnections}
 					onConnect={connectSaved}
