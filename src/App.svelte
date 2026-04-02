@@ -1153,7 +1153,16 @@
 						? connectionStatus.host
 						: 'Disconnected'}</span
 				>
+
 				<ChevronRight size={14} class="mx-1 text-gray-600 shrink-0" />
+
+				<span class="font-medium text-gray-100 cursor-default flex items-center truncate">
+					{connectionStatus.connected
+						? connectionStatus.database || 'No database selected'
+						: 'No database selected'}
+						
+					
+				</span>
 			</div>
 		</div>
 		<div class="flex-1"></div>

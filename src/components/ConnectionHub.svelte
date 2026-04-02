@@ -76,13 +76,6 @@
 					place.
 				</p>
 			</div>
-			<button
-				onclick={onCreate}
-				class="h-10 px-5 rounded-lg text-sm font-medium inline-flex items-center gap-2 shadow-sm border border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-600 hover:border-emerald-600"
-			>
-				<Plus size={16} />
-				New Connection
-			</button>
 		</div>
 
 		{#if savedConnections.length === 0}
@@ -116,13 +109,29 @@
 			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 				{#each filteredConnections as connection}
 					<div
+						role="button"
+						tabindex="0"
+						onclick={() => {
+							if (connectingName === connection.name) return;
+							onConnect(connection);
+						}}
+						onkeydown={(event) => {
+							if (connectingName === connection.name) return;
+							if (event.key === 'Enter' || event.key === ' ') {
+								event.preventDefault();
+								onConnect(connection);
+							}
+						}}
 						class="group rounded-xl border border-gray-200 bg-white p-5 hover:border-gray-300 hover:shadow-md transition-all duration-300 relative overflow-hidden flex flex-col"
 					>
 						<div
 							class="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1"
 						>
 							<button
-								onclick={() => onEdit(connection)}
+								onclick={(event) => {
+									event.stopPropagation();
+									onEdit(connection);
+								}}
 								class="text-gray-500 hover:text-gray-900 bg-white/80 backdrop-blur rounded p-1.5 shadow-sm border border-gray-200"
 								aria-label="Edit connection"
 								title="Edit connection"
@@ -130,7 +139,10 @@
 								<Pencil size={14} />
 							</button>
 							<button
-								onclick={() => onDelete(connection.name)}
+								onclick={(event) => {
+									event.stopPropagation();
+									onDelete(connection.name);
+								}}
 								class="text-gray-500 hover:text-red-600 bg-white/80 backdrop-blur rounded p-1.5 shadow-sm border border-gray-200"
 								aria-label="Delete connection"
 								title="Delete connection"
@@ -165,10 +177,8 @@
 								<div class="w-2 h-2 rounded-full bg-emerald-500"></div>
 								<span class="truncate">{connection.database}</span>
 							</div>
-							<button
-								onclick={() => onConnect(connection)}
-								disabled={connectingName === connection.name}
-								class="w-full h-10 rounded-lg text-[13px] font-semibold disabled:opacity-60 inline-flex items-center justify-center gap-2 border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-colors"
+							<div
+								class="w-full h-10 rounded-lg text-[13px] font-semibold inline-flex items-center justify-center gap-2 border border-gray-200 bg-white text-gray-700"
 							>
 								{#if connectingName === connection.name}
 									<div
@@ -177,12 +187,31 @@
 									Connecting...
 								{:else}
 									<Plug size={14} />
-									Connect
+									Click card to connect
 								{/if}
-							</button>
+							</div>
 						</div>
 					</div>
 				{/each}
+
+				{#if savedConnections.length === 1}
+					<button
+						onclick={onCreate}
+						class="rounded-xl border border-dashed border-gray-300 bg-white p-5 hover:border-emerald-500 hover:shadow-md transition-all duration-300 flex flex-col items-center justify-center text-center min-h-[210px]"
+					>
+						<div
+							class="w-10 h-10 rounded-lg bg-emerald-500 text-white flex items-center justify-center mb-4"
+						>
+							<Plus size={18} />
+						</div>
+						<div class="text-gray-900 text-[15px] font-semibold tracking-tight">
+							Create New Connection
+						</div>
+						<div class="text-gray-500 text-[13px] mt-1">
+							Add another PostgreSQL connection
+						</div>
+					</button>
+				{/if}
 			</div>
 		{/if}
 	</div>
