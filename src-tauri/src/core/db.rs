@@ -1,4 +1,3 @@
-use serde_json::Value;
 use tauri::State;
 use url::Url;
 
@@ -9,43 +8,23 @@ use crate::core::types::{ConnectionInput, DatabaseType};
 mod db_mysql;
 #[path = "db_postgres.rs"]
 mod db_postgres;
+#[path = "db_sqlite.rs"]
+mod db_sqlite;
 
 pub(crate) use db_mysql::{
     connect_mysql_client, get_mysql_server_version, run_mysql_query, sanitize_mysql_error,
 };
 pub(crate) use db_postgres::{connect_client, get_server_version, sanitize_pg_error};
+pub(crate) use db_sqlite::{
+    get_sqlite_database_explorer, get_sqlite_server_version, list_sqlite_databases,
+    open_sqlite_connection, run_sqlite_query,
+};
 
 pub(crate) const QUERY_TIMEOUT_MS: u64 = 30_000;
 pub(crate) const MAX_QUERY_ROWS: usize = 1_000;
 
 pub(crate) fn sanitize_error(error: impl ToString) -> String {
     error.to_string()
-}
-
-pub(crate) fn quote_ident(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
-}
-
-pub(crate) fn escape_sql_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('\'', "''")
-}
-
-pub(crate) fn value_to_sql_literal(value: &Value) -> String {
-    match value {
-        Value::Null => "NULL".to_string(),
-        Value::Bool(v) => {
-            if *v {
-                "TRUE".to_string()
-            } else {
-                "FALSE".to_string()
-            }
-        }
-        Value::Number(v) => v.to_string(),
-        Value::String(v) => format!("'{}'", escape_sql_string(v)),
-        Value::Array(_) | Value::Object(_) => {
-            format!("'{}'::jsonb", escape_sql_string(&value.to_string()))
-        }
-    }
 }
 
 fn default_port(database_type: DatabaseType) -> u16 {

@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { X, Shield, DatabaseZap } from "@lucide/svelte";
+	import { X, Shield, DatabaseZap, FolderOpen } from "@lucide/svelte";
+	import { open } from "@tauri-apps/plugin-dialog";
 	import type { ConnectionInput } from "../lib/rpc";
 
 	let {
@@ -40,6 +41,31 @@
 		onConnectionFormChange({ ...connectionForm, [key]: value });
 	}
 
+	async function chooseSqliteFile() {
+		const selected = await open({
+			multiple: false,
+			directory: false,
+			filters: [
+				{ name: "SQLite Database", extensions: ["db", "sqlite", "sqlite3"] },
+				{ name: "All Files", extensions: ["*"] },
+			],
+		});
+		if (!selected || Array.isArray(selected)) return;
+
+		const normalized = selected.replaceAll("\\", "/");
+		const fileName = normalized.split("/").pop() ?? "";
+		const nextName =
+			!connectionForm.name.trim() || connectionForm.name === "local_sqlite"
+				? fileName.replace(/\.(sqlite|sqlite3|db)$/i, "") || connectionForm.name
+				: connectionForm.name;
+
+		onConnectionFormChange({
+			...connectionForm,
+			database: selected,
+			name: nextName,
+		});
+	}
+
 	const engineLabel = $derived.by(() =>
 		connectionForm.databaseType === "mysql"
 			? "MySQL"
@@ -47,6 +73,7 @@
 				? "SQLite"
 				: "PostgreSQL",
 	);
+	const isSqlite = $derived(connectionForm.databaseType === "sqlite");
 </script>
 
 {#if visible}
@@ -83,23 +110,25 @@
 						onchange={(e) => {
 							const nextType = (e.currentTarget as HTMLSelectElement).value as ConnectionInput["databaseType"];
 							if (nextType === connectionForm.databaseType) return;
-							const nextPort = nextType === "mysql" ? 3306 : 5432;
-							const nextUser = nextType === "mysql" ? "root" : "postgres";
+							const nextPort = nextType === "mysql" ? 3306 : nextType === "sqlite" ? 0 : 5432;
+							const nextUser = nextType === "mysql" ? "root" : nextType === "sqlite" ? "" : "postgres";
 							const nextDatabase = nextType === "mysql" ? "mysql" : nextType === "sqlite" ? "main" : "postgres";
 							onConnectionFormChange({
 								...connectionForm,
 								databaseType: nextType,
 								port: nextPort,
 								user: nextUser,
+								password: nextType === "sqlite" ? "" : connectionForm.password,
 								database: nextDatabase,
 								host: nextType === "sqlite" ? "" : connectionForm.host || "localhost",
+								ssl: nextType === "sqlite" ? false : connectionForm.ssl,
 							});
 						}}
 						class="ui-input h-9 bg-white px-3"
 					>
 						<option value="postgres">PostgreSQL</option>
 						<option value="mysql">MySQL</option>
-						<option value="sqlite">SQLite (coming next phase)</option>
+						<option value="sqlite">SQLite</option>
 					</select>
 				</label>
 
@@ -107,25 +136,27 @@
 					<button
 						onclick={() => onModeChange("fields")}
 						class={`rounded-lg border px-3 py-2 text-left transition-colors ${
-							mode === "fields"
+							(isSqlite || mode === "fields")
 								? "border-slate-300 bg-slate-50 text-slate-900"
 								: "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
 						}`}
 					>
 						<p class="text-[12px] font-semibold">Use Fields</p>
-						<p class="mt-0.5 text-[11px] text-slate-500">Host, port, database, user, password</p>
+						<p class="mt-0.5 text-[11px] text-slate-500">{isSqlite ? "Database file path" : "Host, port, database, user, password"}</p>
 					</button>
-					<button
-						onclick={() => onModeChange("string")}
-						class={`rounded-lg border px-3 py-2 text-left transition-colors ${
-							mode === "string"
-								? "border-slate-300 bg-slate-50 text-slate-900"
-								: "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-						}`}
-					>
-						<p class="text-[12px] font-semibold">Use Connection String</p>
-						<p class="mt-0.5 text-[11px] text-slate-500">Paste a full {engineLabel} URL</p>
-					</button>
+					{#if !isSqlite}
+						<button
+							onclick={() => onModeChange("string")}
+							class={`rounded-lg border px-3 py-2 text-left transition-colors ${
+								mode === "string"
+									? "border-slate-300 bg-slate-50 text-slate-900"
+									: "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+							}`}
+						>
+							<p class="text-[12px] font-semibold">Use Connection String</p>
+							<p class="mt-0.5 text-[11px] text-slate-500">{`Paste a full ${engineLabel} URL`}</p>
+						</button>
+					{/if}
 				</div>
 
 				<div class="grid min-h-[248px] content-start grid-cols-1 gap-3 sm:grid-cols-2">
@@ -139,7 +170,7 @@
 						/>
 					</label>
 
-					{#if mode === "string"}
+					{#if mode === "string" && !isSqlite}
 						<label class="sm:col-span-2 flex flex-col gap-1 text-slate-600">
 							<span class="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Connection String</span>
 							<input
@@ -180,33 +211,48 @@
 							</label>
 						{/if}
 						<label class="flex flex-col gap-1 text-slate-600">
-							<span class="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Database</span>
-							<input
-								value={connectionForm.database}
-								oninput={(e) =>
-									updateField("database", (e.currentTarget as HTMLInputElement).value)}
-								class="ui-input h-9 bg-white px-3"
-							/>
+							<span class="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{isSqlite ? "Database Path" : "Database"}</span>
+							<div class="flex items-center gap-2">
+								<input
+									value={connectionForm.database}
+									oninput={(e) =>
+										updateField("database", (e.currentTarget as HTMLInputElement).value)}
+									placeholder={isSqlite ? "C:/data/mydb.sqlite" : undefined}
+									class="ui-input h-9 bg-white px-3"
+								/>
+								{#if isSqlite}
+									<button
+										type="button"
+										onclick={chooseSqliteFile}
+										class="inline-flex h-9 shrink-0 items-center gap-1 rounded-md border border-slate-200 bg-white px-3 text-[12px] font-medium text-slate-700 hover:bg-slate-100"
+									>
+										<FolderOpen size={14} />
+										Open File
+									</button>
+								{/if}
+							</div>
 						</label>
-						<label class="flex flex-col gap-1 text-slate-600">
-							<span class="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">User</span>
-							<input
-								value={connectionForm.user}
-								oninput={(e) =>
-									updateField("user", (e.currentTarget as HTMLInputElement).value)}
-								class="ui-input h-9 bg-white px-3"
-							/>
-						</label>
-						<label class="sm:col-span-2 flex flex-col gap-1 text-slate-600">
-							<span class="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Password</span>
-							<input
-								type="password"
-								value={connectionForm.password}
-								oninput={(e) =>
-									updateField("password", (e.currentTarget as HTMLInputElement).value)}
-								class="ui-input h-9 bg-white px-3"
-							/>
-						</label>
+						{#if !isSqlite}
+							<label class="flex flex-col gap-1 text-slate-600">
+								<span class="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">User</span>
+								<input
+									value={connectionForm.user}
+									oninput={(e) =>
+										updateField("user", (e.currentTarget as HTMLInputElement).value)}
+									class="ui-input h-9 bg-white px-3"
+								/>
+							</label>
+							<label class="sm:col-span-2 flex flex-col gap-1 text-slate-600">
+								<span class="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Password</span>
+								<input
+									type="password"
+									value={connectionForm.password}
+									oninput={(e) =>
+										updateField("password", (e.currentTarget as HTMLInputElement).value)}
+									class="ui-input h-9 bg-white px-3"
+								/>
+							</label>
+						{/if}
 						{#if connectionForm.databaseType !== "sqlite"}
 							<label class="sm:col-span-2 mt-1 inline-flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-600">
 								<input

@@ -257,6 +257,7 @@
 	}
 
 	function tryBuildEditableQuery(sql: string): EditableQueryPlan | null {
+		if (connectionStatus.databaseType !== 'postgres') return null;
 		const cleaned = sql.trim().replace(/;+\s*$/, '');
 		if (!/^select\b/i.test(cleaned)) return null;
 
@@ -356,20 +357,25 @@
 			input.databaseType === 'mysql' || input.databaseType === 'sqlite'
 				? input.databaseType
 				: 'postgres';
-		const defaultPort = databaseType === 'mysql' ? 3306 : 5432;
-		const defaultName = databaseType === 'mysql' ? 'local_mysql' : 'local_pg';
-		const defaultUser = databaseType === 'mysql' ? 'root' : 'postgres';
+		const defaultPort = databaseType === 'mysql' ? 3306 : databaseType === 'sqlite' ? 0 : 5432;
+		const defaultName =
+			databaseType === 'mysql'
+				? 'local_mysql'
+				: databaseType === 'sqlite'
+					? 'local_sqlite'
+					: 'local_pg';
+		const defaultUser = databaseType === 'mysql' ? 'root' : databaseType === 'sqlite' ? '' : 'postgres';
 		const defaultDatabase =
 			databaseType === 'mysql' ? 'mysql' : databaseType === 'sqlite' ? 'main' : 'postgres';
 		return {
 			databaseType,
 			name: input.name ?? defaultName,
-			host: input.host ?? 'localhost',
+			host: input.host ?? (databaseType === 'sqlite' ? '' : 'localhost'),
 			port: input.port ?? defaultPort,
 			user: input.user ?? defaultUser,
 			password: input.password ?? '',
 			database: input.database ?? defaultDatabase,
-			ssl: input.ssl ?? false,
+			ssl: databaseType === 'sqlite' ? false : (input.ssl ?? false),
 			useConnectionString: input.useConnectionString ?? false,
 			connectionString: input.connectionString ?? '',
 		};
@@ -733,7 +739,9 @@
 	function applyConnectionToForm(connection: ConnectionInput) {
 		connectionForm = normalizeConnectionInput(connection);
 		connectionInputMode =
-			connection.useConnectionString && connection.connectionString
+			connection.databaseType !== 'sqlite' &&
+			connection.useConnectionString &&
+			connection.connectionString
 				? 'string'
 				: 'fields';
 		connectionStringInput = connection.connectionString ?? '';
@@ -751,7 +759,7 @@
 	}
 
 	function buildConnectionPayload(): ConnectionInput {
-		if (connectionInputMode === 'string') {
+		if (connectionForm.databaseType !== 'sqlite' && connectionInputMode === 'string') {
 			return {
 				...connectionForm,
 				useConnectionString: true,
@@ -1017,9 +1025,15 @@
 			return;
 		}
 		if (action === 'sql_create') {
-			setActiveSql(
-				`-- Table definition helper\nselect column_name, data_type, is_nullable\nfrom information_schema.columns\nwhere table_schema = '${schema.replaceAll("'", "''")}'\n  and table_name = '${table.replaceAll("'", "''")}'\norder by ordinal_position;`,
-			);
+			if (connectionStatus.databaseType === 'sqlite') {
+				setActiveSql(
+					`-- Table definition helper\npragma table_info('${table.replaceAll("'", "''")}');`,
+				);
+			} else {
+				setActiveSql(
+					`-- Table definition helper\nselect column_name, data_type, is_nullable\nfrom information_schema.columns\nwhere table_schema = '${schema.replaceAll("'", "''")}'\n  and table_name = '${table.replaceAll("'", "''")}'\norder by ordinal_position;`,
+				);
+			}
 			globalError = '';
 			return;
 		}
@@ -1034,12 +1048,20 @@
 			const orderByClause = firstOrderColumn
 				? ` order by ${quoteIdent(firstOrderColumn)} asc nulls last`
 				: '';
-			query = `select ctid::text as _querycastle_ctid, * from ${safeSchema}.${safeTable}${orderByClause} limit 100;`;
+			if (connectionStatus.databaseType === 'postgres') {
+				query = `select ctid::text as _querycastle_ctid, * from ${safeSchema}.${safeTable}${orderByClause} limit 100;`;
+			} else {
+				query = `select * from ${safeSchema}.${safeTable}${orderByClause} limit 100;`;
+			}
 			title = `${table} [all]`;
-			context = { schema, table };
+			context = connectionStatus.databaseType === 'postgres' ? { schema, table } : null;
 		}
 		if (action === 'view_structure') {
-			query = `select column_name, data_type, is_nullable from information_schema.columns where table_schema = '${schema.replaceAll("'", "''")}' and table_name = '${table.replaceAll("'", "''")}' order by ordinal_position;`;
+			if (connectionStatus.databaseType === 'sqlite') {
+				query = `pragma table_info('${table.replaceAll("'", "''")}');`;
+			} else {
+				query = `select column_name, data_type, is_nullable from information_schema.columns where table_schema = '${schema.replaceAll("'", "''")}' and table_name = '${table.replaceAll("'", "''")}' order by ordinal_position;`;
+			}
 			title = `${table} [structure]`;
 		}
 		if (action === 'export_file') {
@@ -1064,7 +1086,10 @@
 			return;
 		}
 		if (action === 'sql_list_tables') {
-			const query = `select tablename as table_name\nfrom pg_catalog.pg_tables\nwhere schemaname = '${schema.replaceAll("'", "''")}'\norder by tablename;`;
+				const query =
+					connectionStatus.databaseType === 'sqlite'
+						? `select name as table_name, type\nfrom sqlite_master\nwhere type in ('table', 'view') and name not like 'sqlite_%'\norder by name;`
+						: `select tablename as table_name\nfrom pg_catalog.pg_tables\nwhere schemaname = '${schema.replaceAll("'", "''")}'\norder by tablename;`;
 			const tabId = addDataTab(`${schema} [tables]`, query, null);
 			await executeQuery(query, {
 				targetTabId: tabId,
@@ -1641,7 +1666,9 @@
 			showConnectionModal = false;
 			editingConnectionName = null;
 		}}
-		onModeChange={(mode) => (connectionInputMode = mode)}
+		onModeChange={(mode) => {
+			connectionInputMode = connectionForm.databaseType === 'sqlite' ? 'fields' : mode;
+		}}
 		onConnectionFormChange={(next) => (connectionForm = next)}
 		onConnectionStringChange={(value) => (connectionStringInput = value)}
 		onTest={handleTestConnection}
