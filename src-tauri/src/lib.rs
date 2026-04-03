@@ -19,6 +19,7 @@ pub fn run() {
             commands::explorer::list_databases,
             commands::explorer::select_database,
             commands::editing::apply_table_changes,
+            commands::system::get_launch_sql_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

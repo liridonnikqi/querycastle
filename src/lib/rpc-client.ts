@@ -4,6 +4,7 @@ import type {
   ConnectionInput,
   ConnectionStatus,
   DatabaseExplorer,
+  LaunchSqlFilePayload,
   QueryResultPayload,
   TableChangesPayload,
 } from "./rpc";
@@ -28,5 +29,6 @@ export const rpc = {
     }) => invoke<ApplyTableChangesResult>("apply_table_changes", {
       params,
     }),
+    getLaunchSqlFile: () => invoke<LaunchSqlFilePayload | null>("get_launch_sql_file"),
   },
 };

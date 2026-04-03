@@ -126,6 +126,7 @@
 	let sqlSplitContainer = $state<HTMLDivElement | null>(null);
 	let resultsPaneHeight = $state(320);
 	let resizingResults = $state(false);
+	let forceWorkspaceOnDisconnect = $state(false);
 
 	let connectionForm = $state<ConnectionInput>({
 		databaseType: 'postgres',
@@ -736,6 +737,49 @@
 		setSqlInReusableQueryTab(nextSql);
 	}
 
+	function loadExternalSqlFile(path: string, content: string) {
+		forceWorkspaceOnDisconnect = true;
+		const normalizedPath = path.replaceAll('\\', '/');
+		const fileName = normalizedPath.split('/').pop() || 'opened.sql';
+		const targetTab =
+			(activeTab && activeTab.kind === 'query' ? activeTab : null) ??
+			tabs.find((tab) => tab.kind === 'query') ??
+			null;
+		if (!targetTab) {
+			addQueryTab(content);
+			const newestTab = tabs[tabs.length - 1];
+			if (newestTab) {
+				tabs = tabs.map((tab) =>
+					tab.id === newestTab.id
+						? {
+								...tab,
+								title: fileName,
+								sqlError: '',
+								resultContext: null,
+								lastRunSql: '',
+							}
+						: tab,
+					);
+			}
+		} else {
+			tabs = tabs.map((tab) =>
+				tab.id === targetTab.id
+					? {
+							...tab,
+							title: fileName,
+							sql: content,
+							sqlError: '',
+							resultContext: null,
+							lastRunSql: '',
+						}
+					: tab,
+			);
+			activeTabId = targetTab.id;
+		}
+		mainView = 'sql';
+		globalError = '';
+	}
+
 	function formatActiveQuery() {
 		if (!activeTab || activeTab.kind !== 'query') return;
 		const sql = activeTab.sql.trim();
@@ -1263,6 +1307,10 @@
 		loadQueryHistory();
 		void (async () => {
 			try {
+				const launchSqlFile = await rpc.request.getLaunchSqlFile();
+				if (launchSqlFile) {
+					loadExternalSqlFile(launchSqlFile.path, launchSqlFile.content);
+				}
 				connectionStatus = await rpc.request.connectionStatus();
 				await loadDatabases();
 				await loadExplorer();
@@ -1348,7 +1396,7 @@
 		</div>
 	</header>
 
-	{#if !connectionStatus.connected}
+	{#if !connectionStatus.connected && !forceWorkspaceOnDisconnect}
 		<div class="flex flex-1 overflow-hidden">
 			<section class="flex-1 overflow-auto bg-white">
 				<ConnectionHub

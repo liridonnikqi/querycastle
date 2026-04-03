@@ -26,6 +26,17 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "fileAssociations": [
+      {
+        "ext": [
+          "sql"
+        ],
+        "name": "SQL File",
+        "description": "SQL script file",
+        "role": "Editor",
+        "mimeType": "application/sql"
+      }
+    ],
     "icon": [
       "icons/icon.png",
       "icons/icon.ico"

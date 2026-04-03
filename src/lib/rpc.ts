@@ -75,3 +75,8 @@ export type DatabaseExplorer = {
   database: string;
   schemas: DatabaseSchema[];
 };
+
+export type LaunchSqlFilePayload = {
+  path: string;
+  content: string;
+};
