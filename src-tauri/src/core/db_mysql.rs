@@ -6,7 +6,10 @@ use std::time::Instant;
 
 use crate::core::types::ConnectionInput;
 use crate::core::db::MAX_QUERY_ROWS;
-use crate::core::types::QueryResultPayload;
+use crate::core::types::{
+    DatabaseColumn, DatabaseExplorer, DatabaseForeignKey, DatabaseSchema, DatabaseTable,
+    QueryResultPayload,
+};
 
 pub(crate) fn sanitize_mysql_error(error: mysql_async::Error) -> String {
     error.to_string()
@@ -98,5 +101,128 @@ pub(crate) async fn run_mysql_query(connection: &ConnectionInput, sql: &str) -> 
         rows: limited_rows,
         row_count,
         duration_ms: started.elapsed().as_millis(),
+    })
+}
+
+pub(crate) async fn get_mysql_database_explorer(
+    connection: &ConnectionInput,
+) -> Result<DatabaseExplorer, String> {
+    let mut conn = connect_mysql_client(connection).await?;
+    let current_database = connection.database.clone();
+
+    let table_rows: Vec<(
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = conn
+        .query(
+            r#"
+            select
+                t.table_schema as schema_name,
+                t.table_name as table_name,
+                t.table_type as table_type,
+                c.column_name as column_name,
+                c.column_type as data_type,
+                c.is_nullable as is_nullable
+            from information_schema.tables t
+            left join information_schema.columns c
+                on c.table_schema = t.table_schema
+                and c.table_name = t.table_name
+            where t.table_schema = database()
+                and t.table_type in ('BASE TABLE', 'VIEW')
+            order by t.table_name, c.ordinal_position
+            "#,
+        )
+        .await
+        .map_err(sanitize_mysql_error)?;
+
+    let mut schema_map: HashMap<String, DatabaseSchema> = HashMap::new();
+    let mut table_map: HashMap<String, DatabaseTable> = HashMap::new();
+
+    for (schema_name, table_name, table_type, column_name, data_type, is_nullable) in table_rows {
+        schema_map
+            .entry(schema_name.clone())
+            .or_insert_with(|| DatabaseSchema {
+                name: schema_name.clone(),
+                tables: Vec::new(),
+            });
+
+        let table_key = format!("{schema_name}.{table_name}");
+        table_map
+            .entry(table_key.clone())
+            .or_insert_with(|| DatabaseTable {
+                schema: schema_name.clone(),
+                name: table_name.clone(),
+                kind: if table_type == "VIEW" {
+                    "view".to_string()
+                } else {
+                    "table".to_string()
+                },
+                columns: Vec::new(),
+                foreign_keys: Vec::new(),
+            });
+
+        if let Some(column_name) = column_name {
+            if let Some(table) = table_map.get_mut(&table_key) {
+                table.columns.push(DatabaseColumn {
+                    name: column_name,
+                    data_type: data_type.unwrap_or_else(|| "unknown".to_string()),
+                    not_null: is_nullable
+                        .map(|value| value.eq_ignore_ascii_case("NO"))
+                        .unwrap_or(false),
+                });
+            }
+        }
+    }
+
+    let fk_rows: Vec<(String, String, String, String, String, String)> = conn
+        .query(
+            r#"
+            select
+                k.table_schema as table_schema,
+                k.table_name as table_name,
+                k.column_name as column_name,
+                k.referenced_table_schema as referenced_schema,
+                k.referenced_table_name as referenced_table,
+                k.referenced_column_name as referenced_column
+            from information_schema.key_column_usage k
+            where k.table_schema = database()
+                and k.referenced_table_name is not null
+            order by k.table_name, k.ordinal_position
+            "#,
+        )
+        .await
+        .map_err(sanitize_mysql_error)?;
+
+    for (schema, table, column, ref_schema, ref_table, ref_column) in fk_rows {
+        let table_key = format!("{schema}.{table}");
+        if let Some(table) = table_map.get_mut(&table_key) {
+            table.foreign_keys.push(DatabaseForeignKey {
+                column,
+                referenced_schema: ref_schema,
+                referenced_table: ref_table,
+                referenced_column: ref_column,
+            });
+        }
+    }
+
+    for table in table_map.into_values() {
+        if let Some(schema) = schema_map.get_mut(&table.schema) {
+            schema.tables.push(table);
+        }
+    }
+
+    let mut schemas: Vec<DatabaseSchema> = schema_map.into_values().collect();
+    schemas.sort_by(|a, b| a.name.cmp(&b.name));
+    for schema in &mut schemas {
+        schema.tables.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+
+    Ok(DatabaseExplorer {
+        database: current_database,
+        schemas,
     })
 }

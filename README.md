@@ -5,7 +5,7 @@
 
 <div align="center">
 
-A fast desktop PostgreSQL workspace built with **Tauri + Svelte + Rust**.
+A fast desktop SQL workspace built with **Tauri + Svelte + Rust**.
 
 [Quick Start](#quick-start) •
 [Features](#features) •
@@ -17,13 +17,13 @@ A fast desktop PostgreSQL workspace built with **Tauri + Svelte + Rust**.
 
 ## What Is QueryCastle?
 
-QueryCastle is a cross-platform desktop SQL client focused on PostgreSQL workflows.
+QueryCastle is a cross-platform desktop SQL client for PostgreSQL, MySQL, and SQLite workflows.
 It combines a modern SQL editor, schema exploration, query history, and inline table editing in one app.
 
 ## Highlights
 
 - Desktop app for Windows / macOS / Linux via Tauri
-- PostgreSQL connection profiles (fields or connection string)
+- Connection profiles (fields or connection string where supported)
 - SQL editor with autocomplete + formatting
 - Query tabs and data tabs for parallel workflows
 - Schema explorer with columns and foreign keys
@@ -36,11 +36,14 @@ It combines a modern SQL editor, schema exploration, query history, and inline t
 | Database | Status |
 | :-- | :-- |
 | PostgreSQL | ✅ Full support |
+| SQLite | ✅ Full support |
+| MySQL | ✅ Supported (editing has some limitations, see notes below) |
 
-## Planned Database Support
+## MySQL Editing Notes
 
-QueryCastle currently supports PostgreSQL only.
-Support for additional database engines is planned in future releases.
+- MySQL row editing is supported for View Data and editable SELECT results.
+- To track row identity in editable grids, QueryCastle uses a deterministic row hash.
+- If a table contains duplicate rows across all columns, update/delete operations may target one matching row (`limit 1`).
 
 ## Features
 
@@ -107,7 +110,7 @@ src/                     Svelte frontend
 src/components/          UI (editor, explorer, results, modals)
 src/lib/                 RPC client + shared TS types
 src-tauri/               Rust backend + Tauri config
-src-tauri/src/lib.rs     Tauri commands and PostgreSQL operations
+src-tauri/src/lib.rs     Tauri commands and database operations
 ```
 
 ## Runtime Notes
@@ -115,7 +118,10 @@ src-tauri/src/lib.rs     Tauri commands and PostgreSQL operations
 - Query timeout: **30,000 ms**
 - Max returned rows in payload: **1,000**
 - Table edits are applied in a single SQL transaction
-- Row mutation tracking uses PostgreSQL `ctid`
+- Row mutation tracking uses:
+	- PostgreSQL: `ctid`
+	- SQLite: `rowid`
+	- MySQL: deterministic row hash
 
 ## Contributing
 

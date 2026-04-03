@@ -41,6 +41,12 @@
 		onConnectionFormChange({ ...connectionForm, [key]: value });
 	}
 
+	function defaultNameForType(databaseType: ConnectionInput["databaseType"]) {
+		if (databaseType === "mysql") return "local_mysql";
+		if (databaseType === "sqlite") return "local_sqlite";
+		return "local_pg";
+	}
+
 	async function chooseSqliteFile() {
 		const selected = await open({
 			multiple: false,
@@ -110,12 +116,18 @@
 						onchange={(e) => {
 							const nextType = (e.currentTarget as HTMLSelectElement).value as ConnectionInput["databaseType"];
 							if (nextType === connectionForm.databaseType) return;
+							const prevType = connectionForm.databaseType;
+							const prevDefaultName = defaultNameForType(prevType);
+							const nextDefaultName = defaultNameForType(nextType);
+							const shouldUseDefaultName =
+								!connectionForm.name.trim() || connectionForm.name === prevDefaultName;
 							const nextPort = nextType === "mysql" ? 3306 : nextType === "sqlite" ? 0 : 5432;
 							const nextUser = nextType === "mysql" ? "root" : nextType === "sqlite" ? "" : "postgres";
 							const nextDatabase = nextType === "mysql" ? "mysql" : nextType === "sqlite" ? "main" : "postgres";
 							onConnectionFormChange({
 								...connectionForm,
 								databaseType: nextType,
+								name: shouldUseDefaultName ? nextDefaultName : connectionForm.name,
 								port: nextPort,
 								user: nextUser,
 								password: nextType === "sqlite" ? "" : connectionForm.password,

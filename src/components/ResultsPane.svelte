@@ -2,6 +2,7 @@
 	import { Database, KeyRound, Play, Timer, Trash2 } from '@lucide/svelte';
 	import type {
 		ApplyTableChangesResult,
+		DatabaseType,
 		QueryResultPayload,
 		TableChangesPayload,
 	} from '../lib/rpc';
@@ -19,6 +20,7 @@
 	let {
 		result,
 		sqlError,
+		databaseType,
 		resultContext,
 		onRunSql,
 		onApplyTableChanges,
@@ -28,6 +30,7 @@
 	}: {
 		result: QueryResultPayload;
 		sqlError: string;
+		databaseType: DatabaseType;
 		resultContext: { schema: string; table: string } | null;
 		onRunSql: (sql: string) => Promise<void>;
 		onApplyTableChanges?: (
@@ -142,6 +145,9 @@
 		const orderByClause = firstVisibleColumn
 			? ` order by ${quoteIdent(firstVisibleColumn)} asc nulls last`
 			: '';
+		if (databaseType === 'sqlite') {
+			return `select cast(rowid as text) as _querycastle_ctid, * from ${quoteIdent(resultContext.schema)}.${quoteIdent(resultContext.table)}${orderByClause} limit 100;`;
+		}
 		return `select ctid::text as _querycastle_ctid, * from ${quoteIdent(resultContext.schema)}.${quoteIdent(resultContext.table)}${orderByClause} limit 100;`;
 	}
 

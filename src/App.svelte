@@ -218,6 +218,13 @@
 		return `"${value.replaceAll('"', '""')}"`;
 	}
 
+	function quoteSqlIdentifier(value: string) {
+		if (connectionStatus.databaseType === 'mysql') {
+			return `\`${value.replaceAll('`', '``')}\``;
+		}
+		return quoteIdent(value);
+	}
+
 	function unquoteIdent(value: string) {
 		const trimmed = value.trim();
 		if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
@@ -256,8 +263,32 @@
 		return tableMeta?.columns[0]?.name ?? null;
 	}
 
+	function buildMysqlRowHashExpression(
+		schema: string,
+		table: string,
+		columnPrefix?: string,
+	): string | null {
+		const tableMeta = explorer?.schemas
+			.find((item) => item.name === schema)
+			?.tables.find((item) => item.name === table);
+		if (!tableMeta || tableMeta.columns.length === 0) return null;
+		const parts = tableMeta.columns.map((column) => {
+			const safeColumn = quoteSqlIdentifier(column.name);
+			const qualifiedColumn = columnPrefix
+				? `${columnPrefix}.${safeColumn}`
+				: safeColumn;
+			return `coalesce(cast(${qualifiedColumn} as char), '__querycastle_null__')`;
+		});
+		return `md5(concat_ws(char(31), ${parts.join(', ')}))`;
+	}
+
 	function tryBuildEditableQuery(sql: string): EditableQueryPlan | null {
-		if (connectionStatus.databaseType !== 'postgres') return null;
+		if (
+			connectionStatus.databaseType !== 'postgres' &&
+			connectionStatus.databaseType !== 'mysql' &&
+			connectionStatus.databaseType !== 'sqlite'
+		)
+			return null;
 		const cleaned = sql.trim().replace(/;+\s*$/, '');
 		if (!/^select\b/i.test(cleaned)) return null;
 
@@ -325,8 +356,12 @@
 				contextTable,
 			);
 			const orderByClause = preferredOrderColumn
-				? ` order by ${quoteIdent(preferredOrderColumn)} asc nulls last`
-				: ' order by ctid asc';
+				? connectionStatus.databaseType === 'mysql'
+					? ` order by ${quoteSqlIdentifier(preferredOrderColumn)} asc`
+					: ` order by ${quoteSqlIdentifier(preferredOrderColumn)} asc nulls last`
+				: connectionStatus.databaseType === 'sqlite'
+					? ' order by rowid asc'
+					: ' order by ctid asc';
 			const limitLikeMatch = effectiveTail.match(/\b(limit|offset|fetch)\b/i);
 			if (limitLikeMatch && limitLikeMatch.index !== undefined) {
 				const insertAt = limitLikeMatch.index;
@@ -334,6 +369,33 @@
 			} else {
 				effectiveTail = `${effectiveTail}${orderByClause}`;
 			}
+		}
+
+		if (connectionStatus.databaseType === 'sqlite') {
+			return {
+				sql: `select cast(rowid as text) as _querycastle_ctid, ${selectPart} from ${tableRef}${effectiveTail};`,
+				context: {
+					schema: contextSchema,
+					table: contextTable,
+				},
+			};
+		}
+
+		if (connectionStatus.databaseType === 'mysql') {
+			const rowHashExpression = buildMysqlRowHashExpression(
+				contextSchema,
+				contextTable,
+			);
+			if (!rowHashExpression) return null;
+			const mysqlSelectPart =
+				selectPart.trim() === '*' ? `${tableRef}.*` : selectPart;
+			return {
+				sql: `select ${rowHashExpression} as _querycastle_ctid, ${mysqlSelectPart} from ${tableRef}${effectiveTail};`,
+				context: {
+					schema: contextSchema,
+					table: contextTable,
+				},
+			};
 		}
 
 		return {
@@ -856,6 +918,16 @@
 		testConnectionMessage = '';
 		try {
 			const payload = buildConnectionPayload();
+			if (
+				saveConnection &&
+				!editingConnectionName &&
+				savedConnections.some((item) => item.name === payload.name)
+			) {
+				testConnectionOk = false;
+				testConnectionMessage =
+					'A connection with this name already exists. Choose a different name to save it.';
+				return;
+			}
 			connectionStatus = await rpc.request.connect(payload);
 			if (saveConnection) {
 				if (editingConnectionName && editingConnectionName !== payload.name)
@@ -983,8 +1055,8 @@
 		schema: string,
 		table: string,
 	) {
-		const safeSchema = quoteIdent(schema);
-		const safeTable = quoteIdent(table);
+		const safeSchema = quoteSqlIdentifier(schema);
+		const safeTable = quoteSqlIdentifier(table);
 		if (action === 'copy_name') {
 			await navigator.clipboard.writeText(`${schema}.${table}`);
 			return;
@@ -1046,15 +1118,40 @@
 				.find((item) => item.name === schema)
 				?.tables.find((item) => item.name === table)?.columns[0]?.name;
 			const orderByClause = firstOrderColumn
-				? ` order by ${quoteIdent(firstOrderColumn)} asc nulls last`
+				? connectionStatus.databaseType === 'mysql'
+					? ` order by ${quoteSqlIdentifier(firstOrderColumn)} asc`
+					: ` order by ${quoteSqlIdentifier(firstOrderColumn)} asc nulls last`
 				: '';
 			if (connectionStatus.databaseType === 'postgres') {
 				query = `select ctid::text as _querycastle_ctid, * from ${safeSchema}.${safeTable}${orderByClause} limit 100;`;
+			} else if (connectionStatus.databaseType === 'sqlite') {
+				query = `select cast(rowid as text) as _querycastle_ctid, * from ${safeSchema}.${safeTable}${orderByClause} limit 100;`;
+			} else if (connectionStatus.databaseType === 'mysql') {
+				const rowHashExpression = buildMysqlRowHashExpression(schema, table);
+				if (!rowHashExpression) {
+					globalError = 'Could not determine table columns for MySQL editing.';
+					return;
+				}
+				const rowHashWithAlias = buildMysqlRowHashExpression(
+					schema,
+					table,
+					'_querycastle_src',
+				);
+				if (!rowHashWithAlias) {
+					globalError = 'Could not determine table columns for MySQL editing.';
+					return;
+				}
+				query = `select ${rowHashWithAlias} as _querycastle_ctid, _querycastle_src.* from ${safeSchema}.${safeTable} as _querycastle_src${orderByClause} limit 100;`;
 			} else {
 				query = `select * from ${safeSchema}.${safeTable}${orderByClause} limit 100;`;
 			}
 			title = `${table} [all]`;
-			context = connectionStatus.databaseType === 'postgres' ? { schema, table } : null;
+			context =
+				connectionStatus.databaseType === 'postgres' ||
+				connectionStatus.databaseType === 'sqlite' ||
+				connectionStatus.databaseType === 'mysql'
+					? { schema, table }
+					: null;
 		}
 		if (action === 'view_structure') {
 			if (connectionStatus.databaseType === 'sqlite') {
@@ -1406,6 +1503,7 @@
 								<ResultsPane
 									result={activeTab.result}
 									sqlError={activeTab.sqlError || globalError}
+									databaseType={connectionStatus.databaseType}
 									resultContext={activeTab.resultContext}
 									loading={isRunningQuery}
 									refreshSql={activeTab.lastRunSql}
@@ -1425,6 +1523,7 @@
 							<ResultsPane
 								result={activeTab.result}
 								sqlError={activeTab.sqlError || globalError}
+								databaseType={connectionStatus.databaseType}
 								resultContext={activeTab.resultContext}
 								loading={isRunningQuery}
 								refreshSql={activeTab.lastRunSql}

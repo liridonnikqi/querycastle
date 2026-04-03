@@ -12,7 +12,8 @@ mod db_postgres;
 mod db_sqlite;
 
 pub(crate) use db_mysql::{
-    connect_mysql_client, get_mysql_server_version, run_mysql_query, sanitize_mysql_error,
+    connect_mysql_client, get_mysql_database_explorer, get_mysql_server_version, run_mysql_query,
+    sanitize_mysql_error,
 };
 pub(crate) use db_postgres::{connect_client, get_server_version, sanitize_pg_error};
 pub(crate) use db_sqlite::{
