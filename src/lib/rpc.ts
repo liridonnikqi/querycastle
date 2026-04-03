@@ -80,3 +80,7 @@ export type LaunchSqlFilePayload = {
   path: string;
   content: string;
 };
+
+export type LaunchSqliteFilePayload = {
+  path: string;
+};

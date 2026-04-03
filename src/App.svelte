@@ -780,6 +780,41 @@
 		globalError = '';
 	}
 
+	async function connectExternalSqliteFile(path: string) {
+		const normalizedPath = path.replaceAll('\\', '/');
+		const fileName = normalizedPath.split('/').pop() || 'opened.db';
+		const connectionName = fileName.replace(/\.(sqlite|sqlite3|db)$/i, '') || 'sqlite_db';
+		const payload: ConnectionInput = {
+			databaseType: 'sqlite',
+			name: connectionName,
+			host: '',
+			port: 0,
+			user: '',
+			password: '',
+			database: path,
+			ssl: false,
+			useConnectionString: false,
+			connectionString: '',
+		};
+
+		connectionForm = payload;
+		connectionInputMode = 'fields';
+		connectionStringInput = '';
+
+		try {
+			connectionStatus = await rpc.request.connect(payload);
+			await loadDatabases();
+			await loadExplorer({ clearBeforeLoad: true });
+			showConnectionModal = false;
+			editingConnectionName = null;
+			mainView = 'sql';
+			globalError = '';
+		} catch (error) {
+			globalError = error instanceof Error ? error.message : String(error);
+			showConnectionModal = true;
+		}
+	}
+
 	function formatActiveQuery() {
 		if (!activeTab || activeTab.kind !== 'query') return;
 		const sql = activeTab.sql.trim();
@@ -1307,6 +1342,10 @@
 		loadQueryHistory();
 		void (async () => {
 			try {
+				const launchSqliteFile = await rpc.request.getLaunchSqliteFile();
+				if (launchSqliteFile) {
+					await connectExternalSqliteFile(launchSqliteFile.path);
+				}
 				const launchSqlFile = await rpc.request.getLaunchSqlFile();
 				if (launchSqlFile) {
 					loadExternalSqlFile(launchSqlFile.path, launchSqlFile.content);

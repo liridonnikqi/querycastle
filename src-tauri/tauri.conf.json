@@ -35,6 +35,17 @@
         "description": "SQL script file",
         "role": "Editor",
         "mimeType": "application/sql"
+      },
+      {
+        "ext": [
+          "db",
+          "sqlite",
+          "sqlite3"
+        ],
+        "name": "SQLite Database",
+        "description": "SQLite database file",
+        "role": "Editor",
+        "mimeType": "application/x-sqlite3"
       }
     ],
     "icon": [

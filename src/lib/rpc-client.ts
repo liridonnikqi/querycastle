@@ -5,6 +5,7 @@ import type {
   ConnectionStatus,
   DatabaseExplorer,
   LaunchSqlFilePayload,
+  LaunchSqliteFilePayload,
   QueryResultPayload,
   TableChangesPayload,
 } from "./rpc";
@@ -30,5 +31,6 @@ export const rpc = {
       params,
     }),
     getLaunchSqlFile: () => invoke<LaunchSqlFilePayload | null>("get_launch_sql_file"),
+    getLaunchSqliteFile: () => invoke<LaunchSqliteFilePayload | null>("get_launch_sqlite_file"),
   },
 };

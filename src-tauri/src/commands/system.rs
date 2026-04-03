@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 
@@ -9,13 +10,19 @@ pub struct LaunchSqlFilePayload {
     pub content: String,
 }
 
-fn find_launch_sql_path() -> Option<PathBuf> {
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchSqliteFilePayload {
+    pub path: String,
+}
+
+fn find_launch_path_by_extensions(extensions: &[&str]) -> Option<PathBuf> {
     std::env::args_os().skip(1).find_map(|arg| {
         let path = PathBuf::from(arg);
         let is_sql = path
             .extension()
             .and_then(|ext| ext.to_str())
-            .map(|ext| ext.eq_ignore_ascii_case("sql"))
+            .map(|ext| extensions.iter().any(|candidate| ext.eq_ignore_ascii_case(candidate)))
             .unwrap_or(false);
         if is_sql && path.exists() {
             Some(path)
@@ -25,9 +32,16 @@ fn find_launch_sql_path() -> Option<PathBuf> {
     })
 }
 
+static LAUNCH_SQL_CONSUMED: AtomicBool = AtomicBool::new(false);
+static LAUNCH_SQLITE_CONSUMED: AtomicBool = AtomicBool::new(false);
+
 #[tauri::command]
 pub fn get_launch_sql_file() -> Result<Option<LaunchSqlFilePayload>, String> {
-    let Some(path) = find_launch_sql_path() else {
+    if LAUNCH_SQL_CONSUMED.swap(true, Ordering::SeqCst) {
+        return Ok(None);
+    }
+
+    let Some(path) = find_launch_path_by_extensions(&["sql"]) else {
         return Ok(None);
     };
 
@@ -37,5 +51,20 @@ pub fn get_launch_sql_file() -> Result<Option<LaunchSqlFilePayload>, String> {
     Ok(Some(LaunchSqlFilePayload {
         path: path.to_string_lossy().to_string(),
         content,
+    }))
+}
+
+#[tauri::command]
+pub fn get_launch_sqlite_file() -> Result<Option<LaunchSqliteFilePayload>, String> {
+    if LAUNCH_SQLITE_CONSUMED.swap(true, Ordering::SeqCst) {
+        return Ok(None);
+    }
+
+    let Some(path) = find_launch_path_by_extensions(&["db", "sqlite", "sqlite3"]) else {
+        return Ok(None);
+    };
+
+    Ok(Some(LaunchSqliteFilePayload {
+        path: path.to_string_lossy().to_string(),
     }))
 }
