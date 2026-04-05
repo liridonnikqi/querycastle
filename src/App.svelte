@@ -1321,6 +1321,42 @@
 		}
 	}
 
+	async function handleCreateDatabase(params: { name: string; encoding: string }) {
+		if (!connectionStatus.connected) {
+			globalError = 'No active connection';
+			return;
+		}
+		if (connectionStatus.databaseType !== 'postgres') {
+			globalError = 'Create database is only available for PostgreSQL connections.';
+			return;
+		}
+
+		const name = params.name.trim();
+		const encoding = params.encoding.trim().toUpperCase();
+		if (!name) {
+			globalError = 'Database name is required.';
+			return;
+		}
+		const allowedEncodings = new Set(['UTF8', 'LATIN1', 'LATIN2', 'WIN1252']);
+		if (!allowedEncodings.has(encoding)) {
+			globalError = `Unsupported encoding: ${encoding}`;
+			return;
+		}
+
+		try {
+			await rpc.request.runQuery({
+				sql: `create database ${quoteIdent(name)} encoding '${encoding}';`,
+			});
+			await loadDatabases();
+			await handleDatabaseChange(name);
+			if (connectionStatus.database === name) {
+				globalError = '';
+			}
+		} catch (error) {
+			globalError = error instanceof Error ? error.message : String(error);
+		}
+	}
+
 	async function restoreDataTabResults() {
 		if (!connectionStatus.connected) return;
 		const dataTabs = tabs.filter(
@@ -1486,6 +1522,7 @@
 					onToggleSchema={toggleSchema}
 					onToggleTable={toggleTable}
 					onRefresh={loadExplorer}
+					onCreateDatabase={handleCreateDatabase}
 					onTableAction={handleTableAction}
 					onSchemaAction={handleSchemaAction}
 					onFollowForeignKey={followForeignKey}

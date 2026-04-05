@@ -7,6 +7,7 @@
 		Info,
 		KeyRound,
 		ListOrdered,
+		Plus,
 		RefreshCw,
 		Search,
 		SquarePen,
@@ -45,6 +46,7 @@
 		onToggleSchema,
 		onToggleTable,
 		onRefresh,
+		onCreateDatabase,
 		onTableAction,
 		onSchemaAction,
 		onFollowForeignKey,
@@ -61,6 +63,7 @@
 		onToggleSchema: (name: string) => void;
 		onToggleTable: (schema: string, table: string) => void;
 		onRefresh: () => void | Promise<void>;
+		onCreateDatabase: (params: { name: string; encoding: string }) => void | Promise<void>;
 		onTableAction: (action: TableAction, schema: string, table: string) => void;
 		onSchemaAction: (action: SchemaAction, schema: string) => void;
 		onFollowForeignKey: (schema: string, table: string) => void;
@@ -79,6 +82,12 @@
 		y: number;
 		schema: string;
 	} | null>(null);
+	let showCreateDatabaseModal = $state(false);
+	let newDatabaseName = $state("");
+	let newDatabaseEncoding = $state("UTF8");
+	let creatingDatabase = $state(false);
+
+	const postgresEncodings = ["UTF8", "LATIN1", "LATIN2", "WIN1252"];
 
 	function openContextMenu(event: MouseEvent, schema: string, table: string) {
 		event.preventDefault();
@@ -125,6 +134,29 @@
 		onSearchChange((event.currentTarget as HTMLInputElement).value);
 	}
 
+	function openCreateDatabaseModal() {
+		showCreateDatabaseModal = true;
+		newDatabaseName = "";
+		newDatabaseEncoding = "UTF8";
+	}
+
+	function closeCreateDatabaseModal() {
+		if (creatingDatabase) return;
+		showCreateDatabaseModal = false;
+	}
+
+	async function submitCreateDatabase() {
+		const name = newDatabaseName.trim();
+		if (!name) return;
+		creatingDatabase = true;
+		try {
+			await onCreateDatabase({ name, encoding: newDatabaseEncoding });
+			showCreateDatabaseModal = false;
+		} finally {
+			creatingDatabase = false;
+		}
+	}
+
 	let filteredExplorer = $derived.by(() => {
 		if (!explorer) return null;
 		const query = searchQuery.trim().toLowerCase();
@@ -164,6 +196,16 @@
 			>
 				<RefreshCw size={14} />
 			</button>
+			{#if connectionStatus.connected && connectionStatus.databaseType === "postgres"}
+				<button
+					onclick={openCreateDatabaseModal}
+					class="w-8 h-8 rounded-md border border-gray-200 text-gray-500 hover:text-gray-800 hover:bg-gray-50 flex items-center justify-center"
+					aria-label="Create database"
+					title="Create database"
+				>
+					<Plus size={14} />
+				</button>
+			{/if}
 		</div>
 
 		<div class="relative flex items-center w-full">
@@ -296,6 +338,48 @@
 			<button onclick={() => runSchemaMenuAction("copy_quoted_name")} class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-gray-100">Copy Quoted Name</button>
 			<div class="h-px bg-gray-200 my-1 mx-2"></div>
 			<button onclick={() => runSchemaMenuAction("sql_list_tables")} class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-gray-100">SQL: List Tables</button>
+		</div>
+	{/if}
+
+	{#if showCreateDatabaseModal}
+		<div class="fixed inset-0 z-[70] bg-black/55 backdrop-blur-[1px] flex items-center justify-center p-4">
+			<div class="w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-white shadow-[0_24px_60px_rgba(16,37,70,0.26)]">
+				<div class="h-10 px-4 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+					<h3 class="text-sm font-semibold text-gray-900">Add Database</h3>
+					<button onclick={closeCreateDatabaseModal} class="text-gray-500 hover:text-gray-900" aria-label="Close create database modal">x</button>
+				</div>
+				<div class="p-4 space-y-3">
+					<input
+						bind:value={newDatabaseName}
+						placeholder="Database Name"
+						class="ui-input w-full h-9 text-sm px-2"
+					/>
+					<select
+						bind:value={newDatabaseEncoding}
+						class="w-full h-9 px-2 rounded-md border border-gray-200 bg-white text-sm text-gray-700 outline-none"
+					>
+						{#each postgresEncodings as encoding}
+							<option value={encoding}>{encoding}</option>
+						{/each}
+					</select>
+				</div>
+				<div class="h-12 px-4 border-t border-gray-200 flex items-center justify-end gap-2 bg-gray-50">
+					<button
+						onclick={closeCreateDatabaseModal}
+						disabled={creatingDatabase}
+						class="btn-secondary h-8 px-3 rounded-md text-xs disabled:opacity-60"
+					>
+						Cancel
+					</button>
+					<button
+						onclick={submitCreateDatabase}
+						disabled={creatingDatabase || newDatabaseName.trim().length === 0}
+						class="h-8 px-3 rounded-md border border-emerald-500 bg-emerald-500 text-white text-xs hover:bg-emerald-600 hover:border-emerald-600"
+					>
+						{creatingDatabase ? "Creating..." : "Add"}
+					</button>
+				</div>
+			</div>
 		</div>
 	{/if}
 </aside>
