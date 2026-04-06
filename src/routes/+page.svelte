@@ -8,14 +8,14 @@
 		DatabaseExplorer,
 		QueryResultPayload,
 		TableChangesPayload,
-	} from './lib/rpc';
-	import { rpc } from './lib/rpc-client';
-	import type { QueryHistoryItem, SavedQueryItem } from './lib/types';
-	import SqlEditor from './components/SqlEditor.svelte';
-	import ExplorerSidebar from './components/ExplorerSidebar.svelte';
-	import ResultsPane from './components/ResultsPane.svelte';
-	import ConnectionHub from './components/ConnectionHub.svelte';
-	import ConnectionModal from './components/ConnectionModal.svelte';
+	} from '../lib/rpc';
+	import { rpc } from '../lib/rpc-client';
+	import type { QueryHistoryItem, SavedQueryItem } from '../lib/types';
+	import SqlEditor from '../components/SqlEditor.svelte';
+	import ExplorerSidebar from '../components/ExplorerSidebar.svelte';
+	import ResultsPane from '../components/ResultsPane.svelte';
+	import ConnectionHub from '../components/ConnectionHub.svelte';
+	import ConnectionModal from '../components/ConnectionModal.svelte';
 	import { format as formatSql } from 'sql-formatter';
 	import {
 		Database,
@@ -1943,3 +1943,4 @@
 		</div>
 	{/if}
 </main>
+

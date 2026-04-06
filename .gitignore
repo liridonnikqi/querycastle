@@ -1,6 +1,7 @@
 # Dependencies and build outputs
 node_modules/
 dist/
+.svelte-kit/
 .cargo-target/
 src-tauri/target/
 

@@ -106,7 +106,7 @@ bunx tauri build
 ## Project Structure
 
 ```text
-src/                     Svelte frontend
+src/                     SvelteKit frontend
 src/components/          UI (editor, explorer, results, modals)
 src/lib/                 RPC client + shared TS types
 src-tauri/               Rust backend + Tauri config
