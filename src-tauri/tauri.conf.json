@@ -16,7 +16,10 @@
         "title": "QueryCastle",
         "width": 1280,
         "height": 800,
-        "resizable": true
+        "minWidth": 1024,
+        "minHeight": 700,
+        "resizable": true,
+        "decorations": false
       }
     ],
     "security": {

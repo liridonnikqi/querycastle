@@ -86,6 +86,7 @@
 	let newDatabaseName = $state("");
 	let newDatabaseEncoding = $state("UTF8");
 	let creatingDatabase = $state(false);
+	let showDatabaseMenu = $state(false);
 
 	const postgresEncodings = ["UTF8", "LATIN1", "LATIN2", "WIN1252"];
 
@@ -126,12 +127,17 @@
 		schemaContextMenu = null;
 	}
 
-	function handleDatabaseChange(event: Event) {
-		onChangeDatabase((event.currentTarget as HTMLSelectElement).value);
-	}
-
 	function handleSearchInput(event: Event) {
 		onSearchChange((event.currentTarget as HTMLInputElement).value);
+	}
+
+	function toggleDatabaseMenu() {
+		showDatabaseMenu = !showDatabaseMenu;
+	}
+
+	function handleDatabaseSelect(database: string) {
+		onChangeDatabase(database);
+		showDatabaseMenu = false;
 	}
 
 	function openCreateDatabaseModal() {
@@ -175,20 +181,53 @@
 
 		return { ...explorer, schemas: filteredSchemas };
 	});
+
+	let selectedDatabaseLabel = $derived.by(() => {
+		if (connectionStatus.database) return connectionStatus.database;
+		return databases[0] ?? "Select database";
+	});
 </script>
 
 <aside class="w-[300px] bg-white border-r border-gray-200 flex flex-col shrink-0 shadow-[2px_0_10px_rgba(0,0,0,0.02)]">
 	<div class="p-3 border-b border-gray-100 space-y-3">
 		<div class="flex items-center gap-2">
-			<select
-				value={connectionStatus.database}
-				onchange={handleDatabaseChange}
-				class="flex-1 h-8 px-2 rounded-md border border-gray-200 bg-white text-xs text-gray-700 outline-none"
-			>
-				{#each databases as db}
-					<option value={db}>{db}</option>
-				{/each}
-			</select>
+			<div class="relative flex-1">
+				<button
+					type="button"
+					class="w-full h-8 bg-gray-50 border border-gray-200 text-gray-700 text-xs rounded-md pl-2 pr-7 flex items-center text-left shadow-sm hover:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
+					aria-haspopup="listbox"
+					aria-expanded={showDatabaseMenu}
+					aria-label="Select database"
+					onclick={toggleDatabaseMenu}
+				>
+					<span class="truncate">{selectedDatabaseLabel}</span>
+					<ChevronDown size={14} class="absolute right-2 text-gray-400" />
+				</button>
+
+				{#if showDatabaseMenu}
+					<button
+						type="button"
+						class="fixed inset-0 z-20 cursor-default"
+						aria-label="Close database selector"
+						onclick={() => (showDatabaseMenu = false)}
+					></button>
+					<div class="absolute left-0 right-0 top-[calc(100%+4px)] z-30 overflow-hidden rounded-md border border-gray-200 bg-white shadow-[0_8px_24px_rgba(0,0,0,0.08)] py-1">
+						{#each databases as db}
+							<button
+								type="button"
+								class={`w-full px-2 py-1.5 text-left text-xs ${
+									db === connectionStatus.database
+										? "bg-emerald-50 text-emerald-700"
+										: "text-gray-700 hover:bg-gray-50"
+								}`}
+								onclick={() => handleDatabaseSelect(db)}
+							>
+								{db}
+							</button>
+						{/each}
+					</div>
+				{/if}
+			</div>
 			<button
 				onclick={() => onRefresh()}
 				class="w-8 h-8 rounded-md border border-gray-200 text-gray-500 hover:text-gray-800 hover:bg-gray-50 flex items-center justify-center"
