@@ -8,11 +8,7 @@ export default {
       pages: "dist",
       assets: "dist",
       fallback: "index.html",
-    }),
-    files: {
-      appTemplate: "src/app.html",
-      lib: "src",
-      routes: "src/routes",
-    },
+    })
+ 
   },
 };

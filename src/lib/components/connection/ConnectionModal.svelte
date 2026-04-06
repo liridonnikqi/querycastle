@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { X, Shield, DatabaseZap, FolderOpen } from "@lucide/svelte";
 	import { open } from "@tauri-apps/plugin-dialog";
-	import type { ConnectionInput } from "../lib/rpc";
+	import type { ConnectionInput } from "$lib/rpc";
 
 	let {
 		visible,
@@ -323,3 +323,5 @@
 		</div>
 	</div>
 {/if}
+
+

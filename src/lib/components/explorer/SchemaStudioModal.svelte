@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { X, Plus, Trash2, Wrench } from "@lucide/svelte";
-	import type { DatabaseExplorer } from "../lib/rpc";
+	import type { DatabaseExplorer } from "$lib/rpc";
 
 	let {
 		visible,
@@ -195,4 +195,7 @@
 		</div>
 	</div>
 {/if}
+
+
+
 

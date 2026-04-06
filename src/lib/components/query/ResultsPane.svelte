@@ -5,7 +5,7 @@
 		DatabaseType,
 		QueryResultPayload,
 		TableChangesPayload,
-	} from '../lib/rpc';
+	} from '$lib/rpc';
 
 	type RowContextMenu = { x: number; y: number; rowId: string } | null;
 	type EditingCell = { rowId: string; column: string } | null;
@@ -974,3 +974,6 @@
 		</div>
 	{/if}
 </div>
+
+
+

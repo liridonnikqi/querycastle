@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Clock3, Keyboard, Star, Trash2, X } from "@lucide/svelte";
-	import type { QueryHistoryItem, SavedQueryItem } from "../lib/types";
+	import type { QueryHistoryItem, SavedQueryItem } from "$lib/types";
 
 	let {
 		items,
@@ -85,4 +85,7 @@
 		{/if}
 	</div>
 </aside>
+
+
+
 

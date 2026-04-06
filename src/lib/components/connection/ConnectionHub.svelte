@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Database, Pencil, Plug, Plus, Trash2 } from '@lucide/svelte';
-	import type { ConnectionInput } from '../lib/rpc';
+	import type { ConnectionInput } from '$lib/rpc';
 
 	let {
 		savedConnections,
@@ -222,3 +222,6 @@
 		{/if}
 	</div>
 </section>
+
+
+

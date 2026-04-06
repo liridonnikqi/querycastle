@@ -14,7 +14,7 @@
 		Table2,
 		Trash2,
 	} from "@lucide/svelte";
-	import type { ConnectionStatus, DatabaseExplorer } from "../lib/rpc";
+	import type { ConnectionStatus, DatabaseExplorer } from "$lib/rpc";
 
 	type TableAction =
 		| "view_data"
@@ -383,3 +383,6 @@
 		</div>
 	{/if}
 </aside>
+
+
+
