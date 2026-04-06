@@ -24,7 +24,8 @@
 		onSearchChange,
 		onToggleSchema,
 		onToggleTable,
-		onRefresh,
+		onRefreshDatabases,
+		onRefreshTables,
 		onCreateDatabase,
 		onTableAction,
 		onSchemaAction,
@@ -67,7 +68,8 @@
 		onSearchChange: (value: string) => void;
 		onToggleSchema: (schema: string) => void;
 		onToggleTable: (schema: string, table: string) => void;
-		onRefresh: () => void | Promise<void>;
+		onRefreshDatabases: () => void | Promise<void>;
+		onRefreshTables: () => void | Promise<void>;
 		onCreateDatabase: (params: { name: string; encoding: string }) => void | Promise<void>;
 		onTableAction: (action: TableAction, schema: string, table: string) => void | Promise<void>;
 		onSchemaAction: (action: SchemaAction, schema: string) => void | Promise<void>;
@@ -126,7 +128,8 @@
 	{onSearchChange}
 	{onToggleSchema}
 	{onToggleTable}
-	{onRefresh}
+	{onRefreshDatabases}
+	{onRefreshTables}
 	{onCreateDatabase}
 	{onTableAction}
 	{onSchemaAction}
@@ -216,7 +219,10 @@
 						<span>Format SQL</span><span class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono-code">Shift+Alt+F</span>
 					</div>
 					<div class="flex items-center justify-between">
-						<span>New Query Tab</span><span class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono-code">+</span>
+						<span>New Query Tab</span><span class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono-code">Ctrl+T</span>
+					</div>
+					<div class="flex items-center justify-between">
+						<span>Close Active Tab</span><span class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono-code">Ctrl+W</span>
 					</div>
 				</div>
 				<div class="mt-4">

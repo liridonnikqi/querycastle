@@ -41,7 +41,8 @@
 		onSearchChange,
 		onToggleSchema,
 		onToggleTable,
-		onRefreshExplorer,
+		onRefreshDatabases,
+		onRefreshTables,
 		onCreateDatabase,
 		onTableAction,
 		onSchemaAction,
@@ -96,7 +97,8 @@
 		onSearchChange: (value: string) => void;
 		onToggleSchema: (schema: string) => void;
 		onToggleTable: (schema: string, table: string) => void;
-		onRefreshExplorer: () => void | Promise<void>;
+		onRefreshDatabases: () => void | Promise<void>;
+		onRefreshTables: () => void | Promise<void>;
 		onCreateDatabase: (params: { name: string; encoding: string }) => void | Promise<void>;
 		onTableAction: (action: TableAction, schema: string, table: string) => void | Promise<void>;
 		onSchemaAction: (action: SchemaAction, schema: string) => void | Promise<void>;
@@ -147,7 +149,8 @@
 			onSearchChange={onSearchChange}
 			onToggleSchema={onToggleSchema}
 			onToggleTable={onToggleTable}
-			onRefresh={onRefreshExplorer}
+			onRefreshDatabases={onRefreshDatabases}
+			onRefreshTables={onRefreshTables}
 			onCreateDatabase={onCreateDatabase}
 			onTableAction={onTableAction}
 			onSchemaAction={onSchemaAction}

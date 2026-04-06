@@ -99,7 +99,7 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		data-tauri-drag-region
-		class="flex items-center space-x-3 min-w-0 flex-1 h-full"
+		class="flex items-center space-x-3 min-w-0 flex-1 h-full cursor-grab active:cursor-grabbing"
 		onmousedown={startWindowDrag}
 		ondblclick={handleHeaderDoubleClick}
 	>
@@ -146,7 +146,7 @@
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			data-tauri-drag-region
-			class="h-full w-3"
+			class="h-full w-3 cursor-grab active:cursor-grabbing"
 			onmousedown={startWindowDrag}
 			ondblclick={handleHeaderDoubleClick}
 		></div>

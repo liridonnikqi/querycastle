@@ -773,6 +773,13 @@
 			globalError = error instanceof Error ? error.message : String(error);
 		}
 	}
+	async function refreshDatabasesAndExplorer() {
+		await loadDatabases();
+		await loadExplorer();
+	}
+	async function refreshExplorerTables() {
+		await loadExplorer();
+	}
 	async function restoreDataTabResults() {
 		if (!connectionStatus.connected) return;
 		const dataTabs = tabs.filter(
@@ -817,9 +824,37 @@
 			const total = sqlSplitContainer.clientHeight;
 			resultsPaneHeight = clampResultsHeight(resultsPaneHeight, total);
 		};
+
+		const isEditableTarget = (target: EventTarget | null) => {
+			if (!(target instanceof HTMLElement)) return false;
+			if (target.isContentEditable) return true;
+			const tag = target.tagName.toLowerCase();
+			return tag === 'input' || tag === 'textarea' || tag === 'select';
+		};
+
+		const onGlobalShortcuts = (event: KeyboardEvent) => {
+			if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+			if (isEditableTarget(event.target)) return;
+
+			const key = event.key.toLowerCase();
+			if (key === 't') {
+				event.preventDefault();
+				addQueryTab();
+				mainView = 'sql';
+				return;
+			}
+
+			if (key === 'w') {
+				event.preventDefault();
+				if (activeTabId) closeTab(activeTabId);
+			}
+		};
+
 		window.addEventListener('resize', onWindowResize);
+		window.addEventListener('keydown', onGlobalShortcuts);
 		return () => {
 			window.removeEventListener('resize', onWindowResize);
+			window.removeEventListener('keydown', onGlobalShortcuts);
 		};
 	});
 	onDestroy(() => {
@@ -878,7 +913,8 @@
 			onSearchChange={(value) => (explorerSearch = value)}
 			onToggleSchema={toggleSchema}
 			onToggleTable={toggleTable}
-			onRefreshExplorer={loadExplorer}
+			onRefreshDatabases={refreshDatabasesAndExplorer}
+			onRefreshTables={refreshExplorerTables}
 			onCreateDatabase={handleCreateDatabase}
 			onTableAction={handleTableAction}
 			onSchemaAction={handleSchemaAction}

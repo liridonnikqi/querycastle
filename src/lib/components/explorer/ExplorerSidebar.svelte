@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { onMount } from "svelte";
 	import {
 		ChevronDown,
 		ChevronRight,
+		ChevronsUpDown,
 		Columns2,
 		Copy,
 		Info,
@@ -45,7 +47,8 @@
 		onSearchChange,
 		onToggleSchema,
 		onToggleTable,
-		onRefresh,
+		onRefreshDatabases,
+		onRefreshTables,
 		onCreateDatabase,
 		onTableAction,
 		onSchemaAction,
@@ -62,7 +65,8 @@
 		onSearchChange: (value: string) => void;
 		onToggleSchema: (name: string) => void;
 		onToggleTable: (schema: string, table: string) => void;
-		onRefresh: () => void | Promise<void>;
+		onRefreshDatabases: () => void | Promise<void>;
+		onRefreshTables: () => void | Promise<void>;
 		onCreateDatabase: (params: { name: string; encoding: string }) => void | Promise<void>;
 		onTableAction: (action: TableAction, schema: string, table: string) => void;
 		onSchemaAction: (action: SchemaAction, schema: string) => void;
@@ -87,6 +91,10 @@
 	let newDatabaseEncoding = $state("UTF8");
 	let creatingDatabase = $state(false);
 	let showDatabaseMenu = $state(false);
+	let refreshingCount = $state(0);
+	let refreshingDatabases = $state(false);
+	let refreshingTables = $state(false);
+	let searchInputElement: HTMLInputElement | null = null;
 
 	const postgresEncodings = ["UTF8", "LATIN1", "LATIN2", "WIN1252"];
 
@@ -182,85 +190,186 @@
 		return { ...explorer, schemas: filteredSchemas };
 	});
 
+	let totalEntities = $derived.by(() => {
+		if (!explorer) return 0;
+		return explorer.schemas.reduce((sum, schema) => sum + schema.tables.length, 0);
+	});
+
+	function expandAllEntities() {
+		if (!explorer) return;
+
+		for (const schema of explorer.schemas) {
+			if (!expandedSchemas.has(schema.name)) onToggleSchema(schema.name);
+			for (const table of schema.tables) {
+				const key = `${schema.name}.${table.name}`;
+				if (!expandedTables.has(key)) onToggleTable(schema.name, table.name);
+			}
+		}
+	}
+
+	function collapseAllEntities() {
+		if (!explorer) return;
+
+		for (const key of expandedTables) {
+			const dot = key.indexOf(".");
+			if (dot <= 0) continue;
+			const schema = key.slice(0, dot);
+			const table = key.slice(dot + 1);
+			onToggleTable(schema, table);
+		}
+
+		for (const schemaName of expandedSchemas) {
+			onToggleSchema(schemaName);
+		}
+	}
+
+	async function refreshEntities() {
+		refreshingCount += 1;
+		refreshingTables = true;
+		try {
+			await onRefreshTables();
+		} finally {
+			refreshingCount = Math.max(0, refreshingCount - 1);
+			refreshingTables = false;
+		}
+	}
+
+	async function refreshDatabaseSelector() {
+		refreshingCount += 1;
+		refreshingDatabases = true;
+		try {
+			await onRefreshDatabases();
+		} finally {
+			refreshingCount = Math.max(0, refreshingCount - 1);
+			refreshingDatabases = false;
+		}
+	}
+
+	let allEntitiesExpanded = $derived.by(() => {
+		if (!explorer) return false;
+		for (const schema of explorer.schemas) {
+			if (!expandedSchemas.has(schema.name)) return false;
+			for (const table of schema.tables) {
+				if (!expandedTables.has(`${schema.name}.${table.name}`)) return false;
+			}
+		}
+		return true;
+	});
+
+	function toggleExpandCollapseEntities() {
+		if (allEntitiesExpanded) {
+			collapseAllEntities();
+			return;
+		}
+		expandAllEntities();
+	}
+
 	let selectedDatabaseLabel = $derived.by(() => {
 		if (connectionStatus.database) return connectionStatus.database;
 		return databases[0] ?? "Select database";
+	});
+
+	onMount(() => {
+		const onGlobalKeyDown = (event: KeyboardEvent) => {
+			if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+				event.preventDefault();
+				searchInputElement?.focus();
+				searchInputElement?.select();
+			}
+		};
+
+		window.addEventListener("keydown", onGlobalKeyDown);
+		return () => {
+			window.removeEventListener("keydown", onGlobalKeyDown);
+		};
 	});
 </script>
 
 <aside class="w-[300px] bg-white border-r border-gray-200 flex flex-col shrink-0 shadow-[2px_0_10px_rgba(0,0,0,0.02)]">
 	<div class="p-3 border-b border-gray-100 space-y-3">
-		<div class="flex items-center gap-2">
-			<div class="relative flex-1">
+		<div class="relative">
+			<div class="h-8 bg-gray-50 border border-gray-200 rounded-md shadow-sm flex items-center overflow-hidden focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500">
 				<button
 					type="button"
-					class="w-full h-8 bg-gray-50 border border-gray-200 text-gray-700 text-xs rounded-md pl-2 pr-7 flex items-center text-left shadow-sm hover:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
+					class="relative flex-1 h-full min-w-0 pl-2 pr-6 flex items-center text-left text-xs text-gray-700 hover:bg-white focus:outline-none"
 					aria-haspopup="listbox"
 					aria-expanded={showDatabaseMenu}
 					aria-label="Select database"
 					onclick={toggleDatabaseMenu}
 				>
 					<span class="truncate">{selectedDatabaseLabel}</span>
-					<ChevronDown size={14} class="absolute right-2 text-gray-400" />
+					<ChevronDown size={13} class="absolute right-2 text-gray-400 shrink-0" />
 				</button>
-
-				{#if showDatabaseMenu}
+				<div class="w-px h-4 bg-gray-200"></div>
+				<button
+					type="button"
+					onclick={refreshDatabaseSelector}
+					class="w-8 h-full text-gray-500 hover:text-gray-800 flex items-center justify-center"
+					aria-label="Refresh databases"
+					title="Refresh databases"
+				>
+					<RefreshCw size={13} class={refreshingDatabases ? "animate-spin" : ""} />
+				</button>
+				{#if connectionStatus.connected && connectionStatus.databaseType === "postgres"}
 					<button
 						type="button"
-						class="fixed inset-0 z-20 cursor-default"
-						aria-label="Close database selector"
-						onclick={() => (showDatabaseMenu = false)}
-					></button>
-					<div class="absolute left-0 right-0 top-[calc(100%+4px)] z-30 overflow-hidden rounded-md border border-gray-200 bg-white shadow-[0_8px_24px_rgba(0,0,0,0.08)] py-1">
-						{#each databases as db}
-							<button
-								type="button"
-								class={`w-full px-2 py-1.5 text-left text-xs ${
-									db === connectionStatus.database
-										? "bg-emerald-50 text-emerald-700"
-										: "text-gray-700 hover:bg-gray-50"
-								}`}
-								onclick={() => handleDatabaseSelect(db)}
-							>
-								{db}
-							</button>
-						{/each}
-					</div>
+						onclick={openCreateDatabaseModal}
+						class="w-8 h-full rounded-r-md text-gray-500 hover:text-gray-800 flex items-center justify-center"
+						aria-label="Create database"
+						title="Create database"
+					>
+						<Plus size={13} />
+					</button>
 				{/if}
 			</div>
-			<button
-				onclick={() => onRefresh()}
-				class="w-8 h-8 rounded-md border border-gray-200 text-gray-500 hover:text-gray-800 hover:bg-gray-50 flex items-center justify-center"
-				aria-label="Refresh explorer"
-			>
-				<RefreshCw size={14} />
-			</button>
-			{#if connectionStatus.connected && connectionStatus.databaseType === "postgres"}
+
+			{#if showDatabaseMenu}
 				<button
-					onclick={openCreateDatabaseModal}
-					class="w-8 h-8 rounded-md border border-gray-200 text-gray-500 hover:text-gray-800 hover:bg-gray-50 flex items-center justify-center"
-					aria-label="Create database"
-					title="Create database"
-				>
-					<Plus size={14} />
-				</button>
+					type="button"
+					class="fixed inset-0 z-20 cursor-default"
+					aria-label="Close database selector"
+					onclick={() => (showDatabaseMenu = false)}
+				></button>
+				<div class="absolute left-0 right-0 top-[calc(100%+4px)] z-30 overflow-hidden rounded-md border border-gray-200 bg-white shadow-[0_8px_24px_rgba(0,0,0,0.08)] py-1">
+					{#each databases as db}
+						<button
+							type="button"
+							class={`w-full px-2 py-1.5 text-left text-xs ${
+								db === connectionStatus.database
+									? "bg-emerald-50 text-emerald-700"
+									: "text-gray-700 hover:bg-gray-50"
+							}`}
+							onclick={() => handleDatabaseSelect(db)}
+						>
+							{db}
+						</button>
+					{/each}
+				</div>
 			{/if}
 		</div>
 
 		<div class="relative flex items-center w-full">
 			<Search size={14} class="w-4 h-4 absolute left-2.5 text-gray-400" />
 			<input
+				bind:this={searchInputElement}
 				type="text"
 				value={searchQuery}
 				oninput={handleSearchInput}
 				placeholder="Search..."
-				class="w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-md focus:ring-emerald-500 focus:border-emerald-500 block pl-8 pr-2 py-1.5 shadow-sm placeholder-gray-400"
+				class="w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-md block pl-8 pr-2 py-1.5 shadow-sm placeholder-gray-400 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
 			/>
 			<div class="absolute right-2 text-xs text-gray-400 font-medium bg-gray-100 border border-gray-200 px-1 rounded">Ctrl+K</div>
 		</div>
+
 	</div>
 
-	<div class="flex-1 overflow-y-auto p-2 pb-6 text-sm">
+	<div class="flex-1 overflow-y-auto  pb-2 text-sm">
+	
+		<div class="h-px bg-gray-200 overflow-hidden">
+			{#if refreshingCount > 0}
+				<div class="refresh-activity-bar"></div>
+			{/if}
+		</div>
 		{#if !connectionStatus.connected}
 			<div class="px-2 py-3 text-xs text-gray-500">Connect to load schema.</div>
 		{:else if loadingExplorer && !filteredExplorer}
@@ -276,16 +385,39 @@
 				{/each}
 			</div>
 		{:else if !filteredExplorer || filteredExplorer.schemas.length === 0}
-			<div class="px-2 py-3 text-xs text-gray-500">No schemas or tables found.</div>
+			<div class="px-2 py-3 text-xs text-gray-500">No entities found.</div>
 		{:else}
 			<div class="flex flex-col">
-				<div class="flex items-center w-full px-2 py-1.5 rounded-md text-gray-700">
-					
-					<Table2 size={14} class="mr-2 text-amber-500" />
-					<span class="font-medium">Tables</span>
+				<div class="flex items-center justify-between w-full px-2 py-1.5 rounded-md text-gray-700">
+					<div class="flex items-center gap-1.5 min-w-0">
+						<span class="text-xs font-semibold text-gray-700">ENTITIES</span>
+						<span class="px-1.5 py-0.5 rounded-full bg-gray-100 border border-gray-200 text-[10px] leading-none font-semibold text-gray-600">
+							{totalEntities}
+						</span>
+					</div>
+					<div class="flex items-center gap-0.5">
+						<button
+							type="button"
+							class="w-6 h-6 rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 flex items-center justify-center"
+							title={allEntitiesExpanded ? "Collapse all entities" : "Expand all entities"}
+							aria-label={allEntitiesExpanded ? "Collapse all entities" : "Expand all entities"}
+							onclick={toggleExpandCollapseEntities}
+						>
+							<ChevronsUpDown size={13} />
+						</button>
+						<button
+							type="button"
+							class="w-6 h-6 rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 flex items-center justify-center"
+							title="Refresh tables"
+							aria-label="Refresh tables"
+							onclick={refreshEntities}
+						>
+							<RefreshCw size={13} class={refreshingTables ? "animate-spin" : ""} />
+						</button>
+					</div>
 				</div>
 
-				<div class="flex flex-col ml-5 relative before:absolute before:left-[-11px] before:top-0 before:bottom-0 before:w-px before:bg-gray-200">
+				<div class="flex flex-col">
 					{#each filteredExplorer.schemas as schema}
 						<button
 							onclick={() => onToggleSchema(schema.name)}
@@ -302,7 +434,7 @@
 						</button>
 
 						{#if expandedSchemas.has(schema.name)}
-							<div class="flex flex-col ml-5 relative before:absolute before:left-[-11px] before:top-0 before:bottom-0 before:w-px before:bg-gray-200">
+							<div class="flex flex-col ml-5">
 								{#each schema.tables as table}
 									<button
 										onclick={() => onToggleTable(schema.name, table.name)}
@@ -421,7 +553,33 @@
 			</div>
 		</div>
 	{/if}
+
 </aside>
 
+<style>
+	@keyframes refresh-activity-slide {
+		0% {
+			transform: translateX(-110%);
+			width: 26%;
+		}
 
+		50% {
+			transform: translateX(55%);
+			width: 46%;
+		}
+
+		100% {
+			transform: translateX(230%);
+			width: 26%;
+		}
+	}
+
+	.refresh-activity-bar {
+		height: 100%;
+		background: #10b981;
+		border-top: 1px solid #10b981;
+		border-bottom: 1px solid #10b981;
+		animation: refresh-activity-slide 900ms ease-in-out infinite;
+	}
+</style>
 
