@@ -83,11 +83,15 @@ pub(crate) fn normalize_connection_input(input: ConnectionInput) -> Result<Conne
                 }
                 path
             }
-            _ => parsed.path().trim_start_matches('/').to_string(),
+            _ => {
+                let db = parsed.path().trim_start_matches('/').to_string();
+                if db.is_empty() {
+                    default_database(database_type).to_string()
+                } else {
+                    db
+                }
+            }
         };
-        if database.is_empty() {
-            return Err("Database name is missing in connection string".to_string());
-        }
 
         let resolved_port = parsed.port().unwrap_or(default_port(database_type));
         let ssl_from_url = parsed.query_pairs().find_map(|(key, val)| {
@@ -137,14 +141,20 @@ pub(crate) fn normalize_connection_input(input: ConnectionInput) -> Result<Conne
         if input.database.trim().is_empty() {
             return Err("Database path is required for SQLite".to_string());
         }
-    } else if input.host.trim().is_empty() || input.database.trim().is_empty() || input.user.trim().is_empty() {
-        return Err("Host, database, and user are required".to_string());
+    } else if input.host.trim().is_empty() || input.user.trim().is_empty() {
+        return Err("Host and user are required".to_string());
     }
 
     Ok(ConnectionInput {
         database_type,
         name: if input.name.trim().is_empty() {
-            input.database.clone()
+            if !input.database.trim().is_empty() {
+                input.database.clone()
+            } else if !input.host.trim().is_empty() {
+                input.host.trim().to_string()
+            } else {
+                default_database(database_type).to_string()
+            }
         } else {
             input.name.trim().to_string()
         },

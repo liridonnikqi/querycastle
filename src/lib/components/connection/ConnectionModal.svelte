@@ -223,14 +223,20 @@
 							</label>
 						{/if}
 						<label class="flex flex-col gap-1 text-slate-600">
-							<span class="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{isSqlite ? "Database Path" : "Database"}</span>
+							<span class="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{isSqlite ? "Database Path" : "Database"}{!isSqlite && connectionForm.databaseType === "postgres" ? ' — Optional' : ''}</span>
 							<div class="flex items-center gap-2">
 								<input
 									value={connectionForm.database}
 									oninput={(e) =>
 										updateField("database", (e.currentTarget as HTMLInputElement).value)}
-									placeholder={isSqlite ? "C:/data/mydb.sqlite" : undefined}
-									class="ui-input h-9 bg-white px-3"
+									placeholder={isSqlite
+										? "C:/data/mydb.sqlite"
+										: connectionForm.databaseType === "postgres"
+											? "postgres (default) — leave empty to choose after connect"
+											: connectionForm.databaseType === "mysql"
+												? "mysql (default) — optional"
+												: undefined}
+									class="ui-input h-9 bg-white px-3 placeholder:text-slate-400"
 								/>
 								{#if isSqlite}
 									<button
@@ -243,6 +249,9 @@
 									</button>
 								{/if}
 							</div>
+							{#if !isSqlite && connectionForm.databaseType === "postgres"}
+								<span class="text-[11px] leading-tight text-slate-500">Leave empty to connect to the server (defaults to <span class="font-mono text-slate-600">postgres</span>), then pick a database from the sidebar.</span>
+							{/if}
 						</label>
 						{#if !isSqlite}
 							<label class="flex flex-col gap-1 text-slate-600">

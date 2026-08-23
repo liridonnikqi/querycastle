@@ -867,9 +867,12 @@ import SearchPalette from '$lib/components/workspace/SearchPalette.svelte';
 			}
 		};
 
+		const onContextMenu = (e: MouseEvent) => e.preventDefault();
+		window.addEventListener('contextmenu', onContextMenu);
 		window.addEventListener('resize', onWindowResize);
 		window.addEventListener('keydown', onGlobalShortcuts);
 		return () => {
+			window.removeEventListener('contextmenu', onContextMenu);
 			window.removeEventListener('resize', onWindowResize);
 			window.removeEventListener('keydown', onGlobalShortcuts);
 		};

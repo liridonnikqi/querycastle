@@ -174,7 +174,7 @@
 								onclick={() => selectResult(r)}
 								onmouseenter={() => (selectedIndex = i)}
 								class={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left text-sm transition
-									${i === selectedIndex ? 'bg-[#1c1c1e] text-white shadow-sm' : 'text-gray-700 hover:bg-gray-50'}`}
+									${i === selectedIndex ? 'bg-[#1c1c1e] text-white' : 'text-gray-700 hover:bg-gray-50'}`}
 							>
 								<div class={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 ${i === selectedIndex ? 'bg-white/15 text-white' : r.kind === 'schema' ? 'bg-amber-100 text-amber-600' : r.kind === 'table' ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-500'}`}>
 									{#if r.kind === 'schema'}

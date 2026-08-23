@@ -274,10 +274,10 @@
 	});
 </script>
 
-<aside class="w-[300px] bg-white border-r border-gray-200 flex flex-col shrink-0 shadow-[2px_0_10px_rgba(0,0,0,0.02)]">
-	<div class="p-3 border-b border-gray-100 space-y-3">
+<aside class="w-[260px] bg-white border-r border-gray-200 flex flex-col shrink-0 shadow-[2px_0_10px_rgba(0,0,0,0.02)]">
+	<div class="p-2.5 border-b border-gray-100 space-y-2.5">
 		<div class="relative">
-			<div class="h-8 bg-gray-50 border border-gray-200 rounded-md shadow-sm flex items-center overflow-hidden focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500">
+			<div class="h-8 bg-white border border-gray-200 rounded-md flex items-center overflow-hidden hover:border-gray-300 focus-within:border-gray-300 focus-within:ring-1 focus-within:ring-gray-200">
 				<button
 					type="button"
 					class="relative flex-1 h-full min-w-0 pl-2 pr-6 flex items-center text-left text-xs text-gray-700 hover:bg-white focus:outline-none"
@@ -344,9 +344,9 @@
 				value={searchQuery}
 				oninput={handleSearchInput}
 				placeholder="Search..."
-				class="w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-md block pl-8 pr-2 py-1.5 shadow-sm placeholder-gray-400 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+				class="w-full h-8 bg-white border border-gray-200 text-gray-900 text-sm rounded-md block pl-8 pr-14 py-1.5 placeholder-gray-400 focus:outline-none hover:border-gray-300 focus:border-gray-300 focus:ring-1 focus:ring-gray-200"
 			/>
-			<div class="absolute right-2 text-xs text-gray-400 font-medium bg-gray-100 border border-gray-200 px-1 rounded">Ctrl+K</div>
+			<div class="absolute right-1.5 text-xs text-gray-500 font-medium bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded">Ctrl+K</div>
 		</div>
 
 	</div>
@@ -378,7 +378,7 @@
 			<div class="flex flex-col">
 				<div class="flex items-center justify-between w-full px-2 py-1.5 rounded-md text-gray-700">
 					<div class="flex items-center gap-1.5 min-w-0">
-						<span class="text-[10px] font-medium tracking-[0.14em] text-gray-400 uppercase">Entities</span>
+						<span class="text-xs font-medium tracking-wide text-gray-700">Entities</span>
 						<span class="px-1.5 py-0.5 rounded-full bg-gray-100 border border-gray-200 text-[10px] leading-none font-medium text-gray-500">
 							{totalEntities}
 						</span>
