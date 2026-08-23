@@ -39,5 +39,6 @@ jobs:
           tagName: v__VERSION__
           releaseName: 'QueryCastle v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
+          includeUpdaterJson: true
