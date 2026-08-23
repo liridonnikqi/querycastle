@@ -67,6 +67,9 @@
 		onDeleteSavedQuery,
 		onOpenSavedQuery,
 		onSelectHistory,
+		onDeleteHistory,
+		onClearHistory,
+		onClearSavedQueries,
 	}: {
 		mainView: MainView;
 		connectionStatus: ConnectionStatus;
@@ -130,6 +133,9 @@
 		onDeleteSavedQuery: (id: string) => void;
 		onOpenSavedQuery: (sql: string) => void;
 		onSelectHistory: (index: number) => void;
+		onDeleteHistory: (index: number) => void;
+		onClearHistory: () => void;
+		onClearSavedQueries: () => void;
 	} = $props();
 </script>
 
@@ -195,6 +201,9 @@
 			onDeleteSavedQuery={onDeleteSavedQuery}
 			onOpenSavedQuery={onOpenSavedQuery}
 			onSelectHistory={onSelectHistory}
+			onDeleteHistory={onDeleteHistory}
+			onClearHistory={onClearHistory}
+			onClearSavedQueries={onClearSavedQueries}
 		/>
 	{/if}
 </div>

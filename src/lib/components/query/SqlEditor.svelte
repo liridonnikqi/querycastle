@@ -473,16 +473,14 @@
 				<WandSparkles size={14} class="text-gray-500" />
 				<span>Format</span>
 			</button>
-			<div class="h-4 w-px bg-gray-200 mx-1"></div>
-			<button
-				onclick={onSaveQuery}
-				class="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors flex items-center justify-center"
-				title="Save"
-			>
-				<Save size={16} />
-			</button>
 		</div>
-		<div class="text-xs text-gray-400 font-medium">Saved locally</div>
+		<button
+			onclick={onSaveQuery}
+			class="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors flex items-center justify-center"
+			title="Save (Ctrl+S)"
+		>
+			<Save size={16} />
+		</button>
 	</div>
 	<div class="flex-1 min-h-0 overflow-hidden">
 		<div bind:this={editorContainer} class="h-full"></div>

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { FolderKanban, Home, Star } from '@lucide/svelte';
+	import { History, Home, Star } from '@lucide/svelte';
 	import type { MainView } from '$lib/utils/workspace';
 
 	let {
@@ -26,8 +26,9 @@
 	><Star size={18} /></button
 	>
 	<button
-		onclick={() => onSelectView('last_queries')}
-		class={`transition-colors p-1.5 rounded-md flex items-center justify-center ${mainView === 'last_queries' ? 'text-gray-900 bg-gray-100 border border-gray-200/50' : 'text-gray-400 hover:text-gray-900 hover:bg-gray-100'}`}
-	><FolderKanban size={18} /></button
+		onclick={() => onSelectView('history')}
+		title="History"
+		class={`transition-colors p-1.5 rounded-md flex items-center justify-center ${mainView === 'history' ? 'text-gray-900 bg-gray-100 border border-gray-200/50' : 'text-gray-400 hover:text-gray-900 hover:bg-gray-100'}`}
+	><History size={18} /></button
 	>
 </aside>

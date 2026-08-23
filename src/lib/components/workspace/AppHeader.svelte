@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-import { ChevronRight, Database, Maximize2, Minimize2, Minus, Plus, Unplug, X } from '@lucide/svelte';
+import { ChevronRight, Maximize2, Minimize2, Minus, Plus, Unplug, X } from '@lucide/svelte';
 import { isTauri } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { ConnectionStatus } from '$lib/rpc';
@@ -103,9 +103,7 @@ import type { ConnectionStatus } from '$lib/rpc';
 		onmousedown={startWindowDrag}
 		ondblclick={handleHeaderDoubleClick}
 	>
-		<div class="bg-emerald-500 rounded p-1 flex items-center justify-center">
-			<Database size={16} class="text-[#1c1c1e]" />
-		</div>
+		<img src="/icon.svg?v=2" alt="QueryCastle" class="w-6 h-6 rounded-[5px] object-contain shrink-0" />
 		<div class="flex items-center text-sm min-w-0">
 			<span class="text-gray-400 cursor-default hover:text-gray-200 truncate">
 				{connectionStatus.connected ? connectionStatus.host : 'Disconnected'}

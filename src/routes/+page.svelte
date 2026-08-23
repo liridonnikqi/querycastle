@@ -15,6 +15,8 @@ import WorkspaceBody from '$lib/components/workspace/WorkspaceBody.svelte';
 import WorkspaceModals from '$lib/components/workspace/WorkspaceModals.svelte';
 import StatusBar from '$lib/components/workspace/StatusBar.svelte';
 import SearchPalette from '$lib/components/workspace/SearchPalette.svelte';
+import SnackbarContainer from '$lib/components/ui/SnackbarContainer.svelte';
+import { showSnackbar } from '$lib/stores/snackbar';
 	import { normalizeConnectionInput } from '$lib/utils/connection';
 	import { tryBuildEditableQuery } from '$lib/utils/editable-query';
 	import {
@@ -36,6 +38,7 @@ import SearchPalette from '$lib/components/workspace/SearchPalette.svelte';
 		QUERY_TABS_KEY,
 		QUERY_FAVORITES_KEY,
 		QUERY_HISTORY_KEY,
+		MAIN_VIEW_KEY,
 		clampResultsHeight,
 		createDefaultTab,
 		deriveFavoriteTitle,
@@ -172,7 +175,7 @@ import SearchPalette from '$lib/components/workspace/SearchPalette.svelte';
 		}
 	});
 	$effect(() => {
-		if (mainView !== 'last_queries') return;
+		if (mainView !== 'history') return;
 		if (historyForConnection.length === 0) {
 			selectedHistoryIndex = 0;
 			return;
@@ -205,6 +208,7 @@ import SearchPalette from '$lib/components/workspace/SearchPalette.svelte';
 	function saveActiveQuery() {
 		if (!connectionStatus.connected) {
 			globalError = 'Connect to a database before saving queries.';
+			showSnackbar({ message: 'Connect to a database before saving', type: 'error' });
 			return;
 		}
 		const sql = getActiveSql().trim();
@@ -215,6 +219,7 @@ import SearchPalette from '$lib/components/workspace/SearchPalette.svelte';
 		);
 		if (duplicate) {
 			globalError = 'This query is already saved for the current connection.';
+			showSnackbar({ message: 'Query already saved', type: 'info' });
 			return;
 		}
 		const next: SavedQueryItem = {
@@ -227,6 +232,7 @@ import SearchPalette from '$lib/components/workspace/SearchPalette.svelte';
 		queryFavorites = [next, ...queryFavorites].slice(0, 200);
 		persistJsonValue(QUERY_FAVORITES_KEY, queryFavorites);
 		globalError = '';
+		showSnackbar({ message: 'Query saved', description: next.title, type: 'success' });
 	}
 	function pushHistory(item: QueryHistoryItem) {
 		queryHistory = [item, ...queryHistory].slice(0, 100);
@@ -362,6 +368,39 @@ import SearchPalette from '$lib/components/workspace/SearchPalette.svelte';
 	function deleteSavedQuery(id: string) {
 		queryFavorites = queryFavorites.filter((item) => item.id !== id);
 		persistJsonValue(QUERY_FAVORITES_KEY, queryFavorites);
+	}
+	function clearSavedQueries() {
+		queryFavorites = queryFavorites.filter((item) => item.connectionKey !== activeConnectionKey);
+		persistJsonValue(QUERY_FAVORITES_KEY, queryFavorites);
+		selectedSavedQueryId = '';
+	}
+	function deleteHistoryItem(index: number) {
+		// index is in historyForConnection (filtered view), need to find nth visible in queryHistory
+		let visibleCount = -1;
+		for (let i = 0; i < queryHistory.length; i++) {
+			const h = queryHistory[i];
+			const isVisible = !connectionStatus.connected
+				? true
+				: !h.connectionKey || h.connectionKey === activeConnectionKey;
+			if (isVisible) {
+				visibleCount++;
+				if (visibleCount === index) {
+					queryHistory.splice(i, 1);
+					queryHistory = [...queryHistory];
+					persistJsonValue(QUERY_HISTORY_KEY, queryHistory);
+					if (selectedHistoryIndex >= historyForConnection.length) {
+						selectedHistoryIndex = Math.max(0, historyForConnection.length - 1);
+					}
+					return;
+				}
+			}
+		}
+	}
+	function clearHistory() {
+		const visibleSet = new Set(historyForConnection);
+		queryHistory = queryHistory.filter((h) => !visibleSet.has(h));
+		persistJsonValue(QUERY_HISTORY_KEY, queryHistory);
+		selectedHistoryIndex = 0;
 	}
 	function openSavedQuery(sql: string) {
 		setSqlInReusableQueryTab(sql);
@@ -817,6 +856,14 @@ import SearchPalette from '$lib/components/workspace/SearchPalette.svelte';
 		}
 		queryFavorites = loadQueryFavoritesFromStorage(QUERY_FAVORITES_KEY);
 		queryHistory = loadQueryHistoryFromStorage(QUERY_HISTORY_KEY);
+		try {
+			const raw = localStorage.getItem(MAIN_VIEW_KEY);
+			if (raw) {
+				const v = JSON.parse(raw);
+				if (v === 'history' || v === 'last_queries') mainView = 'history';
+				else if (v === 'saved_queries' || v === 'sql') mainView = v;
+			}
+		} catch {}
 		void (async () => {
 			try {
 				await initializeWorkspace({
@@ -884,6 +931,9 @@ import SearchPalette from '$lib/components/workspace/SearchPalette.svelte';
 	});
 	$effect(() => {
 		persistJsonValue(QUERY_TABS_KEY, toPersistedTabs(tabs));
+	});
+	$effect(() => {
+		persistJsonValue(MAIN_VIEW_KEY, mainView);
 	});
 </script>
 <main
@@ -978,6 +1028,9 @@ import SearchPalette from '$lib/components/workspace/SearchPalette.svelte';
 			onDeleteSavedQuery={deleteSavedQuery}
 			onOpenSavedQuery={openSavedQuery}
 			onSelectHistory={(index) => (selectedHistoryIndex = index)}
+			onDeleteHistory={deleteHistoryItem}
+			onClearHistory={clearHistory}
+			onClearSavedQueries={clearSavedQueries}
 		/>
 	{/if}
 	<WorkspaceModals
@@ -1018,4 +1071,5 @@ import SearchPalette from '$lib/components/workspace/SearchPalette.svelte';
 		onSelectTable={handlePaletteSelectTable}
 		onSelectSchema={handlePaletteSelectSchema}
 	/>
+	<SnackbarContainer />
 </main>

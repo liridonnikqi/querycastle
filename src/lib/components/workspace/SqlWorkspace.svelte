@@ -109,6 +109,10 @@
 		onSetSplitContainer: (el: HTMLDivElement | null) => void;
 	} = $props();
 
+	// kept for API compatibility (no longer shown in minimal empty state)
+	// svelte-ignore state_referenced_locally
+	void onOpenDefaultQueryTab;
+
 	let splitContainer = $state<HTMLDivElement | null>(null);
 
 	$effect(() => {
@@ -205,35 +209,31 @@
 			/>
 		</div>
 	{:else}
-		<div class="flex-1 flex items-center justify-center p-6 bg-white">
-			<div class="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-5">
-				<div class="text-sm font-medium text-gray-900 mb-3">Quick Shortcuts</div>
-				<div class="space-y-0 divide-y divide-gray-100 -mx-5 px-5">
-					<div class="flex items-center justify-between py-2 text-xs">
-						<span class="text-gray-600">Run Query</span><span class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono text-[11px]">Ctrl+Enter</span>
-					</div>
-					<div class="flex items-center justify-between py-2 text-xs">
-						<span class="text-gray-600">Save Query</span><span class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono text-[11px]">Ctrl+S</span>
-					</div>
-					<div class="flex items-center justify-between py-2 text-xs">
-						<span class="text-gray-600">Format SQL</span><span class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono text-[11px]">Shift+Alt+F</span>
-					</div>
-					<div class="flex items-center justify-between py-2 text-xs">
-						<span class="text-gray-600">New Query Tab</span><span class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono text-[11px]">Ctrl+N</span>
-					</div>
-					<div class="flex items-center justify-between py-2 text-xs">
-						<span class="text-gray-600">Close Active Tab</span><span class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono text-[11px]">Ctrl+X</span>
-					</div>
-					<div class="flex items-center justify-between py-2 text-xs">
-						<span class="text-gray-600">Search</span><span class="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 font-mono text-[11px]">Ctrl+K</span>
-					</div>
+		<div class="flex-1 flex items-center justify-center p-8 bg-gray-50">
+			<div class="w-full max-w-sm">
+				<div class="text-center mb-6">
+					<div class="text-sm font-medium text-gray-900">Quick Shortcuts</div>
+					<div class="text-xs text-gray-500 mt-1">No tabs open — try a shortcut</div>
 				</div>
-				<div class="mt-4">
-					<button
-						onclick={onOpenDefaultQueryTab}
-						class="h-8 px-4 rounded-md bg-white border border-gray-200 text-gray-700 text-xs hover:bg-gray-50"
-						>New Query Tab</button
-					>
+				<div class="space-y-0 divide-y divide-gray-100">
+					<div class="flex items-center justify-between px-3 py-2 text-xs">
+						<span class="text-gray-500">Run Query</span><span class="px-2 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[11px] text-gray-600">Ctrl+Enter</span>
+					</div>
+					<div class="flex items-center justify-between px-3 py-2 text-xs">
+						<span class="text-gray-500">Save Query</span><span class="px-2 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[11px] text-gray-600">Ctrl+S</span>
+					</div>
+					<div class="flex items-center justify-between px-3 py-2 text-xs">
+						<span class="text-gray-500">Format SQL</span><span class="px-2 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[11px] text-gray-600">Shift+Alt+F</span>
+					</div>
+					<div class="flex items-center justify-between px-3 py-2 text-xs">
+						<span class="text-gray-500">New Query Tab</span><span class="px-2 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[11px] text-gray-600">Ctrl+N</span>
+					</div>
+					<div class="flex items-center justify-between px-3 py-2 text-xs">
+						<span class="text-gray-500">Close Tab</span><span class="px-2 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[11px] text-gray-600">Ctrl+X</span>
+					</div>
+					<div class="flex items-center justify-between px-3 py-2 text-xs">
+						<span class="text-gray-500">Search</span><span class="px-2 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[11px] text-gray-600">Ctrl+K</span>
+					</div>
 				</div>
 			</div>
 		</div>
