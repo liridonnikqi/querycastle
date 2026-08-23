@@ -30,6 +30,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "fileAssociations": [
       {
         "ext": [
@@ -59,8 +60,8 @@
   },
   "plugins": {
     "updater": {
-      "active": false,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYxQTE4ODZFMTRDMjUxMTcKUldRWFVjSVVib2loOFovSFB0VU44TmNacCtGbGJwN2x6Sm8rWGZ3RC84SmdMZUpjMVk4bFBzMDAK",
+      "active": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEEwOUZDM0JENEQ3Qjc4MDAKUldRQWVIdE52Y09mb0RHTTJqK3JteTltckxLTFdmMDhnOHd6amQwRGJDUHM0YjdGb2VxYkJXT3AK",
       "endpoints": [
         "https://github.com/liridonnikqi/querycastle/releases/latest/download/latest.json"
       ]
