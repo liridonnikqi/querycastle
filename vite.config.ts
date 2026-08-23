@@ -7,6 +7,12 @@ export default defineConfig({
     tailwindcss(),
     sveltekit(),
   ],
-  server: { port: 5173, strictPort: true },
+  server: {
+    port: 5173,
+    strictPort: true,
+    watch: {
+      ignored: ["**/.cargo-target/**", "**/src-tauri/**", "**/target/**"],
+    },
+  },
   clearScreen: false,
 });
