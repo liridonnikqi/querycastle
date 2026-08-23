@@ -9,10 +9,12 @@
 	} from '$lib/rpc';
 	import { rpc } from '$lib/rpc-client';
 	import type { QueryHistoryItem, SavedQueryItem } from '$lib/types';
-	import AppHeader from '$lib/components/workspace/AppHeader.svelte';
-	import DisconnectedWorkspace from '$lib/components/workspace/DisconnectedWorkspace.svelte';
-	import WorkspaceBody from '$lib/components/workspace/WorkspaceBody.svelte';
-	import WorkspaceModals from '$lib/components/workspace/WorkspaceModals.svelte';
+import AppHeader from '$lib/components/workspace/AppHeader.svelte';
+import DisconnectedWorkspace from '$lib/components/workspace/DisconnectedWorkspace.svelte';
+import WorkspaceBody from '$lib/components/workspace/WorkspaceBody.svelte';
+import WorkspaceModals from '$lib/components/workspace/WorkspaceModals.svelte';
+import StatusBar from '$lib/components/workspace/StatusBar.svelte';
+import SearchPalette from '$lib/components/workspace/SearchPalette.svelte';
 	import { normalizeConnectionInput } from '$lib/utils/connection';
 	import { tryBuildEditableQuery } from '$lib/utils/editable-query';
 	import {
@@ -95,6 +97,7 @@
 	let resultsPaneHeight = $state(320);
 	let resizingResults = $state(false);
 	let forceWorkspaceOnDisconnect = $state(false);
+	let showSearchPalette = $state(false);
 	let connectionForm = $state<ConnectionInput>({
 		databaseType: 'postgres',
 		name: 'local_pg',
@@ -438,6 +441,15 @@
 		if (next.has(key)) next.delete(key);
 		else next.add(key);
 		expandedTables = next;
+	}
+	function handlePaletteSelectTable(schema: string, table: string) {
+		if (!expandedSchemas.has(schema)) toggleSchema(schema);
+		const key = `${schema}.${table}`;
+		if (!expandedTables.has(key)) toggleTable(schema, table);
+		void handleTableAction('view_data', schema, table);
+	}
+	function handlePaletteSelectSchema(schema: string) {
+		if (!expandedSchemas.has(schema)) toggleSchema(schema);
 	}
 	async function loadExplorer(options?: { clearBeforeLoad?: boolean }) {
 		if (!connectionStatus.connected) {
@@ -834,9 +846,14 @@
 
 		const onGlobalShortcuts = (event: KeyboardEvent) => {
 			if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+			const key = event.key.toLowerCase();
+			if (key === 'k') {
+				event.preventDefault();
+				showSearchPalette = !showSearchPalette;
+				return;
+			}
 			if (isEditableTarget(event.target)) return;
 
-			const key = event.key.toLowerCase();
 			if (key === 't') {
 				event.preventDefault();
 				addQueryTab();
@@ -985,5 +1002,15 @@
 		onRenameValueChange={(value) => (renameValue = value)}
 		onCloseRenameModal={() => (showRenameModal = false)}
 		onSubmitRename={submitRename}
+	/>
+	<StatusBar />
+	<SearchPalette
+		open={showSearchPalette}
+		searchQuery={explorerSearch}
+		{explorer}
+		onSearchChange={(v) => (explorerSearch = v)}
+		onClose={() => (showSearchPalette = false)}
+		onSelectTable={handlePaletteSelectTable}
+		onSelectSchema={handlePaletteSelectSchema}
 	/>
 </main>

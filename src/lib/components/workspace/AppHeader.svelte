@@ -4,7 +4,6 @@ import { ChevronRight, Database, Maximize2, Minimize2, Minus, Plus, Unplug, X } 
 import { isTauri } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { ConnectionStatus } from '$lib/rpc';
-import UpdaterButton from './UpdaterButton.svelte';
 
 	let {
 		connectionStatus,
@@ -122,7 +121,6 @@ import UpdaterButton from './UpdaterButton.svelte';
 		</div>
 	</div>
 	<div class="flex items-center gap-2">
-		<UpdaterButton />
 		<button
 			onclick={onCreateConnection}
 			onmousedown={(event) => event.stopPropagation()}

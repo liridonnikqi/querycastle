@@ -94,7 +94,6 @@
 	let refreshingCount = $state(0);
 	let refreshingDatabases = $state(false);
 	let refreshingTables = $state(false);
-	let searchInputElement: HTMLInputElement | null = null;
 
 	const postgresEncodings = ["UTF8", "LATIN1", "LATIN2", "WIN1252"];
 
@@ -270,18 +269,8 @@
 	});
 
 	onMount(() => {
-		const onGlobalKeyDown = (event: KeyboardEvent) => {
-			if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-				event.preventDefault();
-				searchInputElement?.focus();
-				searchInputElement?.select();
-			}
-		};
-
-		window.addEventListener("keydown", onGlobalKeyDown);
-		return () => {
-			window.removeEventListener("keydown", onGlobalKeyDown);
-		};
+		// Ctrl+K now handled globally by SearchPalette in +page.svelte
+		return () => {};
 	});
 </script>
 
@@ -351,7 +340,6 @@
 		<div class="relative flex items-center w-full">
 			<Search size={14} class="w-4 h-4 absolute left-2.5 text-gray-400" />
 			<input
-				bind:this={searchInputElement}
 				type="text"
 				value={searchQuery}
 				oninput={handleSearchInput}
@@ -390,8 +378,8 @@
 			<div class="flex flex-col">
 				<div class="flex items-center justify-between w-full px-2 py-1.5 rounded-md text-gray-700">
 					<div class="flex items-center gap-1.5 min-w-0">
-						<span class="text-xs font-semibold text-gray-700">ENTITIES</span>
-						<span class="px-1.5 py-0.5 rounded-full bg-gray-100 border border-gray-200 text-[10px] leading-none font-semibold text-gray-600">
+						<span class="text-[10px] font-medium tracking-[0.14em] text-gray-400 uppercase">Entities</span>
+						<span class="px-1.5 py-0.5 rounded-full bg-gray-100 border border-gray-200 text-[10px] leading-none font-medium text-gray-500">
 							{totalEntities}
 						</span>
 					</div>
