@@ -839,6 +839,8 @@ import SearchPalette from '$lib/components/workspace/SearchPalette.svelte';
 
 		const isEditableTarget = (target: EventTarget | null) => {
 			if (!(target instanceof HTMLElement)) return false;
+			// allow Ctrl+T/W inside CodeMirror to still work (editor is contenteditable but we want shortcuts)
+			if (target.closest('.cm-editor, .cm-content')) return false;
 			if (target.isContentEditable) return true;
 			const tag = target.tagName.toLowerCase();
 			return tag === 'input' || tag === 'textarea' || tag === 'select';
@@ -854,14 +856,14 @@ import SearchPalette from '$lib/components/workspace/SearchPalette.svelte';
 			}
 			if (isEditableTarget(event.target)) return;
 
-			if (key === 't') {
+			if (key === 'n') {
 				event.preventDefault();
 				addQueryTab();
 				mainView = 'sql';
 				return;
 			}
 
-			if (key === 'w') {
+			if (key === 'x') {
 				event.preventDefault();
 				if (activeTabId) closeTab(activeTabId);
 			}

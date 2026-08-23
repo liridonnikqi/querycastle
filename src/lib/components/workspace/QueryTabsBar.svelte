@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { FileCode2 } from '@lucide/svelte';
+	import { FileCode2, Plus } from '@lucide/svelte';
 	import type { TabContextMenu, WorkspaceTab } from '$lib/utils/workspace';
 
 	let {
@@ -27,7 +27,7 @@
 	} = $props();
 </script>
 
-<div class="flex items-center bg-gray-50/80 border-b border-gray-200 overflow-x-auto hide-scrollbar shrink-0">
+<div class="flex items-center h-9 bg-gray-50/80 border-b border-gray-200 overflow-x-auto hide-scrollbar shrink-0">
 	{#each tabs as tab}
 		<div
 			class={`flex items-center min-w-0 max-w-72 px-4 py-2 border-r border-gray-200 border-t-2 text-sm font-medium relative z-10 -mb-[1px] ${tab.id === activeTabId ? 'bg-white border-t-emerald-500 text-gray-800' : 'border-t-transparent text-gray-500 hover:bg-gray-100/50 hover:text-gray-700'}`}
@@ -52,9 +52,12 @@
 	{/each}
 	<button
 		onclick={onAddTab}
-		class="px-3 py-2 text-gray-400 hover:text-gray-600 transition-colors"
-		>+</button
+		class="w-7 h-7 ml-1.5 flex items-center justify-center text-gray-400 hover:text-gray-900 transition-colors shrink-0"
+		title="New tab (Ctrl+N)"
+		aria-label="New query tab"
 	>
+		<Plus size={14} />
+	</button>
 </div>
 
 {#if tabContextMenu}
