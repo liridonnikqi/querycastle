@@ -1,139 +1,61 @@
-<!-- Target languages: ["en"] -->
-🌐 **Languages:** English (default) · Translations welcome via PR
-
 # QueryCastle
 
-<div align="center">
+Fast desktop SQL workspace — **Tauri + Svelte + Rust**.
 
-A fast desktop SQL workspace built with **Tauri + Svelte + Rust**.
+PostgreSQL, MySQL and SQLite in one app: editor with autocomplete & formatting, schema explorer, query tabs, inline editing, saved queries & history.
 
-[Quick Start](#quick-start) •
-[Features](#features) •
-[Supported-database](#supported-database) •
-[Development](#development) •
-[Contributing](#contributing)
-
-</div>
-
-## What Is QueryCastle?
-
-QueryCastle is a cross-platform desktop SQL client for PostgreSQL, MySQL, and SQLite workflows.
-It combines a modern SQL editor, schema exploration, query history, and inline table editing in one app.
-
-## Highlights
-
-- Desktop app for Windows / macOS / Linux via Tauri
-- Connection profiles (fields or connection string where supported)
-- SQL editor with autocomplete + formatting
-- Query tabs and data tabs for parallel workflows
-- Schema explorer with columns and foreign keys
-- Inline row updates/inserts/deletes with transactional apply
-- Saved queries and per-connection query history
-- Built-in updater support via Tauri plugin
-
-## Supported Database (Current)
-
-| Database | Status |
-| :-- | :-- |
-| PostgreSQL | ✅ Full support |
-| SQLite | ✅ Full support |
-| MySQL | ✅ Supported (editing has some limitations, see notes below) |
-
-## MySQL Editing Notes
-
-- MySQL row editing is supported for View Data and editable SELECT results.
-- To track row identity in editable grids, QueryCastle uses a deterministic row hash.
-- If a table contains duplicate rows across all columns, update/delete operations may target one matching row (`limit 1`).
+![Tauri](https://img.shields.io/badge/Tauri-2.0-24C8DB) ![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00) ![Rust](https://img.shields.io/badge/Rust-stable-orange)
 
 ## Features
 
-| Area | Included |
-| :-- | :-- |
-| Connection Management | Save, edit, test, connect, disconnect |
-| SSL | Optional SSL mode |
-| SQL Editor | Run, format, autocomplete |
-| Results | Tabular results with duration + row count |
-| Data Editing | Update, insert, delete rows from result grid |
-| Explorer | Schemas, tables/views, columns, foreign keys |
-| Query Workspace | Multi-tab query/data experience |
-| Persistence | Local storage for connections, tabs, history, favorites |
-| Updates | Configured updater endpoint in Tauri config |
+- Cross-platform desktop (Windows / macOS / Linux)
+- Connection profiles or connection string, SSL optional
+- SQL editor (autocomplete, formatting, `Ctrl+Enter` to run)
+- Schema explorer (schemas, tables, columns, foreign keys)
+- Editable data grid (transactional apply: `ctid` / `rowid` / row hash)
+- Multi-tab workspace, saved queries, per-connection history
+- Auto-updates via GitHub Releases
+
+**Databases:** PostgreSQL ✅ · SQLite ✅ · MySQL ✅ (row hash, `LIMIT 1` on duplicates)
 
 ## Quick Start
 
-### 1. Prerequisites
-
-- Bun
-- Rust (stable toolchain)
-- Tauri OS prerequisites
-
-References:
-
-- https://tauri.app/start/prerequisites/
-- https://bun.sh/docs/installation
-- https://www.rust-lang.org/tools/install
-
-### 2. Install Dependencies
+**Prereqs:** [Bun](https://bun.sh/docs/installation) · [Rust](https://www.rust-lang.org/tools/install) · [Tauri prerequisites](https://tauri.app/start/prerequisites/)
 
 ```bash
 bun install
+bun run dev          # app + frontend
+# or
+bun run dev:frontend # frontend only http://localhost:5173
 ```
 
-### 3. Run In Development
+## Scripts
 
-```bash
-bun run dev
-```
-
-This starts Vite and launches the Tauri desktop shell.
-
-## Development
-
-### Scripts
-
-- `bun run dev` — run full app (frontend + Tauri)
-- `bun run dev:frontend` — run frontend only on `http://localhost:5173`
-- `bun run build` — build frontend into `dist/`
-- `bun run check` — type and Svelte checks
-
-### Build Desktop Bundles
-
-```bash
-bun run build
-bunx tauri build
-```
+| Command | Description |
+|---|---|
+| `bun run dev` | Run Tauri + Vite |
+| `bun run build` | Build frontend to `dist/` |
+| `bunx tauri build` | Build desktop bundles |
+| `bun run check` | `svelte-check` + `tsc` |
 
 ## Project Structure
 
-```text
-src/                     SvelteKit frontend
-src/components/          UI (editor, explorer, results, modals)
-src/lib/                 RPC client + shared TS types
-src-tauri/               Rust backend + Tauri config
-src-tauri/src/lib.rs     Tauri commands and database operations
+```
+src/               SvelteKit frontend
+src-tauri/         Rust backend, Tauri config
+src-tauri/src/lib.rs  commands & DB adapters
 ```
 
-## Runtime Notes
+- Query timeout `30s`, max `1000` rows, transactional edits.
 
-- Query timeout: **30,000 ms**
-- Max returned rows in payload: **1,000**
-- Table edits are applied in a single SQL transaction
-- Row mutation tracking uses:
-	- PostgreSQL: `ctid`
-	- SQLite: `rowid`
-	- MySQL: deterministic row hash
+## Releases
+
+GitHub Releases via `tauri-plugin-updater` (`latest.json`). Tags `v*` trigger `.github/workflows/publish.yml` (Windows).
 
 ## Contributing
 
-Contributions are welcome.
-
-1. Fork the repository
-2. Create a feature branch
-3. Make and test changes
-4. Open a pull request with a clear description
+Fork → feature branch → PR.
 
 ## License
 
-No `LICENSE` file is currently present in this repository.
-If you plan to distribute QueryCastle, add an explicit license file.
-
+Add a `LICENSE` file before distributing.
