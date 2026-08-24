@@ -12,6 +12,7 @@ pub async fn get_database_explorer(
     get_adapter(connection.database_type)
         .get_database_explorer(&connection)
         .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -20,6 +21,7 @@ pub async fn list_databases(state: State<'_, AppState>) -> Result<Vec<String>, S
     get_adapter(connection.database_type)
         .list_databases(&connection)
         .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -39,15 +41,18 @@ pub async fn select_database(
 
     let (next_connection, status) = get_adapter(connection.database_type)
         .select_database(&connection, next_database)
-        .await?;
+        .await
+        .map_err(|e| e.to_string())?;
 
+    // Recreate pool for the newly selected database
+    let pool = crate::core::pool::create_pool(&next_connection).map_err(|e| e.to_string())?;
     {
-        let mut active = state.connection.lock().await;
-        *active = Some(next_connection.clone());
-    }
-    {
-        let mut version = state.server_version.lock().await;
-        *version = status.server_version.clone();
+        let mut guard = state.inner.write().await;
+        *guard = Some(crate::core::state::ActiveConnection {
+            input: next_connection.clone(),
+            server_version: status.server_version.clone(),
+            pool,
+        });
     }
 
     Ok(status)

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 
+use crate::core::error::DbError;
 use crate::core::types::{
     ApplyTableChangesParams, ApplyTableChangesResponse, ConnectionInput, ConnectionStatus,
     DatabaseExplorer, DatabaseType, QueryResultPayload, TestConnectionResponse,
@@ -8,28 +9,28 @@ use crate::core::types::{
 #[async_trait]
 pub trait DbAdapter: Sync + Send {
     async fn test_connection(&self, connection: &ConnectionInput)
-        -> Result<TestConnectionResponse, String>;
-    async fn connect(&self, connection: &ConnectionInput) -> Result<ConnectionStatus, String>;
+        -> Result<TestConnectionResponse, DbError>;
+    async fn connect(&self, connection: &ConnectionInput) -> Result<ConnectionStatus, DbError>;
     async fn run_query(
         &self,
         connection: &ConnectionInput,
         sql: &str,
-    ) -> Result<QueryResultPayload, String>;
+    ) -> Result<QueryResultPayload, DbError>;
     async fn get_database_explorer(
         &self,
         connection: &ConnectionInput,
-    ) -> Result<DatabaseExplorer, String>;
-    async fn list_databases(&self, connection: &ConnectionInput) -> Result<Vec<String>, String>;
+    ) -> Result<DatabaseExplorer, DbError>;
+    async fn list_databases(&self, connection: &ConnectionInput) -> Result<Vec<String>, DbError>;
     async fn select_database(
         &self,
         connection: &ConnectionInput,
         database: &str,
-    ) -> Result<(ConnectionInput, ConnectionStatus), String>;
+    ) -> Result<(ConnectionInput, ConnectionStatus), DbError>;
     async fn apply_table_changes(
         &self,
         connection: &ConnectionInput,
         params: &ApplyTableChangesParams,
-    ) -> Result<ApplyTableChangesResponse, String>;
+    ) -> Result<ApplyTableChangesResponse, DbError>;
 }
 
 pub struct PostgresAdapter;

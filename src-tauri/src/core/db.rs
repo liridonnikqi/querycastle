@@ -12,18 +12,19 @@ mod db_postgres;
 mod db_sqlite;
 
 pub(crate) use db_mysql::{
-    connect_mysql_client, get_mysql_database_explorer, get_mysql_server_version, run_mysql_query,
-    sanitize_mysql_error,
+    connect_mysql_client, get_mysql_database_explorer, get_mysql_server_version,
+    mysql_value_to_json, run_mysql_query,
 };
-pub(crate) use db_postgres::{connect_client, get_server_version, sanitize_pg_error};
+pub(crate) use db_postgres::{connect_client, get_server_version};
 pub(crate) use db_sqlite::{
     get_sqlite_database_explorer, get_sqlite_server_version, list_sqlite_databases,
-    open_sqlite_connection, run_sqlite_query,
+    open_sqlite_connection, run_sqlite_query, sqlite_value_to_json,
 };
 
 pub(crate) const QUERY_TIMEOUT_MS: u64 = 30_000;
 pub(crate) const MAX_QUERY_ROWS: usize = 1_000;
 
+#[allow(dead_code)]
 pub(crate) fn sanitize_error(error: impl ToString) -> String {
     error.to_string()
 }
@@ -188,10 +189,56 @@ pub(crate) fn normalize_connection_input(input: ConnectionInput) -> Result<Conne
 pub(crate) async fn get_connection_snapshot(
     state: &State<'_, AppState>,
 ) -> Result<(ConnectionInput, Option<String>), String> {
-    let connection = state.connection.lock().await.clone();
-    let server_version = state.server_version.lock().await.clone();
-    match connection {
-        Some(connection) => Ok((connection, server_version)),
+    let guard = state.inner.read().await;
+    match guard.as_ref() {
+        Some(active) => Ok((active.input.clone(), active.server_version.clone())),
         None => Err("No active database connection".to_string()),
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) async fn get_active_connection(
+    state: &State<'_, AppState>,
+) -> Result<crate::core::state::ActiveConnection, String> {
+    let guard = state.inner.read().await;
+    guard.clone().ok_or_else(|| "No active database connection".to_string())
+}
+
+/// Helper to create a new ConnectionInput with a different database, preserving connection_string if used.
+/// For Postgres/MySQL, updates the URL path to the new database so subsequent `connect_client` uses the new DB.
+pub(crate) fn with_new_database(connection: &ConnectionInput, new_database: &str) -> ConnectionInput {
+    let new_db = new_database.trim().to_string();
+    if connection.use_connection_string.unwrap_or(false) {
+        if let Some(raw) = connection.connection_string.as_deref() {
+            let raw = raw.trim();
+            if !raw.is_empty() {
+                if let Ok(mut url) = Url::parse(raw) {
+                    // Only mutate path for network DBs (postgres/mysql). For sqlite the path is the file, handled elsewhere.
+                    match connection.database_type {
+                        DatabaseType::Postgres | DatabaseType::Mysql => {
+                            url.set_path(&format!("/{}", new_db));
+                            return ConnectionInput {
+                                database: new_db.clone(),
+                                connection_string: Some(url.to_string()),
+                                ..connection.clone()
+                            };
+                        }
+                        DatabaseType::Sqlite => {
+                            // For sqlite, connection_string like sqlite:///path/to/file.db – update path
+                            url.set_path(&format!("/{}", new_db.trim_start_matches('/')));
+                            return ConnectionInput {
+                                database: new_db.clone(),
+                                connection_string: Some(url.to_string()),
+                                ..connection.clone()
+                            };
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ConnectionInput {
+        database: new_db,
+        ..connection.clone()
     }
 }

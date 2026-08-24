@@ -50,24 +50,28 @@ export function buildTableActionPlan(params: {
 	if (action === 'rename') return { kind: 'rename', value: table };
 
 	if (action === 'drop') {
+		const cascade = databaseType === 'postgres' ? ' cascade' : '';
 		return {
-			kind: 'editor_sql',
-			sql: `drop table ${safeSchema}.${safeTable};`,
-			message: 'Drop statement inserted into editor. Review before running.',
+			kind: 'run_query',
+			query: `drop table ${safeSchema}.${safeTable}${cascade};`,
+			title: `${table} [drop]`,
+			context: null,
 		};
 	}
 	if (action === 'truncate') {
 		return {
-			kind: 'editor_sql',
-			sql: `truncate table ${safeSchema}.${safeTable};`,
-			message: 'Truncate statement inserted into editor. Review before running.',
+			kind: 'run_query',
+			query: `truncate table ${safeSchema}.${safeTable};`,
+			title: `${table} [truncate]`,
+			context: null,
 		};
 	}
 	if (action === 'duplicate') {
 		return {
-			kind: 'editor_sql',
-			sql: `create table ${safeSchema}.${safeTable}_copy as select * from ${safeSchema}.${safeTable};`,
-			message: 'Duplicate statement inserted into editor. Review before running.',
+			kind: 'run_query',
+			query: `create table ${safeSchema}.${safeTable}_copy as select * from ${safeSchema}.${safeTable};`,
+			title: `${table} [duplicate]`,
+			context: null,
 		};
 	}
 	if (action === 'sql_create') {

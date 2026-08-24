@@ -13,4 +13,5 @@ pub async fn apply_table_changes(
     get_adapter(connection.database_type)
         .apply_table_changes(&connection, &params)
         .await
+        .map_err(|e| e.to_string())
 }

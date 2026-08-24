@@ -4,49 +4,23 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::adapters::traits::{DbAdapter, SqliteAdapter};
+use crate::core::error::DbError;
 use crate::core::types::{
     ApplyTableChangesParams, ApplyTableChangesResponse, ConnectionInput, ConnectionStatus,
     DatabaseExplorer, DatabaseType, QueryResultPayload, TestConnectionResponse, UpdatedRowCtid,
 };
 
 fn sqlite_value_to_json(value: ValueRef<'_>) -> Value {
-    match value {
-        ValueRef::Null => Value::Null,
-        ValueRef::Integer(v) => Value::from(v),
-        ValueRef::Real(v) => Value::from(v),
-        ValueRef::Text(v) => Value::from(String::from_utf8_lossy(v).to_string()),
-        ValueRef::Blob(v) => {
-            let mut out = String::with_capacity(v.len() * 2 + 2);
-            out.push_str("0x");
-            for byte in v {
-                out.push_str(format!("{byte:02x}").as_str());
-            }
-            Value::from(out)
-        }
-    }
+    crate::core::db::sqlite_value_to_json(value)
 }
 
 fn sqlite_literal(value: &Value) -> String {
-    match value {
-        Value::Null => "NULL".to_string(),
-        Value::Bool(v) => {
-            if *v {
-                "1".to_string()
-            } else {
-                "0".to_string()
-            }
-        }
-        Value::Number(v) => v.to_string(),
-        Value::String(v) => format!("'{}'", crate::core::sql::escape_sql_string(v)),
-        Value::Array(_) | Value::Object(_) => {
-            format!("'{}'", crate::core::sql::escape_sql_string(&value.to_string()))
-        }
-    }
+    crate::core::sql::value_to_sql_literal_for(crate::core::types::DatabaseType::Sqlite, value)
 }
 
 #[async_trait]
 impl DbAdapter for SqliteAdapter {
-    async fn test_connection(&self, connection: &ConnectionInput) -> Result<TestConnectionResponse, String> {
+    async fn test_connection(&self, connection: &ConnectionInput) -> Result<TestConnectionResponse, DbError> {
         let conn = match crate::core::db::open_sqlite_connection(connection) {
             Ok(conn) => conn,
             Err(error) => {
@@ -57,7 +31,7 @@ impl DbAdapter for SqliteAdapter {
                 })
             }
         };
-        let server_version = crate::core::db::get_sqlite_server_version(&conn)?;
+        let server_version = crate::core::db::get_sqlite_server_version(&conn).map_err(DbError::internal)?;
         Ok(TestConnectionResponse {
             ok: true,
             message: "Connection successful".to_string(),
@@ -65,9 +39,9 @@ impl DbAdapter for SqliteAdapter {
         })
     }
 
-    async fn connect(&self, connection: &ConnectionInput) -> Result<ConnectionStatus, String> {
-        let conn = crate::core::db::open_sqlite_connection(connection)?;
-        let server_version = crate::core::db::get_sqlite_server_version(&conn)?;
+    async fn connect(&self, connection: &ConnectionInput) -> Result<ConnectionStatus, DbError> {
+        let conn = crate::core::db::open_sqlite_connection(connection).map_err(DbError::internal)?;
+        let server_version = crate::core::db::get_sqlite_server_version(&conn).map_err(DbError::internal)?;
         Ok(ConnectionStatus {
             connected: true,
             database_type: DatabaseType::Sqlite,
@@ -80,15 +54,15 @@ impl DbAdapter for SqliteAdapter {
         })
     }
 
-    async fn run_query(&self, connection: &ConnectionInput, sql: &str) -> Result<QueryResultPayload, String> {
-        crate::core::db::run_sqlite_query(connection, sql)
+    async fn run_query(&self, connection: &ConnectionInput, sql: &str) -> Result<QueryResultPayload, DbError> {
+        crate::core::db::run_sqlite_query(connection, sql).map_err(DbError::internal)
     }
 
-    async fn get_database_explorer(&self, connection: &ConnectionInput) -> Result<DatabaseExplorer, String> {
-        crate::core::db::get_sqlite_database_explorer(connection)
+    async fn get_database_explorer(&self, connection: &ConnectionInput) -> Result<DatabaseExplorer, DbError> {
+        crate::core::db::get_sqlite_database_explorer(connection).map_err(DbError::internal)
     }
 
-    async fn list_databases(&self, connection: &ConnectionInput) -> Result<Vec<String>, String> {
+    async fn list_databases(&self, connection: &ConnectionInput) -> Result<Vec<String>, DbError> {
         Ok(crate::core::db::list_sqlite_databases(connection))
     }
 
@@ -96,40 +70,57 @@ impl DbAdapter for SqliteAdapter {
         &self,
         connection: &ConnectionInput,
         database: &str,
-    ) -> Result<(ConnectionInput, ConnectionStatus), String> {
-        let next_connection = ConnectionInput {
-            database: database.to_string(),
-            host: String::new(),
-            port: 0,
-            user: String::new(),
-            ssl: false,
-            ..connection.clone()
-        };
-        let status = self.connect(&next_connection).await?;
-        Ok((next_connection, status))
+    ) -> Result<(ConnectionInput, ConnectionStatus), DbError> {
+        let next_connection = crate::core::db::with_new_database(connection, database);
+        // For SQLite, ensure file-specific fields are cleared (host/port/etc not used)
+        let mut next = next_connection;
+        if next.database_type == crate::core::types::DatabaseType::Sqlite {
+            next.host = String::new();
+            next.port = 0;
+            next.user = String::new();
+            next.ssl = false;
+        }
+        let status = self.connect(&next).await?;
+        Ok((next, status))
     }
 
     async fn apply_table_changes(
         &self,
         connection: &ConnectionInput,
         params: &ApplyTableChangesParams,
-    ) -> Result<ApplyTableChangesResponse, String> {
+    ) -> Result<ApplyTableChangesResponse, DbError> {
         let schema = params.schema.trim();
         let table = params.table.trim();
         if schema.is_empty() || table.is_empty() {
-            return Err("Schema and table are required".to_string());
+            return Err(DbError::validation("Schema and table are required"));
         }
 
-        let mut conn = crate::core::db::open_sqlite_connection(connection)?;
+        let mut conn = crate::core::db::open_sqlite_connection(connection).map_err(DbError::internal)?;
         let tx = conn
             .transaction()
-            .map_err(|error| format!("SQLite transaction start failed: {error}"))?;
+            .map_err(|e| DbError::internal(format!("SQLite transaction start failed: {e}")))?;
 
         let safe_table = format!(
             "{}.{}",
             crate::core::sql::quote_ident(schema),
             crate::core::sql::quote_ident(table)
         );
+
+        // Detect WITHOUT ROWID and primary key for better error messages
+        let is_without_rowid = {
+            let stmt = tx
+                .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?1")
+                .ok();
+            if let Some(mut stmt) = stmt {
+                stmt.query_row([table], |row| row.get::<_, Option<String>>(0))
+                    .ok()
+                    .flatten()
+                    .map(|s| s.to_lowercase().contains("without rowid"))
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        };
 
         let mut updated = 0usize;
         let mut deleted = 0usize;
@@ -141,7 +132,16 @@ impl DbAdapter for SqliteAdapter {
                 .ctid
                 .trim()
                 .parse::<i64>()
-                .map_err(|_| format!("Invalid SQLite row id: {}", update.ctid))?;
+                .map_err(|_| {
+                    if is_without_rowid {
+                        DbError::validation(format!(
+                            "Table '{}' uses WITHOUT ROWID and requires primary-key editing; rowid {} is invalid. Use SQL directly.",
+                            table, update.ctid
+                        ))
+                    } else {
+                        DbError::validation(format!("Invalid SQLite row id: {}", update.ctid))
+                    }
+                })?;
 
             let entries: Vec<_> = update
                 .values
@@ -166,18 +166,18 @@ impl DbAdapter for SqliteAdapter {
             let update_sql = format!("update {safe_table} set {set_clause} where rowid = {rowid}");
             let affected = tx
                 .execute(update_sql.as_str(), [])
-                .map_err(|error| format!("SQLite update failed: {error}"))?;
+                .map_err(|e| DbError::internal(format!("SQLite update failed: {e}")))?;
             if affected == 0 {
-                return Err(format!(
+                return Err(DbError::NotFound(format!(
                     "Could not update row with id {}. It may have changed. Refresh and retry.",
                     update.ctid
-                ));
+                )));
             }
 
             let select_sql = format!("select * from {safe_table} where rowid = {rowid} limit 1");
             let mut stmt = tx
                 .prepare(select_sql.as_str())
-                .map_err(|error| format!("SQLite row refresh prepare failed: {error}"))?;
+                .map_err(|e| DbError::internal(format!("SQLite row refresh prepare failed: {e}")))?;
             let row_values = stmt
                 .query_row([], |row| {
                     let mut mapped = HashMap::new();
@@ -187,7 +187,7 @@ impl DbAdapter for SqliteAdapter {
                     }
                     Ok::<HashMap<String, Value>, rusqlite::Error>(mapped)
                 })
-                .map_err(|error| format!("SQLite row refresh failed: {error}"))?;
+                .map_err(|e| DbError::internal(format!("SQLite row refresh failed: {e}")))?;
 
             updated_rows.push(UpdatedRowCtid {
                 old_ctid: update.ctid.clone(),
@@ -201,16 +201,25 @@ impl DbAdapter for SqliteAdapter {
             let rowid = ctid
                 .trim()
                 .parse::<i64>()
-                .map_err(|_| format!("Invalid SQLite row id: {ctid}"))?;
+                .map_err(|_| {
+                    if is_without_rowid {
+                        DbError::validation(format!(
+                            "Table '{}' uses WITHOUT ROWID and requires primary-key editing; rowid {} is invalid. Use SQL directly.",
+                            table, ctid
+                        ))
+                    } else {
+                        DbError::validation(format!("Invalid SQLite row id: {ctid}"))
+                    }
+                })?;
             let delete_sql = format!("delete from {safe_table} where rowid = {rowid}");
             let affected = tx
                 .execute(delete_sql.as_str(), [])
-                .map_err(|error| format!("SQLite delete failed: {error}"))?;
+                .map_err(|e| DbError::internal(format!("SQLite delete failed: {e}")))?;
             if affected == 0 {
-                return Err(format!(
+                return Err(DbError::NotFound(format!(
                     "Could not delete row with id {}. It may have changed. Refresh and retry.",
                     ctid
-                ));
+                )));
             }
             deleted += 1;
         }
@@ -237,12 +246,12 @@ impl DbAdapter for SqliteAdapter {
 
             let insert_sql = format!("insert into {safe_table} ({cols}) values ({values})");
             tx.execute(insert_sql.as_str(), [])
-                .map_err(|error| format!("SQLite insert failed: {error}"))?;
+                .map_err(|e| DbError::internal(format!("SQLite insert failed: {e}")))?;
             inserted += 1;
         }
 
         tx.commit()
-            .map_err(|error| format!("SQLite transaction commit failed: {error}"))?;
+            .map_err(|e| DbError::internal(format!("SQLite transaction commit failed: {e}")))?;
 
         Ok(ApplyTableChangesResponse {
             ok: true,

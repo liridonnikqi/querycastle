@@ -486,7 +486,7 @@
 			<button onclick={() => runMenuAction("rename")} class="w-full flex items-center gap-2 text-left px-3 py-1.5 text-gray-700 hover:bg-gray-100"><SquarePen size={14} />Rename</button>
 			<button onclick={() => runMenuAction("duplicate")} class="w-full flex items-center gap-2 text-left px-3 py-1.5 text-gray-700 hover:bg-gray-100"><Copy size={14} />Duplicate</button>
 			<button onclick={() => runMenuAction("copy_name")} class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-gray-100">Copy Name</button>
-			<button onclick={() => runMenuAction("drop")} class="w-full flex items-center gap-2 text-left px-3 py-1.5 text-red-600 hover:bg-red-50"><Trash2 size={14} />Delete</button>
+			<button onclick={() => runMenuAction("drop")} class="w-full flex items-center gap-2 text-left px-3 py-1.5 text-red-600 hover:bg-red-50"><Trash2 size={14} />Delete Cascade</button>
 		</div>
 	{/if}
 

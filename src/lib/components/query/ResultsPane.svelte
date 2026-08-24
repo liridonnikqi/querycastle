@@ -714,11 +714,7 @@
 				</table>
 			</div>
 		{:else if displayResult.columns.length === 0}
-			<div
-				class="h-full flex items-center justify-center text-sm text-gray-500"
-			>
-				Run a query to see results.
-			</div>
+			<div class="h-full flex items-center justify-center text-sm text-gray-500">Run a query to see results.</div>
 		{:else}
 			<div class="min-w-max">
 				<table

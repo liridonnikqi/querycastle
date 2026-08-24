@@ -39,6 +39,47 @@ pub(crate) fn sanitize_pg_error(error: tokio_postgres::Error) -> String {
 }
 
 pub(crate) async fn connect_client(connection: &ConnectionInput) -> Result<Client, String> {
+    // If a valid Postgres connection string is provided, use it directly (preserves application_name, keepalives, etc.)
+    if connection.use_connection_string.unwrap_or(false) {
+        if let Some(raw) = connection.connection_string.as_deref() {
+            let raw = raw.trim();
+            if !raw.is_empty() && (raw.starts_with("postgres://") || raw.starts_with("postgresql://")) {
+                if let Ok(cfg) = raw.parse::<tokio_postgres::Config>() {
+                    // Use parsed config directly – attempt single connection (pool creation handles pooling)
+                    if connection.ssl {
+                        let mut builder = native_tls::TlsConnector::builder();
+                        builder.danger_accept_invalid_certs(true);
+                        let connector = builder.build().map_err(|e| format!("TLS build failed: {e}"))?;
+                        let tls = postgres_native_tls::MakeTlsConnector::new(connector);
+                        match cfg.connect(tls).await {
+                            Ok((client, task)) => {
+                                tauri::async_runtime::spawn(async move {
+                                    if let Err(e) = task.await { tracing::error!("postgres connection error: {e}"); }
+                                });
+                                return Ok(client);
+                            }
+                            Err(e) => {
+                                return Err(format!("Unable to connect via connection string: {}", sanitize_pg_error(e)));
+                            }
+                        }
+                    } else {
+                        match cfg.connect(tokio_postgres::NoTls).await {
+                            Ok((client, task)) => {
+                                tauri::async_runtime::spawn(async move {
+                                    if let Err(e) = task.await { tracing::error!("postgres connection error: {e}"); }
+                                });
+                                return Ok(client);
+                            }
+                            Err(e) => {
+                                return Err(format!("Unable to connect via connection string: {}", sanitize_pg_error(e)));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let mut hosts = vec![connection.host.clone()];
     if connection.host.eq_ignore_ascii_case("localhost") {
         hosts.push("127.0.0.1".to_string());
@@ -54,7 +95,8 @@ pub(crate) async fn connect_client(connection: &ConnectionInput) -> Result<Clien
             .user(&connection.user)
             .password(&connection.password)
             .dbname(&connection.database)
-            .connect_timeout(std::time::Duration::from_secs(5));
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .application_name("querycastle");
 
         if connection.ssl {
             let mut builder = native_tls::TlsConnector::builder();
@@ -67,7 +109,7 @@ pub(crate) async fn connect_client(connection: &ConnectionInput) -> Result<Clien
                 Ok((client, connection_task)) => {
                     tauri::async_runtime::spawn(async move {
                         if let Err(error) = connection_task.await {
-                            eprintln!("postgres connection error: {error}");
+                            tracing::error!("postgres connection error: {error}");
                         }
                     });
                     return Ok(client);
@@ -79,7 +121,7 @@ pub(crate) async fn connect_client(connection: &ConnectionInput) -> Result<Clien
                 Ok((client, connection_task)) => {
                     tauri::async_runtime::spawn(async move {
                         if let Err(error) = connection_task.await {
-                            eprintln!("postgres connection error: {error}");
+                            tracing::error!("postgres connection error: {error}");
                         }
                     });
                     return Ok(client);

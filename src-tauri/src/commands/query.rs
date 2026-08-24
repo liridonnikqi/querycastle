@@ -13,4 +13,5 @@ pub async fn run_query(
     get_adapter(connection.database_type)
         .run_query(&connection, params.sql.as_str())
         .await
+        .map_err(|e| e.to_string())
 }

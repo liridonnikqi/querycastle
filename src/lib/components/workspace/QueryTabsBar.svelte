@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { FileCode2, Plus } from '@lucide/svelte';
+	import { FileCode2, Plus, X } from '@lucide/svelte';
 	import type { TabContextMenu, WorkspaceTab } from '$lib/utils/workspace';
 
 	let {
@@ -30,7 +30,7 @@
 <div class="flex items-center h-9 bg-gray-50/80 border-b border-gray-200 overflow-x-auto hide-scrollbar shrink-0">
 	{#each tabs as tab}
 		<div
-			class={`flex items-center min-w-0 max-w-72 px-4 py-2 border-r border-gray-200 border-t-2 text-sm font-medium relative z-10 -mb-[1px] ${tab.id === activeTabId ? 'bg-white border-t-emerald-500 text-gray-800' : 'border-t-transparent text-gray-500 hover:bg-gray-100/50 hover:text-gray-700'}`}
+			class={`group flex items-center min-w-0 max-w-72 px-3.5 py-2 border-r border-gray-200 border-t-2 text-sm font-medium relative z-10 -mb-[1px] ${tab.id === activeTabId ? 'bg-white border-t-emerald-500 text-gray-800' : 'border-t-transparent text-gray-500 hover:bg-gray-100/70 hover:text-gray-700'}`}
 		>
 			<button
 				onclick={() => onSelectTab(tab.id)}
@@ -44,10 +44,11 @@
 				<span class="truncate">{tab.title}</span>
 			</button>
 			<button
-				onclick={() => onCloseTab(tab.id)}
-				class="text-gray-400 hover:text-gray-600 ml-2 shrink-0"
-				aria-label={`Close ${tab.title}`}>x</button
-			>
+				onclick={(e) => { e.stopPropagation(); onCloseTab(tab.id); }}
+				class={`ml-2 -mr-1 w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-colors ${tab.id === activeTabId ? 'text-gray-500 hover:text-red-600 hover:bg-red-50 active:bg-red-100' : 'text-gray-400 opacity-60 group-hover:opacity-100 group-hover:text-gray-500 hover:!text-red-600 hover:!bg-red-50 active:!bg-red-100'}`}
+				aria-label={`Close ${tab.title}`}
+				title={`Close ${tab.title}`}
+			><X size={12} strokeWidth={2.5} /></button>
 		</div>
 	{/each}
 	<button

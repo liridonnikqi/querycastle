@@ -15,7 +15,7 @@ pub(crate) fn sanitize_mysql_error(error: mysql_async::Error) -> String {
     error.to_string()
 }
 
-fn mysql_value_to_json(value: &MySqlValue) -> Value {
+pub(crate) fn mysql_value_to_json(value: &MySqlValue) -> Value {
     match value {
         MySqlValue::NULL => Value::Null,
         MySqlValue::Bytes(v) => Value::String(String::from_utf8_lossy(v).to_string()),

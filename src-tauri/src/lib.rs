@@ -5,6 +5,10 @@ mod services;
 
 use crate::core::state::AppState;
 pub fn run() {
+    // Initialize tracing for core DB diagnostics
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")))
+        .try_init();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())

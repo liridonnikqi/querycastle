@@ -10,10 +10,10 @@ use crate::core::types::{
 };
 
 fn escape_single_quotes(value: &str) -> String {
-    value.replace('"', "\"\"").replace('\'', "''")
+    crate::core::sql::escape_single_quotes_pragma(value)
 }
 
-fn sqlite_value_to_json(value: ValueRef<'_>) -> Value {
+pub(crate) fn sqlite_value_to_json(value: ValueRef<'_>) -> Value {
     match value {
         ValueRef::Null => Value::Null,
         ValueRef::Integer(v) => Value::Number(v.into()),
@@ -21,12 +21,25 @@ fn sqlite_value_to_json(value: ValueRef<'_>) -> Value {
             .map(Value::Number)
             .unwrap_or(Value::Null),
         ValueRef::Text(v) => Value::String(String::from_utf8_lossy(v).to_string()),
-        ValueRef::Blob(v) => Value::String(format!("{:?}", v)),
+        ValueRef::Blob(v) => {
+            // Unified hex representation (consistent with adapter)
+            let mut out = String::with_capacity(v.len() * 2 + 2);
+            out.push_str("0x");
+            for byte in v {
+                out.push_str(&format!("{byte:02x}"));
+            }
+            Value::String(out)
+        }
     }
 }
 
 pub(crate) fn open_sqlite_connection(connection: &ConnectionInput) -> Result<Connection, String> {
-    Connection::open(&connection.database).map_err(|error| format!("Unable to open SQLite database: {error}"))
+    let conn = Connection::open(&connection.database).map_err(|error| format!("Unable to open SQLite database: {error}"))?;
+    // Mitigate SQLITE_BUSY and improve concurrency for desktop use
+    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+    // WAL + foreign_keys are set via pool init; for direct opens we best-effort enable them (ignore errors for in-memory)
+    let _ = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
+    Ok(conn)
 }
 
 pub(crate) fn get_sqlite_server_version(conn: &Connection) -> Result<Option<String>, String> {

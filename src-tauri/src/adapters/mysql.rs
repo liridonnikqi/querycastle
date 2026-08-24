@@ -5,31 +5,18 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::adapters::traits::{DbAdapter, MySqlAdapter};
+use crate::core::error::{DbError, sanitize_mysql_error_to_db_error};
 use crate::core::types::{
     ApplyTableChangesParams, ApplyTableChangesResponse, ConnectionInput, ConnectionStatus,
     DatabaseExplorer, DatabaseType, QueryResultPayload, TestConnectionResponse, UpdatedRowCtid,
 };
 
 fn mysql_quote_ident(value: &str) -> String {
-    format!("`{}`", value.replace('`', "``"))
+    crate::core::sql::quote_ident_for(crate::core::types::DatabaseType::Mysql, value)
 }
 
 fn mysql_value_literal(value: &Value) -> String {
-    match value {
-        Value::Null => "NULL".to_string(),
-        Value::Bool(v) => {
-            if *v {
-                "1".to_string()
-            } else {
-                "0".to_string()
-            }
-        }
-        Value::Number(v) => v.to_string(),
-        Value::String(v) => format!("'{}'", crate::core::sql::escape_sql_string(v)),
-        Value::Array(_) | Value::Object(_) => {
-            format!("'{}'", crate::core::sql::escape_sql_string(&value.to_string()))
-        }
-    }
+    crate::core::sql::value_to_sql_literal_for(crate::core::types::DatabaseType::Mysql, value)
 }
 
 fn mysql_row_hash_expression(columns: &[String]) -> String {
@@ -50,26 +37,7 @@ fn mysql_row_hash_expression(columns: &[String]) -> String {
 }
 
 fn mysql_value_to_json(value: &MySqlValue) -> Value {
-    match value {
-        MySqlValue::NULL => Value::Null,
-        MySqlValue::Bytes(v) => Value::String(String::from_utf8_lossy(v).to_string()),
-        MySqlValue::Int(v) => Value::Number((*v).into()),
-        MySqlValue::UInt(v) => Value::Number((*v).into()),
-        MySqlValue::Float(v) => {
-            serde_json::Number::from_f64(*v as f64).map(Value::Number).unwrap_or(Value::Null)
-        }
-        MySqlValue::Double(v) => {
-            serde_json::Number::from_f64(*v).map(Value::Number).unwrap_or(Value::Null)
-        }
-        MySqlValue::Date(y, m, d, hh, mm, ss, micros) => Value::String(format!(
-            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:06}",
-            y, m, d, hh, mm, ss, micros
-        )),
-        MySqlValue::Time(neg, days, hh, mm, ss, micros) => {
-            let sign = if *neg { "-" } else { "" };
-            Value::String(format!("{sign}{days} {:02}:{:02}:{:02}.{:06}", hh, mm, ss, micros))
-        }
-    }
+    crate::core::db::mysql_value_to_json(value)
 }
 
 fn mysql_hash_sql_from_row_values(columns: &[String], row: &HashMap<String, Value>) -> String {
@@ -89,7 +57,7 @@ fn mysql_hash_sql_from_row_values(columns: &[String], row: &HashMap<String, Valu
 
 #[async_trait]
 impl DbAdapter for MySqlAdapter {
-    async fn test_connection(&self, connection: &ConnectionInput) -> Result<TestConnectionResponse, String> {
+    async fn test_connection(&self, connection: &ConnectionInput) -> Result<TestConnectionResponse, DbError> {
         let mut conn = match crate::core::db::connect_mysql_client(connection).await {
             Ok(conn) => conn,
             Err(error) => {
@@ -100,7 +68,7 @@ impl DbAdapter for MySqlAdapter {
                 })
             }
         };
-        let server_version = crate::core::db::get_mysql_server_version(&mut conn).await?;
+        let server_version = crate::core::db::get_mysql_server_version(&mut conn).await.map_err(|e| DbError::internal(e))?;
         Ok(TestConnectionResponse {
             ok: true,
             message: "Connection successful".to_string(),
@@ -108,9 +76,9 @@ impl DbAdapter for MySqlAdapter {
         })
     }
 
-    async fn connect(&self, connection: &ConnectionInput) -> Result<ConnectionStatus, String> {
-        let mut conn = crate::core::db::connect_mysql_client(connection).await?;
-        let server_version = crate::core::db::get_mysql_server_version(&mut conn).await?;
+    async fn connect(&self, connection: &ConnectionInput) -> Result<ConnectionStatus, DbError> {
+        let mut conn = crate::core::db::connect_mysql_client(connection).await.map_err(DbError::internal)?;
+        let server_version = crate::core::db::get_mysql_server_version(&mut conn).await.map_err(|e| DbError::internal(e))?;
         Ok(ConnectionStatus {
             connected: true,
             database_type: DatabaseType::Mysql,
@@ -123,20 +91,20 @@ impl DbAdapter for MySqlAdapter {
         })
     }
 
-    async fn run_query(&self, connection: &ConnectionInput, sql: &str) -> Result<QueryResultPayload, String> {
-        crate::core::db::run_mysql_query(connection, sql).await
+    async fn run_query(&self, connection: &ConnectionInput, sql: &str) -> Result<QueryResultPayload, DbError> {
+        crate::core::db::run_mysql_query(connection, sql).await.map_err(DbError::internal)
     }
 
-    async fn get_database_explorer(&self, connection: &ConnectionInput) -> Result<DatabaseExplorer, String> {
-        crate::core::db::get_mysql_database_explorer(connection).await
+    async fn get_database_explorer(&self, connection: &ConnectionInput) -> Result<DatabaseExplorer, DbError> {
+        crate::core::db::get_mysql_database_explorer(connection).await.map_err(DbError::internal)
     }
 
-    async fn list_databases(&self, connection: &ConnectionInput) -> Result<Vec<String>, String> {
-        let mut conn = crate::core::db::connect_mysql_client(connection).await?;
+    async fn list_databases(&self, connection: &ConnectionInput) -> Result<Vec<String>, DbError> {
+        let mut conn = crate::core::db::connect_mysql_client(connection).await.map_err(DbError::internal)?;
         let dbs: Vec<String> = conn
             .query("show databases")
             .await
-            .map_err(crate::core::db::sanitize_mysql_error)?;
+            .map_err(sanitize_mysql_error_to_db_error)?;
         if dbs.is_empty() {
             Ok(vec![connection.database.clone()])
         } else {
@@ -148,11 +116,8 @@ impl DbAdapter for MySqlAdapter {
         &self,
         connection: &ConnectionInput,
         database: &str,
-    ) -> Result<(ConnectionInput, ConnectionStatus), String> {
-        let next_connection = ConnectionInput {
-            database: database.to_string(),
-            ..connection.clone()
-        };
+    ) -> Result<(ConnectionInput, ConnectionStatus), DbError> {
+        let next_connection = crate::core::db::with_new_database(connection, database);
         let status = self.connect(&next_connection).await?;
         Ok((next_connection, status))
     }
@@ -161,36 +126,40 @@ impl DbAdapter for MySqlAdapter {
         &self,
         connection: &ConnectionInput,
         params: &ApplyTableChangesParams,
-    ) -> Result<ApplyTableChangesResponse, String> {
+    ) -> Result<ApplyTableChangesResponse, DbError> {
         let schema = params.schema.trim();
         let table = params.table.trim();
         if schema.is_empty() || table.is_empty() {
-            return Err("Schema and table are required".to_string());
+            return Err(DbError::validation("Schema and table are required"));
         }
 
-        let mut conn = crate::core::db::connect_mysql_client(connection).await?;
+        let mut conn = crate::core::db::connect_mysql_client(connection).await.map_err(DbError::internal)?;
         conn.query_drop("start transaction")
             .await
-            .map_err(crate::core::db::sanitize_mysql_error)?;
+            .map_err(sanitize_mysql_error_to_db_error)?;
 
         let safe_schema = mysql_quote_ident(schema);
         let safe_table = mysql_quote_ident(table);
         let safe_table_ref = format!("{safe_schema}.{safe_table}");
 
-        let column_query = format!(
-            "select column_name from information_schema.columns where table_schema = '{}' and table_name = '{}' order by ordinal_position",
-            crate::core::sql::escape_sql_string(schema),
-            crate::core::sql::escape_sql_string(table)
-        );
+        let column_query = "select column_name from information_schema.columns where table_schema = ? and table_name = ? order by ordinal_position";
         let columns: Vec<String> = conn
-            .query(column_query)
+            .exec(column_query, (schema, table))
             .await
-            .map_err(crate::core::db::sanitize_mysql_error)?;
+            .map_err(sanitize_mysql_error_to_db_error)?;
         if columns.is_empty() {
             let _ = conn.query_drop("rollback").await;
-            return Err("Could not load table columns for MySQL table editing.".to_string());
+            return Err(DbError::validation("Could not load table columns for MySQL table editing."));
         }
-        let row_hash_expr = mysql_row_hash_expression(&columns);
+        // Prefer primary key columns for identity if available (reduces hash collision & full-scan)
+        let pk_sql = "select column_name from information_schema.columns where table_schema = ? and table_name = ? and column_key = 'PRI' order by ordinal_position";
+        let pk_columns: Vec<String> = conn
+            .exec(pk_sql, (schema, table))
+            .await
+            .map_err(sanitize_mysql_error_to_db_error)
+            .unwrap_or_default();
+        let hash_columns = if pk_columns.is_empty() { columns.clone() } else { pk_columns.clone() };
+        let row_hash_expr = mysql_row_hash_expression(&hash_columns);
 
         let mut updated = 0usize;
         let mut deleted = 0usize;
@@ -216,19 +185,18 @@ impl DbAdapter for MySqlAdapter {
                 .join(", ");
 
             let select_sql = format!(
-                "select * from {safe_table_ref} where {row_hash_expr} = '{}' limit 1",
-                crate::core::sql::escape_sql_string(update.ctid.as_str())
+                "select * from {safe_table_ref} where {row_hash_expr} = ? limit 1"
             );
             let current_row: Option<MySqlRow> = conn
-                .query_first(select_sql)
+                .exec_first(select_sql, (update.ctid.clone(),))
                 .await
-                .map_err(crate::core::db::sanitize_mysql_error)?;
+                .map_err(sanitize_mysql_error_to_db_error)?;
             let Some(current_row) = current_row else {
                 let _ = conn.query_drop("rollback").await;
-                return Err(format!(
+                return Err(DbError::NotFound(format!(
                     "Could not update row {}. It may have changed. Refresh and retry.",
                     update.ctid
-                ));
+                )));
             };
 
             let mut merged_values: HashMap<String, Value> = HashMap::new();
@@ -246,31 +214,30 @@ impl DbAdapter for MySqlAdapter {
                 merged_values.insert(column.clone(), value.clone());
             }
 
-            let new_hash_sql = mysql_hash_sql_from_row_values(&columns, &merged_values);
+            let new_hash_sql = mysql_hash_sql_from_row_values(&hash_columns, &merged_values);
             let new_ctid: Option<String> = conn
                 .query_first(new_hash_sql)
                 .await
-                .map_err(crate::core::db::sanitize_mysql_error)?;
+                .map_err(sanitize_mysql_error_to_db_error)?;
             let Some(new_ctid) = new_ctid else {
                 let _ = conn.query_drop("rollback").await;
-                return Err("Could not compute updated MySQL row identity.".to_string());
+                return Err(DbError::internal("Could not compute updated MySQL row identity."));
             };
 
             let update_sql = format!(
-                "update {safe_table_ref} set {set_clause} where {row_hash_expr} = '{}' limit 1",
-                crate::core::sql::escape_sql_string(update.ctid.as_str())
+                "update {safe_table_ref} set {set_clause} where {row_hash_expr} = ? limit 1"
             );
             let affected = conn
-                .query_drop(update_sql)
+                .exec_drop(update_sql, (update.ctid.clone(),))
                 .await
                 .map(|_| conn.affected_rows())
-                .map_err(crate::core::db::sanitize_mysql_error)?;
+                .map_err(sanitize_mysql_error_to_db_error)?;
             if affected == 0 {
                 let _ = conn.query_drop("rollback").await;
-                return Err(format!(
+                return Err(DbError::NotFound(format!(
                     "Could not update row {}. It may have changed. Refresh and retry.",
                     update.ctid
-                ));
+                )));
             }
             updated_rows.push(UpdatedRowCtid {
                 old_ctid: update.ctid.clone(),
@@ -282,20 +249,19 @@ impl DbAdapter for MySqlAdapter {
 
         for ctid in &params.changes.deletes {
             let delete_sql = format!(
-                "delete from {safe_table_ref} where {row_hash_expr} = '{}' limit 1",
-                crate::core::sql::escape_sql_string(ctid)
+                "delete from {safe_table_ref} where {row_hash_expr} = ? limit 1"
             );
             let affected = conn
-                .query_drop(delete_sql)
+                .exec_drop(delete_sql, (ctid.clone(),))
                 .await
                 .map(|_| conn.affected_rows())
-                .map_err(crate::core::db::sanitize_mysql_error)?;
+                .map_err(sanitize_mysql_error_to_db_error)?;
             if affected == 0 {
                 let _ = conn.query_drop("rollback").await;
-                return Err(format!(
+                return Err(DbError::NotFound(format!(
                     "Could not delete row {}. It may have changed. Refresh and retry.",
                     ctid
-                ));
+                )));
             }
             deleted += 1;
         }
@@ -323,13 +289,13 @@ impl DbAdapter for MySqlAdapter {
             let insert_sql = format!("insert into {safe_table_ref} ({cols}) values ({values})");
             conn.query_drop(insert_sql)
                 .await
-                .map_err(crate::core::db::sanitize_mysql_error)?;
+                .map_err(sanitize_mysql_error_to_db_error)?;
             inserted += 1;
         }
 
         conn.query_drop("commit")
             .await
-            .map_err(crate::core::db::sanitize_mysql_error)?;
+            .map_err(sanitize_mysql_error_to_db_error)?;
 
         Ok(ApplyTableChangesResponse {
             ok: true,

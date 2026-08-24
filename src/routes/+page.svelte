@@ -265,6 +265,8 @@ import { showSnackbar } from '$lib/stores/snackbar';
 		activeTabId = nextTab.id;
 		return nextTab.id;
 	}
+	// Keep for potential future use — context menus now run in background per user request (no new tabs)
+	void addDataTab;
 	function closeTab(tabId: string) {
 		const next = closeTabState({ tabs, activeTabId, tabId });
 		tabs = next.tabs;
@@ -616,7 +618,7 @@ import { showSnackbar } from '$lib/stores/snackbar';
 		isRunningQuery = true;
 		const targetTabId = options?.targetTabId ?? activeTabId;
 		try {
-			const queryResult = await rpc.request.runQuery({ sql: query });
+				const queryResult = await rpc.request.runQuery({ sql: query });
 			queryDurationMs = queryResult.durationMs;
 			globalError = '';
 			tabs = tabs.map((tab) =>
@@ -630,6 +632,16 @@ import { showSnackbar } from '$lib/stores/snackbar';
 						}
 					: tab,
 			);
+			// Toast for query success (compact, right-bottom)
+			showSnackbar({ message: `Query succeeded: ${queryResult.rowCount} rows in ${queryResult.durationMs}ms`, type: 'success' });
+			// Auto-refresh explorer/databases for DDL so new tables/databases appear without manual refresh
+			const isDdl = /^\s*(create|drop|alter|truncate|rename)\b/i.test(query);
+			const isDatabaseDdl = /^\s*(create|drop)\s+database\b/i.test(query);
+			if (isDdl) {
+				// Fire-and-forget; don't block query result display
+				void loadExplorer().catch(() => {});
+				if (isDatabaseDdl) void loadDatabases().catch(() => {});
+			}
 			if (options?.pushToHistory !== false) {
 				pushHistory({
 					time: nowLabel(),
@@ -690,6 +702,15 @@ import { showSnackbar } from '$lib/stores/snackbar';
 		schema: string,
 		table: string,
 	) {
+		// Confirm destructive actions before building plan
+		if (action === 'drop') {
+			const ok = confirm(`Drop table ${schema}.${table} CASCADE?\nThis will also drop dependent objects and cannot be undone.`);
+			if (!ok) return;
+		}
+		if (action === 'truncate') {
+			const ok = confirm(`Truncate table ${schema}.${table}? All rows will be deleted.`);
+			if (!ok) return;
+		}
 		const plan = buildTableActionPlan({
 			action,
 			databaseType: connectionStatus.databaseType,
@@ -721,6 +742,24 @@ import { showSnackbar } from '$lib/stores/snackbar';
 			globalError = '';
 			return;
 		}
+		// Destructive actions from context menu should not open a new tab (per user request)
+		if (action === 'drop' || action === 'truncate' || action === 'duplicate') {
+			try {
+				await rpc.request.runQuery({ sql: plan.query });
+				globalError = '';
+				const actionLabel = action.charAt(0).toUpperCase() + action.slice(1);
+				showSnackbar({ message: `${actionLabel} succeeded: ${schema}.${table}`, type: 'success' });
+				// Explorer will also auto-refresh via executeQuery DDL detection, but handle direct run
+				await loadExplorer();
+				if (action === 'drop' || action === 'duplicate') await loadDatabases().catch(() => {});
+			} catch (error) {
+				const msg = error instanceof Error ? error.message : String(error);
+				globalError = msg;
+				showSnackbar({ message: msg, type: 'error' });
+			}
+			return;
+		}
+		// View Data etc. has its own data tab without SQL editor (per codebase) — create data tab, no SELECT 1
 		const tabId = addDataTab(plan.title, plan.query, plan.context);
 		await executeQuery(plan.query, {
 			targetTabId: tabId,
@@ -759,8 +798,17 @@ import { showSnackbar } from '$lib/stores/snackbar';
 			table: renameTarget.table,
 			nextName,
 		});
-		if (!activeTab || activeTab.kind !== 'query') addQueryTab(sql);
-		else setActiveSql(sql);
+		// Rename in background — no new tab per user request
+		try {
+			await rpc.request.runQuery({ sql });
+			globalError = '';
+			showSnackbar({ message: `Renamed ${renameTarget.schema}.${renameTarget.table} → ${nextName}`, type: 'success' });
+			await loadExplorer();
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : String(error);
+			globalError = msg;
+			showSnackbar({ message: msg, type: 'error' });
+		}
 	}
 	async function followForeignKey(schema: string, table: string) {
 		await handleTableAction('view_data', schema, table);
@@ -876,6 +924,9 @@ import { showSnackbar } from '$lib/stores/snackbar';
 				});
 			} catch (error) {
 				console.error('Failed to initialize app', error);
+			} finally {
+				// Signal to +layout that app is ready to hide static splash (avoids white flash)
+				try { window.dispatchEvent(new CustomEvent('app:ready')); } catch {}
 			}
 		})();
 		const onWindowResize = () => {

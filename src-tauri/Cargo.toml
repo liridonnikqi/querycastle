@@ -1,6 +1,6 @@
 [package]
 name = "querycastle-tauri"
-version = "0.1.4"
+version = "0.1.5"
 description = "QueryCastle is a modern workspace workspace built with Tauri + Svelte + Rust."
 edition = "2021"
 
@@ -14,9 +14,12 @@ tauri-build = { version = "2.0", features = [] }
 [dependencies]
 async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+deadpool-postgres = { version = "0.14", features = ["rt_tokio_1"] }
 mysql_async = "0.34"
 native-tls = "0.2"
 postgres-native-tls = "0.5"
+r2d2 = "0.8"
+r2d2_sqlite = { version = "0.25", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -24,8 +27,11 @@ tauri = { version = "2.0", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
-tokio = { version = "1", features = ["sync"] }
+thiserror = "2"
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "time"] }
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 uuid = "1"
 
