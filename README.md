@@ -6,6 +6,9 @@ PostgreSQL, MySQL and SQLite in one app: editor with autocomplete & formatting, 
 
 ![Tauri](https://img.shields.io/badge/Tauri-2.0-24C8DB) ![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00) ![Rust](https://img.shields.io/badge/Rust-stable-orange)
 
+![QueryCastle Screenshot](assets/screenshot.png)
+*SQL workspace — schema explorer, editor and editable grid*
+
 ## Features
 
 - Cross-platform desktop (Windows / macOS / Linux)
@@ -51,6 +54,10 @@ src-tauri/src/lib.rs  commands & DB adapters
 ## Releases
 
 GitHub Releases via `tauri-plugin-updater` (`latest.json`). Tags `v*` trigger `.github/workflows/publish.yml` (Windows).
+
+## Security
+
+See [SECURITY.md](SECURITY.md). No telemetry, local-only storage, optional SSL, signed auto-updates (`minisign`).
 
 ## Contributing
 
