@@ -8,7 +8,7 @@ PostgreSQL, MySQL and SQLite in one app: editor with autocomplete & formatting, 
 
 ## Features
 
-- Cross-platform desktop (Windows / macOS / Linux)
+- Windows desktop (cross-platform via Tauri — macOS/Linux builds planned, currently Windows-only)
 - Connection profiles or connection string, SSL optional
 - SQL editor (autocomplete, formatting, `Ctrl+Enter` to run)
 - Schema explorer (schemas, tables, columns, foreign keys)
@@ -50,7 +50,7 @@ src-tauri/src/lib.rs  commands & DB adapters
 
 ## Releases
 
-GitHub Releases via `tauri-plugin-updater` (`latest.json`). Tags `v*` trigger `.github/workflows/publish.yml` (Windows).
+GitHub Releases via `tauri-plugin-updater` (`latest.json`). Tags `v*` trigger `.github/workflows/publish.yml` (Windows-only; macOS/Linux artifacts planned).
 
 ## Contributing
 
