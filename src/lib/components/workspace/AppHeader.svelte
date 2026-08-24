@@ -20,19 +20,6 @@ import type { ConnectionStatus } from '$lib/rpc';
 	let desktopWindowControls = $state(false);
 	let mounted = false;
 
-	function isPrimaryMouse(event: MouseEvent) {
-		return event.button === 0;
-	}
-
-	async function startWindowDrag(event: MouseEvent) {
-		if (!mounted || !desktopWindowControls || !isPrimaryMouse(event)) return;
-		try {
-			await appWindow.startDragging();
-		} catch {
-			// Ignore blocked/unsupported drag attempts.
-		}
-	}
-
 	async function handleHeaderDoubleClick() {
 		if (!mounted || !desktopWindowControls) return;
 		await handleToggleMaximize();
@@ -100,7 +87,6 @@ import type { ConnectionStatus } from '$lib/rpc';
 	<div
 		data-tauri-drag-region
 		class="flex items-center space-x-3 min-w-0 flex-1 h-full cursor-grab active:cursor-grabbing"
-		onmousedown={startWindowDrag}
 		ondblclick={handleHeaderDoubleClick}
 	>
 		<img src="/icon.svg?v=2" alt="QueryCastle" class="w-6 h-6 rounded-[5px] object-contain shrink-0" />
@@ -146,7 +132,6 @@ import type { ConnectionStatus } from '$lib/rpc';
 		<div
 			data-tauri-drag-region
 			class="h-full w-3 cursor-grab active:cursor-grabbing"
-			onmousedown={startWindowDrag}
 			ondblclick={handleHeaderDoubleClick}
 		></div>
 		<div class="flex items-center gap-1 ml-3">

@@ -14,21 +14,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: setup bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
       - name: setup node
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
       - name: install frontend dependencies
-        run: bun install
+        run: npm install
 
       - uses: tauri-apps/tauri-action@v0
         env:

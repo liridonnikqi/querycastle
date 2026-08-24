@@ -6,9 +6,6 @@ PostgreSQL, MySQL and SQLite in one app: editor with autocomplete & formatting, 
 
 ![Tauri](https://img.shields.io/badge/Tauri-2.0-24C8DB) ![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00) ![Rust](https://img.shields.io/badge/Rust-stable-orange)
 
-![QueryCastle Screenshot](assets/screenshot.png)
-*SQL workspace — schema explorer, editor and editable grid*
-
 ## Features
 
 - Cross-platform desktop (Windows / macOS / Linux)
@@ -23,23 +20,23 @@ PostgreSQL, MySQL and SQLite in one app: editor with autocomplete & formatting, 
 
 ## Quick Start
 
-**Prereqs:** [Bun](https://bun.sh/docs/installation) · [Rust](https://www.rust-lang.org/tools/install) · [Tauri prerequisites](https://tauri.app/start/prerequisites/)
+**Prereqs:** [Node.js](https://nodejs.org/) (npm) · [Rust](https://www.rust-lang.org/tools/install) · [Tauri prerequisites](https://tauri.app/start/prerequisites/)
 
 ```bash
-bun install
-bun run dev          # app + frontend
+npm install
+npm run dev          # app + frontend
 # or
-bun run dev:frontend # frontend only http://localhost:5173
+npm run dev:frontend # frontend only http://localhost:5173
 ```
 
 ## Scripts
 
 | Command | Description |
 |---|---|
-| `bun run dev` | Run Tauri + Vite |
-| `bun run build` | Build frontend to `dist/` |
-| `bunx tauri build` | Build desktop bundles |
-| `bun run check` | `svelte-check` + `tsc` |
+| `npm run dev` | Run Tauri + Vite |
+| `npm run build` | Build frontend to `dist/` |
+| `npx tauri build` | Build desktop bundles |
+| `npm run check` | `svelte-check` + `tsc` |
 
 ## Project Structure
 
@@ -54,10 +51,6 @@ src-tauri/src/lib.rs  commands & DB adapters
 ## Releases
 
 GitHub Releases via `tauri-plugin-updater` (`latest.json`). Tags `v*` trigger `.github/workflows/publish.yml` (Windows).
-
-## Security
-
-See [SECURITY.md](SECURITY.md). No telemetry, local-only storage, optional SSL, signed auto-updates (`minisign`).
 
 ## Contributing
 
