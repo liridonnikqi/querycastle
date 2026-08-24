@@ -58,4 +58,4 @@ Fork → feature branch → PR.
 
 ## License
 
-Add a `LICENSE` file before distributing.
+MIT — see [LICENSE](LICENSE).
