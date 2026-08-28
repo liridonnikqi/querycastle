@@ -117,6 +117,7 @@ pub(crate) async fn get_mysql_database_explorer(
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
     )> = conn
         .query(
             r#"
@@ -126,7 +127,8 @@ pub(crate) async fn get_mysql_database_explorer(
                 t.table_type as table_type,
                 c.column_name as column_name,
                 c.column_type as data_type,
-                c.is_nullable as is_nullable
+                c.is_nullable as is_nullable,
+                c.column_key as column_key
             from information_schema.tables t
             left join information_schema.columns c
                 on c.table_schema = t.table_schema
@@ -142,7 +144,7 @@ pub(crate) async fn get_mysql_database_explorer(
     let mut schema_map: HashMap<String, DatabaseSchema> = HashMap::new();
     let mut table_map: HashMap<String, DatabaseTable> = HashMap::new();
 
-    for (schema_name, table_name, table_type, column_name, data_type, is_nullable) in table_rows {
+    for (schema_name, table_name, table_type, column_name, data_type, is_nullable, column_key) in table_rows {
         schema_map
             .entry(schema_name.clone())
             .or_insert_with(|| DatabaseSchema {
@@ -172,6 +174,9 @@ pub(crate) async fn get_mysql_database_explorer(
                     data_type: data_type.unwrap_or_else(|| "unknown".to_string()),
                     not_null: is_nullable
                         .map(|value| value.eq_ignore_ascii_case("NO"))
+                        .unwrap_or(false),
+                    is_primary: column_key
+                        .map(|value| value.eq_ignore_ascii_case("PRI"))
                         .unwrap_or(false),
                 });
             }

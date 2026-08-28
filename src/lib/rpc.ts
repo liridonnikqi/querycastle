@@ -49,6 +49,7 @@ export type DatabaseColumn = {
   name: string;
   dataType: string;
   notNull: boolean;
+  isPrimary: boolean;
 };
 
 export type DatabaseForeignKey = {

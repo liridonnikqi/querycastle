@@ -131,7 +131,14 @@ impl DbAdapter for PostgresAdapter {
                 c.relkind::text as relkind,
                 a.attname as column_name,
                 pg_catalog.format_type(a.atttypid, a.atttypmod) as data_type,
-                a.attnotnull as not_null
+                a.attnotnull as not_null,
+                exists (
+                    select 1
+                    from pg_catalog.pg_index i
+                    where i.indrelid = c.oid
+                        and i.indisprimary
+                        and a.attnum = any (i.indkey)
+                ) as is_primary
             from pg_catalog.pg_class c
             join pg_catalog.pg_namespace n on n.oid = c.relnamespace
             left join pg_catalog.pg_attribute a
@@ -157,6 +164,7 @@ impl DbAdapter for PostgresAdapter {
             let column_name: Option<String> = row.try_get("column_name").map_err(sanitize_pg_error_to_db_error)?;
             let data_type: Option<String> = row.try_get("data_type").map_err(sanitize_pg_error_to_db_error)?;
             let not_null: Option<bool> = row.try_get("not_null").map_err(sanitize_pg_error_to_db_error)?;
+            let is_primary: Option<bool> = row.try_get("is_primary").map_err(sanitize_pg_error_to_db_error)?;
 
             schema_map
                 .entry(schema_name.clone())
@@ -186,6 +194,7 @@ impl DbAdapter for PostgresAdapter {
                         name: column,
                         data_type: data_type.unwrap_or_else(|| "unknown".to_string()),
                         not_null: not_null.unwrap_or(false),
+                        is_primary: is_primary.unwrap_or(false),
                     });
                 }
             }

@@ -141,6 +141,7 @@ pub(crate) fn get_sqlite_database_explorer(connection: &ConnectionInput) -> Resu
                     name: row.get::<_, String>(1)?,
                     data_type: row.get::<_, String>(2).unwrap_or_else(|_| "TEXT".to_string()),
                     not_null: row.get::<_, i64>(3).unwrap_or(0) != 0,
+                    is_primary: row.get::<_, i64>(5).unwrap_or(0) != 0,
                 })
             })
             .map_err(|error| format!("SQLite table info read failed: {error}"))?;

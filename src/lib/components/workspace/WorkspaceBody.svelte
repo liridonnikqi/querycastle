@@ -1,4 +1,5 @@
 <script lang="ts">
+	import DiagramView from '$lib/components/workspace/DiagramView.svelte';
 	import LibraryView from '$lib/components/workspace/LibraryView.svelte';
 	import MainNav from '$lib/components/workspace/MainNav.svelte';
 	import SqlWorkspace from '$lib/components/workspace/SqlWorkspace.svelte';
@@ -187,6 +188,17 @@
 			onApplyTableChanges={onApplyTableChanges}
 			onStartResultsResize={onStartResultsResize}
 			onSetSplitContainer={onSetSplitContainer}
+		/>
+	{:else if mainView === 'diagram'}
+		<DiagramView
+			{connectionStatus}
+			{explorer}
+			loadingExplorer={isExplorerLoading}
+			onRefreshTables={onRefreshTables}
+			onTableAction={(action, schema, table) => {
+				onSelectView('sql');
+				void onTableAction(action, schema, table);
+			}}
 		/>
 	{:else}
 		<LibraryView

@@ -441,8 +441,11 @@
 									{#if expandedTables.has(`${schema.name}.${table.name}`)}
 										<div class="flex flex-col ml-7 mt-0.5 space-y-0.5 relative before:absolute before:left-[-19px] before:top-0 before:bottom-0 before:w-px before:bg-gray-200">
 											{#each table.columns as column}
+												{@const isFk = table.foreignKeys.some((fk) => fk.column === column.name)}
 												<div class="flex items-center w-full px-2 py-1 hover:bg-gray-50 rounded-md text-gray-600">
-													{#if column.name.endsWith("_id")}
+													{#if column.isPrimary}
+														<KeyRound size={13} class="mr-2 text-amber-500 shrink-0" />
+													{:else if isFk}
 														<KeyRound size={13} class="mr-2 text-gray-400 shrink-0" />
 													{:else}
 														<div class="w-3.5 h-3.5 mr-2 shrink-0 border border-gray-300 rounded-sm bg-gray-50 flex items-center justify-center"><span class="text-[8px] font-medium text-gray-400">T</span></div>

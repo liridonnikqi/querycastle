@@ -909,7 +909,8 @@ import { showSnackbar } from '$lib/stores/snackbar';
 			if (raw) {
 				const v = JSON.parse(raw);
 				if (v === 'history' || v === 'last_queries') mainView = 'history';
-				else if (v === 'saved_queries' || v === 'sql') mainView = v;
+				else if (v === 'saved_queries' || v === 'sql' || v === 'diagram')
+					mainView = v;
 			}
 		} catch {}
 		void (async () => {

@@ -81,6 +81,7 @@ pub struct DatabaseColumn {
     pub name: String,
     pub data_type: String,
     pub not_null: bool,
+    pub is_primary: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { History, Home, Star } from '@lucide/svelte';
+	import { History, Home, Network, Star } from '@lucide/svelte';
 	import type { MainView } from '$lib/utils/workspace';
 
 	let {
@@ -20,6 +20,12 @@
 	>
 		<Home size={18} />
 	</button>
+	<button
+		onclick={() => onSelectView('diagram')}
+		title="Schema diagram"
+		class={`transition-colors p-1.5 rounded-md flex items-center justify-center ${mainView === 'diagram' ? 'text-gray-900 bg-gray-100 border border-gray-200/50' : 'text-gray-400 hover:text-gray-900 hover:bg-gray-100'}`}
+	><Network size={18} /></button
+	>
 	<button
 		onclick={() => onSelectView('saved_queries')}
 		class={`transition-colors p-1.5 rounded-md flex items-center justify-center ${mainView === 'saved_queries' ? 'text-gray-900 bg-gray-100 border border-gray-200/50' : 'text-gray-400 hover:text-gray-900 hover:bg-gray-100'}`}
