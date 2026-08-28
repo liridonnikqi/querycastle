@@ -3,8 +3,14 @@
 	import { isTauri } from '@tauri-apps/api/core';
 	import { getVersion } from '@tauri-apps/api/app';
 	import { check } from '@tauri-apps/plugin-updater';
+	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { Download, RefreshCw, Check, AlertCircle, Loader2 } from '@lucide/svelte';
+	import GithubIcon from '$lib/components/ui/GithubIcon.svelte';
 	import { downloadAndInstallUpdate } from '$lib/updater';
+
+	const REPO_URL = 'https://github.com/liridonnikqi/querycastle';
+	const tooltipClass =
+		'pointer-events-none absolute bottom-full right-0 mb-1.5 w-max max-w-[240px] rounded bg-[#1c1c1e] px-2 py-1 text-[10px] font-normal leading-snug text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 z-50';
 
 	let version = $state('0.1.1');
 	let status = $state<
@@ -23,9 +29,13 @@
 		void getVersion()
 			.then((v) => (version = v))
 			.catch(() => {});
-		if (!isDesktop) return;
-		const t = setTimeout(() => void silentCheck(), 3000);
-		return () => clearTimeout(t);
+		if (!isDesktop) return () => {
+			mounted = false;
+		};
+		void silentCheck();
+		return () => {
+			mounted = false;
+		};
 	});
 
 	async function silentCheck() {
@@ -87,10 +97,20 @@
 		status = 'idle';
 		errorMsg = '';
 	}
+
+	function openRepo() {
+		if (isDesktop) {
+			openUrl(REPO_URL).catch(() => {
+				window.open(REPO_URL, '_blank', 'noopener,noreferrer');
+			});
+		} else {
+			window.open(REPO_URL, '_blank', 'noopener,noreferrer');
+		}
+	}
 </script>
 
 <footer
-	class="h-6 flex items-center justify-between px-3 bg-white text-gray-600 text-xs shrink-0 border-t border-gray-200 select-none"
+	class="h-8 flex items-center justify-between px-3 bg-white text-gray-600 text-xs shrink-0 border-t border-gray-200 select-none"
 >
 	<div class="flex items-center gap-2 min-w-0">
 		<span class="text-gray-800 font-medium">QueryCastle</span>
@@ -126,14 +146,18 @@
 		{/if}
 	</div>
 
-	{#if isDesktop}
-		<div class="flex items-center gap-1.5">
+	<div class="flex items-center gap-1">
+		{#if isDesktop}
 			{#if status === 'idle' || status === 'uptodate' || status === 'error'}
 				<button
 					onclick={handleCheck}
-					class="h-5 px-2 rounded bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700 inline-flex items-center gap-1 text-[11px]"
+					class="group relative h-5 w-5 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700 inline-flex items-center justify-center"
+					aria-label="Check for updates"
 				>
-					<RefreshCw size={10} /> Check for updates
+					<RefreshCw size={14} />
+					<span class={tooltipClass}
+						>Check for updates — see if a newer version of QueryCastle is available</span
+					>
 				</button>
 			{:else if status === 'available'}
 				<button
@@ -152,9 +176,11 @@
 			{:else if status === 'checking'}
 				<button
 					disabled
-					class="h-5 px-2 rounded bg-gray-50 border border-gray-200 text-gray-500 inline-flex items-center gap-1 text-[11px] opacity-70 cursor-wait"
+					class="group relative h-5 w-5 rounded text-gray-500 inline-flex items-center justify-center opacity-70 cursor-wait"
+					aria-label="Checking for updates"
 				>
-					<Loader2 size={10} class="animate-spin" /> Checking...
+					<Loader2 size={11} class="animate-spin" />
+					<span class={tooltipClass}>Checking for updates…</span>
 				</button>
 			{:else if status === 'downloading'}
 				<button
@@ -176,6 +202,15 @@
 					Restart now
 				</button>
 			{/if}
-		</div>
-	{/if}
+			<span class="w-px h-3 bg-gray-200" aria-hidden="true"></span>
+		{/if}
+		<button
+			onclick={openRepo}
+			class="group relative h-5 w-5 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700 inline-flex items-center justify-center"
+			aria-label="Open the QueryCastle GitHub repository"
+		>
+			<GithubIcon size={14} />
+			<span class={tooltipClass}>View the QueryCastle repository on GitHub</span>
+		</button>
+	</div>
 </footer>
