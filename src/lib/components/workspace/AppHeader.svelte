@@ -1,17 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-import { ChevronRight, Maximize2, Minimize2, Minus, Plus, Unplug, X } from '@lucide/svelte';
+import { ChevronRight, Maximize2, Minimize2, Minus, Unplug, X } from '@lucide/svelte';
 import { isTauri } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { ConnectionStatus } from '$lib/rpc';
 
 	let {
 		connectionStatus,
-		onCreateConnection,
 		onDisconnect,
 	}: {
 		connectionStatus: ConnectionStatus;
-		onCreateConnection: () => void;
 		onDisconnect: () => void;
 	} = $props();
 
@@ -104,29 +102,17 @@ import type { ConnectionStatus } from '$lib/rpc';
 			</span>
 		</div>
 	</div>
-	<div class="flex items-center gap-2">
-		{#if !connectionStatus.connected}
-			<button
-				onclick={onCreateConnection}
-				onmousedown={(event) => event.stopPropagation()}
-				ondblclick={(event) => event.stopPropagation()}
-				class="h-7 px-2 rounded border border-white/15 text-xs text-gray-300 hover:text-white hover:bg-white/10 inline-flex items-center gap-1"
-			>
-				<Plus size={12} />
-				Connection
-			</button>
-		{:else}
-			<button
-				onclick={onDisconnect}
-				onmousedown={(event) => event.stopPropagation()}
-				ondblclick={(event) => event.stopPropagation()}
-				class="h-7 px-2 rounded border border-white/15 text-xs text-gray-300 hover:text-white hover:bg-red-600 hover:border-red-600 inline-flex items-center gap-1"
-			>
-				<Unplug size={12} />
-				Disconnect
-			</button>
-		{/if}
-	</div>
+	{#if connectionStatus.connected}
+		<button
+			onclick={onDisconnect}
+			onmousedown={(event) => event.stopPropagation()}
+			ondblclick={(event) => event.stopPropagation()}
+			class="h-7 px-2 rounded border border-white/15 text-xs text-gray-300 hover:text-white hover:bg-red-600 hover:border-red-600 inline-flex items-center gap-1"
+		>
+			<Unplug size={12} />
+			Disconnect
+		</button>
+	{/if}
 	{#if desktopWindowControls}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div

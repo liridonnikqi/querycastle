@@ -29,13 +29,7 @@
 		void getVersion()
 			.then((v) => (version = v))
 			.catch(() => {});
-		if (!isDesktop) return () => {
-			mounted = false;
-		};
-		void silentCheck();
-		return () => {
-			mounted = false;
-		};
+		if (isDesktop) void silentCheck();
 	});
 
 	async function silentCheck() {

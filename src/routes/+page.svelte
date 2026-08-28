@@ -993,7 +993,6 @@ import { showSnackbar } from '$lib/stores/snackbar';
 >
 	<AppHeader
 		{connectionStatus}
-		onCreateConnection={startCreateConnection}
 		onDisconnect={handleDisconnect}
 	/>
 	{#if !connectionStatus.connected && !forceWorkspaceOnDisconnect}
@@ -1088,7 +1087,6 @@ import { showSnackbar } from '$lib/stores/snackbar';
 	<WorkspaceModals
 		{showConnectionModal}
 		{editingConnectionName}
-		{connectionInputMode}
 		{connectionForm}
 		{connectionStringInput}
 		{testConnectionMessage}

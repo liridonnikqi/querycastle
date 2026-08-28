@@ -5,7 +5,6 @@
 	let {
 		show,
 		editing,
-		connectionInputMode,
 		connectionForm,
 		connectionStringInput,
 		testConnectionMessage,
@@ -21,7 +20,6 @@
 	}: {
 		show: boolean;
 		editing: boolean;
-		connectionInputMode: 'fields' | 'string';
 		connectionForm: ConnectionInput;
 		connectionStringInput: string;
 		testConnectionMessage: string;
@@ -40,7 +38,6 @@
 <ConnectionModal
 	visible={show}
 	{editing}
-	mode={connectionInputMode}
 	{connectionForm}
 	{connectionStringInput}
 	{testConnectionMessage}

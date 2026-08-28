@@ -1,227 +1,242 @@
 <script lang="ts">
-	import { Database, Pencil, Plug, Plus, Trash2 } from '@lucide/svelte';
-	import type { ConnectionInput } from '$lib/rpc';
+    import { 
+        Database, 
+        Plus, 
+        MoreVertical 
+    } from '@lucide/svelte';
+    import type { ConnectionInput } from '$lib/rpc';
+    import DatabaseIcon from '$lib/components/ui/DatabaseIcon.svelte';
 
-	let {
-		savedConnections,
-		onConnect,
-		onCreate,
-		onEdit,
-		onDelete,
-		connectingName,
-		searchQuery,
-	}: {
-		savedConnections: ConnectionInput[];
-		onConnect: (connection: ConnectionInput) => void;
-		onCreate: () => void;
-		onEdit: (connection: ConnectionInput) => void;
-		onDelete: (name: string) => void;
-		connectingName: string | null;
-		searchQuery: string;
-	} = $props();
+    let {
+        savedConnections,
+        onConnect,
+        onCreate,
+        onEdit,
+        onDelete,
+        connectingName,
+        searchQuery,
+    }: {
+        savedConnections: ConnectionInput[];
+        onConnect: (connection: ConnectionInput) => void;
+        onCreate: () => void;
+        onEdit: (connection: ConnectionInput) => void;
+        onDelete: (name: string) => void;
+        connectingName: string | null;
+        searchQuery: string;
+    } = $props();
 
-	function parseConnectionString(
-		connectionString: string,
-	): { host: string; port: number; user: string } | null {
-		try {
-			const url = new URL(connectionString);
-			const host = url.hostname;
-			const defaultPort = url.protocol === 'mysql:' ? 3306 : 5432;
-			const port = url.port ? parseInt(url.port) : defaultPort;
-			const user = url.username;
-			return { host, port, user };
-		} catch {
-			return null;
-		}
-	}
+    // Track active menu state & filter choice
+    let activeMenuName = $state<string | null>(null);
+    let selectedFilter = $state<string>('all');
 
-	function getConnectionDisplay(connection: ConnectionInput): string {
-		if (connection.useConnectionString && connection.connectionString) {
-			const parsed = parseConnectionString(connection.connectionString);
-			if (parsed) {
-				return `${parsed.user}@${parsed.host}:${parsed.port}`;
-			}
-		}
-		return `${connection.user}@${connection.host}:${connection.port}`;
-	}
+    // Filter connections based on search query and engine filter
+    let filteredConnections = $derived(
+        savedConnections.filter((connection) => {
+            const query = searchQuery ? searchQuery.trim().toLowerCase() : '';
+            const matchesQuery = !query || (
+                connection.name.toLowerCase().includes(query) ||
+                connection.host.toLowerCase().includes(query) ||
+                connection.database.toLowerCase().includes(query)
+            );
+            const matchesFilter = selectedFilter === 'all' || connection.databaseType === selectedFilter;
+            return matchesQuery && matchesFilter;
+        })
+    );
 
-	let filteredConnections = $derived.by(() => {
-		const query = searchQuery.trim().toLowerCase();
-		if (!query) return savedConnections;
-		return savedConnections.filter((connection) => {
-			return (
-				connection.name.toLowerCase().includes(query) ||
-				connection.host.toLowerCase().includes(query) ||
-				connection.database.toLowerCase().includes(query)
-			);
-		});
-	});
+    let counts = $derived({
+        all: savedConnections.length,
+        postgres: savedConnections.filter(c => c.databaseType === 'postgres').length,
+        mysql: savedConnections.filter(c => c.databaseType === 'mysql').length,
+        sqlite: savedConnections.filter(c => c.databaseType === 'sqlite').length,
+    });
 </script>
 
-<section
-	class="flex-1 overflow-auto px-8 py-10 bg-transparent flex flex-col items-center justify-center"
->
-	<div class="w-full max-w-5xl mx-auto">
-		<div class="flex items-start justify-between gap-4 mb-8">
-			<div>
-				<p
-					class="text-xs uppercase tracking-[0.12em] text-gray-500 font-semibold mb-3 flex items-center gap-2"
-				>
-					<span
-						class="inline-flex items-center justify-center w-5 h-5 rounded bg-emerald-100"
-					>
-						<Database size={14} strokeWidth={2} color="#059669" />
-					</span>
-					Database Workspace
-				</p>
-				<h1 class="text-gray-900 text-4xl font-semibold tracking-[-0.02em]">
-					Choose a connection
-				</h1>
-				<p class="text-gray-500 text-[15px] mt-2 max-w-md leading-relaxed">
-					Start from a saved connection, then browse tables or run SQL in one
-					place.
-				</p>
-			</div>
-		</div>
+<div class="w-full min-h-full flex-1 bg-white p-6 md:p-10 flex flex-col justify-start">
+    <div class="w-full max-w-6xl mx-auto space-y-8">
+        
+        <!-- HEADER -->
+        <header class="flex flex-col sm:flex-row sm:items-end justify-between gap-6 pb-6 border-b border-gray-100">
+            <div>
+                <h1 class="text-gray-900 text-3xl font-medium tracking-tight">
+                    Databases
+                </h1>
+                <p class="text-gray-500 text-sm mt-1.5">
+                    Select a connection target to launch your workspace.
+                </p>
+            </div>
 
-		{#if savedConnections.length === 0}
-			<div
-				class="rounded-2xl border border-gray-200 bg-white p-12 text-center shadow-sm"
-			>
-				<div
-					class="w-14 h-14 mx-auto rounded-xl bg-gray-50 border border-gray-200 flex items-center justify-center text-gray-700 mb-5 shadow-inner"
-				>
-					<Database size={24} strokeWidth={1.5} />
-				</div>
-				<h2 class="text-gray-900 text-xl font-semibold tracking-tight">
-					No saved connections
-				</h2>
-				<p class="text-gray-500 text-[15px] mt-2">
-					Create your first database connection to continue.
-				</p>
-				<button
-					onclick={onCreate}
-					class="mt-6 h-10 px-6 rounded-lg text-sm font-medium shadow-sm border border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-600 hover:border-emerald-600"
-					>Create Connection</button
-				>
-			</div>
-		{:else if filteredConnections.length === 0}
-			<div
-				class="rounded-2xl border border-dashed border-gray-300 bg-white p-12 text-center text-gray-500 text-[15px] font-medium"
-			>
-				No saved connections match your search.
-			</div>
-		{:else}
-			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-				{#each filteredConnections as connection}
-					<div
-						role="button"
-						tabindex="0"
-						onclick={() => {
-							if (connectingName === connection.name) return;
-							onConnect(connection);
-						}}
-						onkeydown={(event) => {
-							if (connectingName === connection.name) return;
-							if (event.key === 'Enter' || event.key === ' ') {
-								event.preventDefault();
-								onConnect(connection);
-							}
-						}}
-						class="group rounded-xl border border-gray-200 bg-white p-5 hover:border-gray-300 hover:shadow-md transition-all duration-300 relative overflow-hidden flex flex-col"
-					>
-						<div
-							class="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1"
-						>
-							<button
-								onclick={(event) => {
-									event.stopPropagation();
-									onEdit(connection);
-								}}
-								class="text-gray-500 hover:text-gray-900 bg-white/80 backdrop-blur rounded p-1.5 shadow-sm border border-gray-200"
-								aria-label="Edit connection"
-								title="Edit connection"
-							>
-								<Pencil size={14} />
-							</button>
-							<button
-								onclick={(event) => {
-									event.stopPropagation();
-									onDelete(connection.name);
-								}}
-								class="text-gray-500 hover:text-red-600 bg-white/80 backdrop-blur rounded p-1.5 shadow-sm border border-gray-200"
-								aria-label="Delete connection"
-								title="Delete connection"
-							>
-								<Trash2 size={14} />
-							</button>
-						</div>
-						<div class="flex items-start gap-4 mb-6">
-							<div
-								class="w-10 h-10 rounded-lg bg-gray-50 border border-gray-200 flex items-center justify-center text-gray-700 shrink-0"
-							>
-								<Database size={18} strokeWidth={1.5} />
-							</div>
-							<div class="min-w-0 flex-1">
-								<div
-									class="text-gray-900 text-[15px] font-semibold truncate tracking-tight"
-								>
-									{connection.name}
-								</div>
-								<div
-									class="text-gray-500 text-[13px] mt-1 truncate font-mono-code"
-								>
-									{getConnectionDisplay(connection)}
-								</div>
-							</div>
-						</div>
+            <button
+                onclick={onCreate}
+                class="h-8 px-4 rounded-md text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition-colors inline-flex items-center justify-center gap-1.5"
+            >
+                <Plus size={14} strokeWidth={2.5} />
+                <span>New Connection</span>
+            </button>
+        </header>
 
-						<div class="mt-auto">
-							<div
-								class="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg mb-4 text-[13px] text-gray-500 font-mono-code border border-gray-200"
-							>
-								<div class="w-2 h-2 rounded-full bg-emerald-500"></div>
-								<span class="truncate">{connection.database}</span>
-							</div>
-							<div
-								class="w-full h-10 rounded-lg text-[13px] font-semibold inline-flex items-center justify-center gap-2 border border-gray-200 bg-white text-gray-700"
-							>
-								{#if connectingName === connection.name}
-									<div
-										class="w-4 h-4 border-2 border-gray-300 border-t-gray-700 rounded-full animate-spin"
-									></div>
-									Connecting...
-								{:else}
-									<Plug size={14} />
-									Click card to connect
-								{/if}
-							</div>
-						</div>
-					</div>
-				{/each}
+        <!-- MAIN CONNECTIONS AREA -->
+        <div class="space-y-6">
+            
+            <!-- FILTER TOOLBAR -->
+            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div class="flex items-center gap-2">
+                    <button
+                        onclick={() => selectedFilter = 'all'}
+                        class="px-3 py-1.5 text-xs font-medium rounded border transition-colors {selectedFilter === 'all' ? 'border-[#1c1c1e] bg-[#1c1c1e] text-white' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}"
+                    >
+                        All <span class="opacity-60 ml-1 font-mono">{counts.all}</span>
+                    </button>
+                    <button
+                        onclick={() => selectedFilter = 'postgres'}
+                        class="px-3 py-1.5 text-xs font-medium rounded border transition-colors {selectedFilter === 'postgres' ? 'border-[#1c1c1e] bg-[#1c1c1e] text-white' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}"
+                    >
+                        PostgreSQL <span class="opacity-60 ml-1 font-mono">{counts.postgres}</span>
+                    </button>
+                    <button
+                        onclick={() => selectedFilter = 'mysql'}
+                        class="px-3 py-1.5 text-xs font-medium rounded border transition-colors {selectedFilter === 'mysql' ? 'border-[#1c1c1e] bg-[#1c1c1e] text-white' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}"
+                    >
+                        MySQL <span class="opacity-60 ml-1 font-mono">{counts.mysql}</span>
+                    </button>
+                    <button
+                        onclick={() => selectedFilter = 'sqlite'}
+                        class="px-3 py-1.5 text-xs font-medium rounded border transition-colors {selectedFilter === 'sqlite' ? 'border-[#1c1c1e] bg-[#1c1c1e] text-white' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}"
+                    >
+                        SQLite <span class="opacity-60 ml-1 font-mono">{counts.sqlite}</span>
+                    </button>
+                </div>
 
-				{#if savedConnections.length === 1}
-					<button
-						onclick={onCreate}
-						class="rounded-xl border border-dashed border-gray-300 bg-white p-5 hover:border-emerald-500 hover:shadow-md transition-all duration-300 flex flex-col items-center justify-center text-center min-h-[210px]"
-					>
-						<div
-							class="w-10 h-10 rounded-lg bg-emerald-500 text-white flex items-center justify-center mb-4"
-						>
-							<Plus size={18} />
-						</div>
-						<div class="text-gray-900 text-[15px] font-semibold tracking-tight">
-							Create New Connection
-						</div>
-						<div class="text-gray-500 text-[13px] mt-1">
-							Add another database connection
-						</div>
-					</button>
-				{/if}
-			</div>
-		{/if}
-	</div>
-</section>
+                {#if searchQuery}
+                    <div class="text-xs text-gray-500 font-medium">
+                        Search: <span class="text-emerald-700 font-semibold">"{searchQuery}"</span>
+                    </div>
+                {/if}
+            </div>
 
+            <!-- CONNECTIONS GRID -->
+            {#if savedConnections.length === 0}
+                <div class="border border-dashed border-gray-300 rounded-lg bg-gray-50/50 p-12 text-center mt-4">
+                    <div class="w-12 h-12 mx-auto rounded border border-gray-200 bg-white flex items-center justify-center text-gray-400 mb-4">
+                        <Database size={22} strokeWidth={1.5} />
+                    </div>
+                    <h2 class="text-gray-900 text-base font-medium tracking-tight">No connections found</h2>
+                    <p class="text-gray-500 text-sm mt-1 max-w-sm mx-auto">
+                        Add a database target to start exploring your data.
+                    </p>
+                    <button
+                        onclick={onCreate}
+                        class="mt-6 h-8 px-4 rounded-md text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition-colors inline-flex items-center justify-center gap-1.5"
+                    >
+                        <Plus size={14} strokeWidth={2.5} />
+                        <span>Create Connection</span>
+                    </button>
+                </div>
+            {:else if filteredConnections.length === 0}
+                <div class="border border-dashed border-gray-200 rounded-lg p-10 text-center text-gray-500 text-sm font-medium mt-4">
+                    No connections match your active filter or search.
+                </div>
+            {:else}
+                <!-- FLAT COMPACT BUTTON CARDS -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                    {#each filteredConnections as connection (connection.name)}
+                        {@const isConnecting = connectingName === connection.name}
+                        
+                        <div
+                            role="button"
+                            tabindex="0"
+                            onclick={() => {
+                                if (isConnecting) return;
+                                onConnect(connection);
+                            }}
+                            onkeydown={(event) => {
+                                if (isConnecting) return;
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault();
+                                    onConnect(connection);
+                                }
+                            }}
+                            class="relative bg-white border border-gray-200 hover:border-gray-300 hover:bg-gray-50 rounded-md p-3 transition-colors cursor-pointer flex items-center justify-between gap-3 select-none"
+                        >
+                            <!-- Left: Minimalist Icon + Text -->
+                            <div class="flex items-center gap-3 min-w-0">
+                                <div class="w-8 h-8 rounded bg-gray-50 border border-gray-100 flex items-center justify-center shrink-0">
+                                    <DatabaseIcon type={connection.databaseType} size={16} />
+                                </div>
 
+                                <div class="min-w-0 flex flex-col">
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-gray-900 font-medium text-sm tracking-tight truncate">
+                                            {connection.name}
+                                        </span>
+                                    </div>
+                                    <div class="flex items-center gap-1.5 text-[11px] text-gray-500 font-mono mt-0.5 truncate">
+                                        <span class="truncate">{connection.host || 'localhost'}</span>
+                                        <span class="text-gray-300">/</span>
+                                        <span class="truncate">{connection.database}</span>
+                                    </div>
+                                </div>
+                            </div>
 
+                            <!-- Right: Actions -->
+                            <div class="flex items-center gap-1.5 shrink-0">
+                                {#if isConnecting}
+                                    <div class="w-6 h-6 flex items-center justify-center text-emerald-600">
+                                        <div class="w-3.5 h-3.5 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin"></div>
+                                    </div>
+                                {/if}
+
+                                <div class="relative">
+                                    <button
+                                        onclick={(event) => {
+                                            event.stopPropagation();
+                                            activeMenuName = activeMenuName === connection.name ? null : connection.name;
+                                        }}
+                                        class="p-1 rounded text-gray-400 hover:text-gray-800 hover:bg-gray-200 transition-colors"
+                                        title="Options"
+                                        aria-label="Options"
+                                    >
+                                        <MoreVertical size={16} />
+                                    </button>
+
+                                    <!-- Flat Dropdown Menu -->
+                                    {#if activeMenuName === connection.name}
+                                        <div
+                                            class="absolute right-0 top-full mt-1 w-28 bg-white border border-gray-300 rounded-md py-1 z-50"
+                                            onclick={(e) => e.stopPropagation()}
+                                            onkeydown={(e) => {
+                                                if (e.key === "Escape") activeMenuName = null;
+                                            }}
+                                            role="menu"
+                                            tabindex="-1"
+                                        >
+                                            <button
+                                                onclick={() => {
+                                                    activeMenuName = null;
+                                                    onEdit(connection);
+                                                }}
+                                                class="w-full text-left px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 transition-colors"
+                                                role="menuitem"
+                                            >
+                                                Edit
+                                            </button>
+                                            <button
+                                                onclick={() => {
+                                                    activeMenuName = null;
+                                                    onDelete(connection.name);
+                                                }}
+                                                class="w-full text-left px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors"
+                                                role="menuitem"
+                                            >
+                                                Delete
+                                            </button>
+                                        </div>
+                                    {/if}
+                                </div>
+                            </div>
+                        </div>
+                    {/each}
+                </div>
+            {/if}
+        </div>
+    </div>
+</div>
