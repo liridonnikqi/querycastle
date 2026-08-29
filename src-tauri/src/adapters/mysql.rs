@@ -8,7 +8,8 @@ use crate::adapters::traits::{DbAdapter, MySqlAdapter};
 use crate::core::error::{DbError, sanitize_mysql_error_to_db_error};
 use crate::core::types::{
     ApplyTableChangesParams, ApplyTableChangesResponse, ConnectionInput, ConnectionStatus,
-    DatabaseExplorer, DatabaseType, QueryResultPayload, TestConnectionResponse, UpdatedRowCtid,
+    DatabaseExplorer, DatabaseType, ObjectDefinition, ObjectDefinitionParams, QueryResultPayload,
+    TestConnectionResponse, UpdatedRowCtid,
 };
 
 fn mysql_quote_ident(value: &str) -> String {
@@ -97,6 +98,16 @@ impl DbAdapter for MySqlAdapter {
 
     async fn get_database_explorer(&self, connection: &ConnectionInput) -> Result<DatabaseExplorer, DbError> {
         crate::core::db::get_mysql_database_explorer(connection).await.map_err(DbError::internal)
+    }
+
+    async fn get_object_definition(
+        &self,
+        connection: &ConnectionInput,
+        params: &ObjectDefinitionParams,
+    ) -> Result<ObjectDefinition, DbError> {
+        crate::core::db::get_mysql_object_definition(connection, params)
+            .await
+            .map_err(DbError::internal)
     }
 
     async fn list_databases(&self, connection: &ConnectionInput) -> Result<Vec<String>, DbError> {

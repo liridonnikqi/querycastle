@@ -7,10 +7,11 @@
 		ApplyTableChangesResult,
 		ConnectionStatus,
 		DatabaseExplorer,
+		ObjectDefinitionParams,
 		TableChangesPayload,
 	} from '$lib/rpc';
 	import type { QueryHistoryItem, SavedQueryItem } from '$lib/types';
-	import type { MainView, SchemaAction, TableAction, TabContextMenu, WorkspaceTab } from '$lib/utils/workspace';
+	import type { MainView, RelationHop, SchemaAction, TableAction, TabContextMenu, WorkspaceTab } from '$lib/utils/workspace';
 
 	let {
 		mainView,
@@ -48,6 +49,10 @@
 		onTableAction,
 		onSchemaAction,
 		onFollowForeignKey,
+		onOpenObjectDefinition,
+		onViewSequence,
+		onFollowRelation,
+		onActivateRelationTrail,
 		onSelectTab,
 		onOpenTabContextMenu,
 		onCloseTab,
@@ -107,6 +112,10 @@
 		onTableAction: (action: TableAction, schema: string, table: string) => void | Promise<void>;
 		onSchemaAction: (action: SchemaAction, schema: string) => void | Promise<void>;
 		onFollowForeignKey: (schema: string, table: string) => void | Promise<void>;
+		onOpenObjectDefinition: (params: ObjectDefinitionParams) => void | Promise<void>;
+		onViewSequence: (schema: string, name: string) => void | Promise<void>;
+		onFollowRelation: (hop: RelationHop) => void | Promise<void>;
+		onActivateRelationTrail: (index: number) => void | Promise<void>;
 		onSelectTab: (tabId: string) => void;
 		onOpenTabContextMenu: (event: MouseEvent, tabId: string) => void;
 		onCloseTab: (tabId: string) => void;
@@ -162,6 +171,10 @@
 			onTableAction={onTableAction}
 			onSchemaAction={onSchemaAction}
 			onFollowForeignKey={onFollowForeignKey}
+			onOpenObjectDefinition={onOpenObjectDefinition}
+			onViewSequence={onViewSequence}
+			onFollowRelation={onFollowRelation}
+			onActivateRelationTrail={onActivateRelationTrail}
 			{tabs}
 			{activeTabId}
 			{tabContextMenu}

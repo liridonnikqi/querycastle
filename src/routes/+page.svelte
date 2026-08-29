@@ -5,6 +5,7 @@
 		ConnectionInput,
 		ConnectionStatus,
 		DatabaseExplorer,
+		ObjectDefinitionParams,
 		TableChangesPayload,
 	} from '$lib/rpc';
 	import { rpc } from '$lib/rpc-client';
@@ -15,8 +16,6 @@ import WorkspaceBody from '$lib/components/workspace/WorkspaceBody.svelte';
 import WorkspaceModals from '$lib/components/workspace/WorkspaceModals.svelte';
 import StatusBar from '$lib/components/workspace/StatusBar.svelte';
 import SearchPalette from '$lib/components/workspace/SearchPalette.svelte';
-import SnackbarContainer from '$lib/components/ui/SnackbarContainer.svelte';
-import { showSnackbar } from '$lib/stores/snackbar';
 	import { normalizeConnectionInput } from '$lib/utils/connection';
 	import { tryBuildEditableQuery } from '$lib/utils/editable-query';
 	import {
@@ -31,6 +30,7 @@ import { showSnackbar } from '$lib/stores/snackbar';
 		closeTabState,
 		createDataTab as makeDataTab,
 		createQueryTab,
+		insertTabAfter,
 		setSqlInReusableQueryTabState,
 	} from '$lib/utils/tabs';
 	import {
@@ -47,6 +47,7 @@ import { showSnackbar } from '$lib/stores/snackbar';
 		type SchemaAction,
 		type TableAction,
 		type TabContextMenu,
+		type RelationHop,
 		type WorkspaceTab,
 	} from '$lib/utils/workspace';
 	import {
@@ -56,6 +57,13 @@ import { showSnackbar } from '$lib/stores/snackbar';
 		buildTableActionPlan,
 	} from '$lib/utils/workspace-actions';
 	import { initializeWorkspace } from '$lib/utils/workspace-init';
+	import {
+		buildFollowSqlFromHop,
+		buildFollowTabTitle,
+		trailsEqual,
+	} from '$lib/utils/relation-sql';
+	import { definitionTabTitle, isExplorerView } from '$lib/utils/schema-objects';
+	import { quoteSqlIdentifier } from '$lib/utils/sql';
 	import { format as formatSql } from 'sql-formatter';
 	let connectionStatus = $state<ConnectionStatus>({
 		connected: false,
@@ -127,6 +135,16 @@ import { showSnackbar } from '$lib/stores/snackbar';
 				items.add(table.name);
 				items.add(`${schema.name}.${table.name}`);
 				for (const column of table.columns) items.add(column.name);
+				for (const index of table.indexes ?? []) items.add(index.name);
+				for (const trigger of table.triggers ?? []) items.add(trigger.name);
+			}
+			for (const routine of schema.routines ?? []) {
+				items.add(routine.name);
+				items.add(`${schema.name}.${routine.name}`);
+			}
+			for (const sequence of schema.sequences ?? []) {
+				items.add(sequence.name);
+				items.add(`${schema.name}.${sequence.name}`);
 			}
 		}
 		return Array.from(items);
@@ -208,7 +226,6 @@ import { showSnackbar } from '$lib/stores/snackbar';
 	function saveActiveQuery() {
 		if (!connectionStatus.connected) {
 			globalError = 'Connect to a database before saving queries.';
-			showSnackbar({ message: 'Connect to a database before saving', type: 'error' });
 			return;
 		}
 		const sql = getActiveSql().trim();
@@ -219,7 +236,6 @@ import { showSnackbar } from '$lib/stores/snackbar';
 		);
 		if (duplicate) {
 			globalError = 'This query is already saved for the current connection.';
-			showSnackbar({ message: 'Query already saved', type: 'info' });
 			return;
 		}
 		const next: SavedQueryItem = {
@@ -232,7 +248,6 @@ import { showSnackbar } from '$lib/stores/snackbar';
 		queryFavorites = [next, ...queryFavorites].slice(0, 200);
 		persistJsonValue(QUERY_FAVORITES_KEY, queryFavorites);
 		globalError = '';
-		showSnackbar({ message: 'Query saved', description: next.title, type: 'success' });
 	}
 	function pushHistory(item: QueryHistoryItem) {
 		queryHistory = [item, ...queryHistory].slice(0, 100);
@@ -242,13 +257,15 @@ import { showSnackbar } from '$lib/stores/snackbar';
 		if (!activeTab || activeTab.kind !== 'query') return '';
 		return activeTab.sql;
 	}
-	function addQueryTab(initialSql = '') {
+	function addQueryTab(initialSql = '', title?: string) {
 		const nextTab = createQueryTab(
 			tabs.filter((tab) => tab.kind === 'query').length,
 			initialSql,
+			title,
 		);
 		tabs = [...tabs, nextTab];
 		activeTabId = nextTab.id;
+		mainView = 'sql';
 	}
 	function setSqlInReusableQueryTab(sql: string) {
 		const next = setSqlInReusableQueryTabState({ tabs, activeTabId, sql });
@@ -259,10 +276,22 @@ import { showSnackbar } from '$lib/stores/snackbar';
 		title: string,
 		sql: string,
 		context: { schema: string; table: string } | null,
+		options?: { relationTrail?: RelationHop[]; insertAfterActive?: boolean },
 	) {
-		const nextTab = makeDataTab({ title, sql, context });
-		tabs = [...tabs, nextTab];
-		activeTabId = nextTab.id;
+		const nextTab = makeDataTab({
+			title,
+			sql,
+			context,
+			relationTrail: options?.relationTrail ?? [],
+		});
+		if (options?.insertAfterActive) {
+			const inserted = insertTabAfter({ tabs, activeTabId, tab: nextTab });
+			tabs = inserted.tabs;
+			activeTabId = inserted.activeTabId;
+		} else {
+			tabs = [...tabs, nextTab];
+			activeTabId = nextTab.id;
+		}
 		return nextTab.id;
 	}
 	// Keep for potential future use — context menus now run in background per user request (no new tabs)
@@ -632,8 +661,6 @@ import { showSnackbar } from '$lib/stores/snackbar';
 						}
 					: tab,
 			);
-			// Toast for query success (compact, right-bottom)
-			showSnackbar({ message: `Query succeeded: ${queryResult.rowCount} rows in ${queryResult.durationMs}ms`, type: 'success' });
 			// Auto-refresh explorer/databases for DDL so new tables/databases appear without manual refresh
 			const isDdl = /^\s*(create|drop|alter|truncate|rename)\b/i.test(query);
 			const isDatabaseDdl = /^\s*(create|drop)\s+database\b/i.test(query);
@@ -704,7 +731,10 @@ import { showSnackbar } from '$lib/stores/snackbar';
 	) {
 		// Confirm destructive actions before building plan
 		if (action === 'drop') {
-			const ok = confirm(`Drop table ${schema}.${table} CASCADE?\nThis will also drop dependent objects and cannot be undone.`);
+			const isView = isExplorerView(explorer, schema, table);
+			const ok = isView
+				? confirm(`Drop view ${schema}.${table}?\nThis cannot be undone.`)
+				: confirm(`Drop table ${schema}.${table} CASCADE?\nThis will also drop dependent objects and cannot be undone.`);
 			if (!ok) return;
 		}
 		if (action === 'truncate') {
@@ -747,15 +777,11 @@ import { showSnackbar } from '$lib/stores/snackbar';
 			try {
 				await rpc.request.runQuery({ sql: plan.query });
 				globalError = '';
-				const actionLabel = action.charAt(0).toUpperCase() + action.slice(1);
-				showSnackbar({ message: `${actionLabel} succeeded: ${schema}.${table}`, type: 'success' });
-				// Explorer will also auto-refresh via executeQuery DDL detection, but handle direct run
 				await loadExplorer();
 				if (action === 'drop' || action === 'duplicate') await loadDatabases().catch(() => {});
 			} catch (error) {
 				const msg = error instanceof Error ? error.message : String(error);
 				globalError = msg;
-				showSnackbar({ message: msg, type: 'error' });
 			}
 			return;
 		}
@@ -802,16 +828,115 @@ import { showSnackbar } from '$lib/stores/snackbar';
 		try {
 			await rpc.request.runQuery({ sql });
 			globalError = '';
-			showSnackbar({ message: `Renamed ${renameTarget.schema}.${renameTarget.table} → ${nextName}`, type: 'success' });
 			await loadExplorer();
 		} catch (error) {
 			const msg = error instanceof Error ? error.message : String(error);
 			globalError = msg;
-			showSnackbar({ message: msg, type: 'error' });
 		}
 	}
 	async function followForeignKey(schema: string, table: string) {
 		await handleTableAction('view_data', schema, table);
+	}
+
+	async function openObjectDefinition(params: ObjectDefinitionParams) {
+		try {
+			const definition = await rpc.request.getObjectDefinition(params);
+			addQueryTab(
+				definition.sql,
+				definitionTabTitle(params.kind, params.name, params.identityArgs) || definition.title,
+			);
+			globalError = '';
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			globalError = message;
+		}
+	}
+
+	async function viewSequence(schema: string, name: string) {
+		const safeSchema = quoteSqlIdentifier(connectionStatus.databaseType, schema);
+		const safeName = quoteSqlIdentifier(connectionStatus.databaseType, name);
+		const sql = `select * from ${safeSchema}.${safeName};`;
+		const tabId = addDataTab(name, sql, null);
+		mainView = 'sql';
+		await executeQuery(sql, {
+			targetTabId: tabId,
+			pushToHistory: false,
+			context: null,
+		});
+	}
+
+	function findTabForTrailPrefix(
+		prefix: RelationHop[],
+		origin?: { schema: string; table: string },
+	): WorkspaceTab | null {
+		if (prefix.length === 0) {
+			if (!origin) return null;
+			const matches = tabs.filter(
+				(tab) =>
+					(tab.relationTrail?.length ?? 0) === 0 &&
+					tab.resultContext?.schema === origin.schema &&
+					tab.resultContext?.table === origin.table,
+			);
+			return matches.find((tab) => tab.kind === 'data') ?? matches[0] ?? null;
+		}
+		return tabs.find((tab) => trailsEqual(tab.relationTrail ?? [], prefix)) ?? null;
+	}
+
+	async function openFollowTab(hop: RelationHop, previousTrail: RelationHop[]) {
+		const sql = buildFollowSqlFromHop({
+			databaseType: connectionStatus.databaseType,
+			explorer,
+			hop,
+		});
+		if (!sql) {
+			globalError = 'Could not follow this relation.';
+			return;
+		}
+		const tabId = addDataTab(
+			buildFollowTabTitle(hop),
+			sql,
+			{ schema: hop.to.schema, table: hop.to.table },
+			{
+				relationTrail: [...previousTrail, hop],
+				insertAfterActive: true,
+			},
+		);
+		mainView = 'sql';
+		await executeQuery(sql, {
+			targetTabId: tabId,
+			pushToHistory: false,
+			context: { schema: hop.to.schema, table: hop.to.table },
+		});
+	}
+
+	async function followRelation(hop: RelationHop) {
+		await openFollowTab(hop, activeTab?.relationTrail ?? []);
+	}
+
+	async function activateRelationTrail(crumbIndex: number) {
+		const trail = activeTab?.relationTrail ?? [];
+		if (trail.length === 0 || crumbIndex >= trail.length) return;
+		if (crumbIndex === 0) {
+			const origin = {
+				schema: trail[0]!.from.schema,
+				table: trail[0]!.from.table,
+			};
+			const existing = findTabForTrailPrefix([], origin);
+			if (existing) {
+				activeTabId = existing.id;
+				return;
+			}
+			await handleTableAction('view_data', origin.schema, origin.table);
+			return;
+		}
+		const prefix = trail.slice(0, crumbIndex);
+		const existing = findTabForTrailPrefix(prefix);
+		if (existing) {
+			activeTabId = existing.id;
+			return;
+		}
+		const hop = prefix[prefix.length - 1]!;
+		await openFollowTab(hop, prefix.slice(0, -1));
 	}
 	async function applyTableChanges(
 		context: { schema: string; table: string },
@@ -1042,6 +1167,10 @@ import { showSnackbar } from '$lib/stores/snackbar';
 			onTableAction={handleTableAction}
 			onSchemaAction={handleSchemaAction}
 			onFollowForeignKey={followForeignKey}
+			onOpenObjectDefinition={openObjectDefinition}
+			onViewSequence={viewSequence}
+			onFollowRelation={followRelation}
+			onActivateRelationTrail={activateRelationTrail}
 			onSelectTab={(tabId) => {
 				activeTabId = tabId;
 				tabContextMenu = null;
@@ -1120,6 +1249,31 @@ import { showSnackbar } from '$lib/stores/snackbar';
 		onClose={() => (showSearchPalette = false)}
 		onSelectTable={handlePaletteSelectTable}
 		onSelectSchema={handlePaletteSelectSchema}
+		onSelectRoutine={(routine) => {
+			if (!expandedSchemas.has(routine.schema)) toggleSchema(routine.schema);
+			void openObjectDefinition({
+				kind: routine.kind,
+				schema: routine.schema,
+				name: routine.name,
+				objectId: routine.objectId,
+				identityArgs: routine.identityArgs,
+			});
+		}}
+		onSelectSequence={(sequence) => {
+			if (!expandedSchemas.has(sequence.schema)) toggleSchema(sequence.schema);
+			void viewSequence(sequence.schema, sequence.name);
+		}}
+		onSelectIndex={(schema, table, name) => {
+			if (!expandedSchemas.has(schema)) toggleSchema(schema);
+			const key = `${schema}.${table}`;
+			if (!expandedTables.has(key)) toggleTable(schema, table);
+			void openObjectDefinition({ kind: 'index', schema, name, table });
+		}}
+		onSelectTrigger={(schema, table, name) => {
+			if (!expandedSchemas.has(schema)) toggleSchema(schema);
+			const key = `${schema}.${table}`;
+			if (!expandedTables.has(key)) toggleTable(schema, table);
+			void openObjectDefinition({ kind: 'trigger', schema, name, table });
+		}}
 	/>
-	<SnackbarContainer />
 </main>

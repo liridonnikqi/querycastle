@@ -6,6 +6,8 @@ import type {
   DatabaseExplorer,
   LaunchSqlFilePayload,
   LaunchSqliteFilePayload,
+  ObjectDefinition,
+  ObjectDefinitionParams,
   QueryResultPayload,
   TableChangesPayload,
 } from "./rpc";
@@ -32,5 +34,7 @@ export const rpc = {
     }),
     getLaunchSqlFile: () => invoke<LaunchSqlFilePayload | null>("get_launch_sql_file"),
     getLaunchSqliteFile: () => invoke<LaunchSqliteFilePayload | null>("get_launch_sqlite_file"),
+    getObjectDefinition: (params: ObjectDefinitionParams) =>
+      invoke<ObjectDefinition>("get_object_definition", { params }),
   },
 };

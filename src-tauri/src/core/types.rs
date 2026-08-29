@@ -95,12 +95,53 @@ pub struct DatabaseForeignKey {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DatabaseIndex {
+    pub name: String,
+    pub columns: String,
+    pub unique: bool,
+    pub is_primary: bool,
+    pub definition: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseTrigger {
+    pub name: String,
+    pub definition: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseRoutine {
+    pub schema: String,
+    pub name: String,
+    pub kind: String,
+    pub identity_args: String,
+    pub language: Option<String>,
+    pub return_type: Option<String>,
+    pub object_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseSequence {
+    pub schema: String,
+    pub name: String,
+    pub data_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DatabaseTable {
     pub schema: String,
     pub name: String,
     pub kind: String,
     pub columns: Vec<DatabaseColumn>,
     pub foreign_keys: Vec<DatabaseForeignKey>,
+    #[serde(default)]
+    pub indexes: Vec<DatabaseIndex>,
+    #[serde(default)]
+    pub triggers: Vec<DatabaseTrigger>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -108,6 +149,10 @@ pub struct DatabaseTable {
 pub struct DatabaseSchema {
     pub name: String,
     pub tables: Vec<DatabaseTable>,
+    #[serde(default)]
+    pub routines: Vec<DatabaseRoutine>,
+    #[serde(default)]
+    pub sequences: Vec<DatabaseSequence>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -115,6 +160,52 @@ pub struct DatabaseSchema {
 pub struct DatabaseExplorer {
     pub database: String,
     pub schemas: Vec<DatabaseSchema>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObjectDefinitionParams {
+    pub kind: String,
+    pub schema: String,
+    pub name: String,
+    #[serde(default)]
+    pub object_id: Option<String>,
+    #[serde(default)]
+    pub identity_args: Option<String>,
+    #[serde(default)]
+    pub table: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObjectDefinition {
+    pub title: String,
+    pub sql: String,
+}
+
+impl DatabaseSchema {
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            tables: Vec::new(),
+            routines: Vec::new(),
+            sequences: Vec::new(),
+        }
+    }
+}
+
+impl DatabaseTable {
+    pub fn new(schema: String, name: String, kind: String) -> Self {
+        Self {
+            schema,
+            name,
+            kind,
+            columns: Vec::new(),
+            foreign_keys: Vec::new(),
+            indexes: Vec::new(),
+            triggers: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

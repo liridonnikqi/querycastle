@@ -12,13 +12,13 @@ mod db_postgres;
 mod db_sqlite;
 
 pub(crate) use db_mysql::{
-    connect_mysql_client, get_mysql_database_explorer, get_mysql_server_version,
-    mysql_value_to_json, run_mysql_query,
+    connect_mysql_client, get_mysql_database_explorer, get_mysql_object_definition,
+    get_mysql_server_version, mysql_value_to_json, run_mysql_query,
 };
 pub(crate) use db_postgres::{connect_client, get_server_version};
 pub(crate) use db_sqlite::{
-    get_sqlite_database_explorer, get_sqlite_server_version, list_sqlite_databases,
-    open_sqlite_connection, run_sqlite_query, sqlite_value_to_json,
+    get_sqlite_database_explorer, get_sqlite_object_definition, get_sqlite_server_version,
+    list_sqlite_databases, open_sqlite_connection, run_sqlite_query, sqlite_value_to_json,
 };
 
 pub(crate) const QUERY_TIMEOUT_MS: u64 = 30_000;

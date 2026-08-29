@@ -7,10 +7,11 @@
 		ApplyTableChangesResult,
 		ConnectionStatus,
 		DatabaseExplorer,
+		ObjectDefinitionParams,
 		QueryResultPayload,
 		TableChangesPayload,
 	} from '$lib/rpc';
-	import type { SchemaAction, TableAction, TabContextMenu, WorkspaceTab } from '$lib/utils/workspace';
+	import type { RelationHop, SchemaAction, TableAction, TabContextMenu, WorkspaceTab } from '$lib/utils/workspace';
 
 	let {
 		connectionStatus,
@@ -30,6 +31,10 @@
 		onTableAction,
 		onSchemaAction,
 		onFollowForeignKey,
+		onOpenObjectDefinition,
+		onViewSequence,
+		onFollowRelation,
+		onActivateRelationTrail,
 		tabs,
 		activeTabId,
 		tabContextMenu,
@@ -74,6 +79,10 @@
 		onTableAction: (action: TableAction, schema: string, table: string) => void | Promise<void>;
 		onSchemaAction: (action: SchemaAction, schema: string) => void | Promise<void>;
 		onFollowForeignKey: (schema: string, table: string) => void | Promise<void>;
+		onOpenObjectDefinition: (params: ObjectDefinitionParams) => void | Promise<void>;
+		onViewSequence: (schema: string, name: string) => void | Promise<void>;
+		onFollowRelation: (hop: RelationHop) => void | Promise<void>;
+		onActivateRelationTrail: (index: number) => void | Promise<void>;
 		tabs: WorkspaceTab[];
 		activeTabId: string;
 		tabContextMenu: TabContextMenu;
@@ -138,6 +147,8 @@
 	{onTableAction}
 	{onSchemaAction}
 	{onFollowForeignKey}
+	{onOpenObjectDefinition}
+	{onViewSequence}
 />
 
 <section class="flex-1 relative flex flex-col min-w-0 min-h-0 bg-white border-l border-gray-100">
@@ -185,11 +196,15 @@
 					sqlError={activeTab.sqlError || globalError}
 					databaseType={connectionStatus.databaseType}
 					resultContext={activeTab.resultContext}
+					explorer={explorer}
+					relationTrail={activeTab.relationTrail ?? []}
 					loading={isRunningQuery}
 					refreshSql={activeTab.lastRunSql}
 					onRunSql={(query) =>
 						onRunSqlForTab(query, activeTab.id, activeTab.resultContext)}
 					{onApplyTableChanges}
+					onFollowRelation={onFollowRelation}
+					onActivateRelationTrail={onActivateRelationTrail}
 					durationMs={activeTab.result.durationMs || queryDurationMs}
 				/>
 			</div>
@@ -201,10 +216,14 @@
 				sqlError={activeTab.sqlError || globalError}
 				databaseType={connectionStatus.databaseType}
 				resultContext={activeTab.resultContext}
+				explorer={explorer}
+				relationTrail={activeTab.relationTrail ?? []}
 				loading={isRunningQuery}
 				refreshSql={activeTab.lastRunSql}
 				onRunSql={(query) => onRunSqlForTab(query, activeTab.id, activeTab.resultContext)}
 				{onApplyTableChanges}
+				onFollowRelation={onFollowRelation}
+				onActivateRelationTrail={onActivateRelationTrail}
 				durationMs={activeTab.result.durationMs || queryDurationMs}
 			/>
 		</div>

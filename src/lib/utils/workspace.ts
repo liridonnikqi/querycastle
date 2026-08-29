@@ -8,6 +8,14 @@ export const MAIN_VIEW_KEY = 'querycastle.mainView.v1';
 
 export type TabKind = 'query' | 'data';
 export type MainView = 'sql' | 'saved_queries' | 'history' | 'diagram';
+
+export type RelationHop = {
+	direction: 'outgoing' | 'incoming';
+	from: { schema: string; table: string; column: string; value: unknown };
+	to: { schema: string; table: string; column: string };
+	label: string;
+};
+
 export type WorkspaceTab = {
 	id: string;
 	title: string;
@@ -17,6 +25,7 @@ export type WorkspaceTab = {
 	result: QueryResultPayload;
 	sqlError: string;
 	resultContext: { schema: string; table: string } | null;
+	relationTrail: RelationHop[];
 };
 export type TabContextMenu = { x: number; y: number; tabId: string } | null;
 
@@ -49,6 +58,7 @@ export function createDefaultTab(): WorkspaceTab {
 		result: createEmptyResult(),
 		sqlError: '',
 		resultContext: null,
+		relationTrail: [],
 	};
 }
 

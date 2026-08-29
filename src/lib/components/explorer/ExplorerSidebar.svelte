@@ -1,22 +1,48 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import {
+		Braces,
 		ChevronDown,
 		ChevronRight,
 		ChevronsUpDown,
 		Columns2,
 		Copy,
+		Eye,
+		Hash,
 		Info,
 		KeyRound,
+		Layers,
 		ListOrdered,
+		Play,
 		Plus,
 		RefreshCw,
 		Search,
 		SquarePen,
 		Table2,
 		Trash2,
+		Zap,
 	} from "@lucide/svelte";
-	import type { ConnectionStatus, DatabaseExplorer } from "$lib/rpc";
+	import type {
+		ConnectionStatus,
+		DatabaseExplorer,
+		DatabaseRoutine,
+		DatabaseSequence,
+		DatabaseTable,
+		ObjectDefinitionParams,
+	} from "$lib/rpc";
+	import ExplorerGroup from "$lib/components/explorer/ExplorerGroup.svelte";
+	import {
+		explorerObjectCount,
+		filterExplorer,
+		routineSignature,
+		schemaFunctions,
+		schemaProcedures,
+		schemaSequences,
+		schemaTables,
+		schemaViews,
+		tableIndexes,
+		tableTriggers,
+	} from "$lib/utils/schema-objects";
 
 	type TableAction =
 		| "view_data"
@@ -53,6 +79,8 @@
 		onTableAction,
 		onSchemaAction,
 		onFollowForeignKey,
+		onOpenObjectDefinition,
+		onViewSequence,
 	}: {
 		connectionStatus: ConnectionStatus;
 		explorer: DatabaseExplorer | null;
@@ -71,6 +99,8 @@
 		onTableAction: (action: TableAction, schema: string, table: string) => void;
 		onSchemaAction: (action: SchemaAction, schema: string) => void;
 		onFollowForeignKey: (schema: string, table: string) => void;
+		onOpenObjectDefinition: (params: ObjectDefinitionParams) => void | Promise<void>;
+		onViewSequence: (schema: string, name: string) => void | Promise<void>;
 	} = $props();
 
 	const skeletonRows = [0, 1, 2, 3, 4, 5];
@@ -80,11 +110,23 @@
 		y: number;
 		schema: string;
 		table: string;
+		kind: string;
 	} | null>(null);
 	let schemaContextMenu = $state<{
 		x: number;
 		y: number;
 		schema: string;
+	} | null>(null);
+	let objectContextMenu = $state<{
+		x: number;
+		y: number;
+		kind: "function" | "procedure" | "sequence" | "index" | "trigger" | "view";
+		schema: string;
+		name: string;
+		objectId?: string;
+		identityArgs?: string;
+		table?: string;
+		canViewData?: boolean;
 	} | null>(null);
 	let showCreateDatabaseModal = $state(false);
 	let newDatabaseName = $state("");
@@ -97,7 +139,7 @@
 
 	const postgresEncodings = ["UTF8", "LATIN1", "LATIN2", "WIN1252"];
 
-	function openContextMenu(event: MouseEvent, schema: string, table: string) {
+	function openContextMenu(event: MouseEvent, schema: string, table: string, kind: string) {
 		event.preventDefault();
 		const menuWidth = 210;
 		const menuHeight = 290;
@@ -106,7 +148,8 @@
 		const maxY = window.innerHeight - menuHeight - margin;
 		const x = Math.max(margin, Math.min(event.clientX, maxX));
 		const y = Math.max(margin, Math.min(event.clientY, maxY));
-		contextMenu = { x, y, schema, table };
+		contextMenu = { x, y, schema, table, kind };
+		objectContextMenu = null;
 	}
 
 	function runMenuAction(action: TableAction) {
@@ -126,6 +169,7 @@
 		const y = Math.max(margin, Math.min(event.clientY, maxY));
 		schemaContextMenu = { x, y, schema };
 		contextMenu = null;
+		objectContextMenu = null;
 	}
 
 	function runSchemaMenuAction(action: SchemaAction) {
@@ -170,29 +214,65 @@
 		}
 	}
 
+	let collapsedGroups = $state(new Set<string>());
+
+	function groupKey(schema: string, group: string) {
+		return `${schema}::${group}`;
+	}
+
+	function isGroupOpen(schema: string, group: string) {
+		if (searchQuery.trim().length > 0) return true;
+		return !collapsedGroups.has(groupKey(schema, group));
+	}
+
+	function toggleGroup(schema: string, group: string) {
+		const key = groupKey(schema, group);
+		const next = new Set(collapsedGroups);
+		if (next.has(key)) next.delete(key);
+		else next.add(key);
+		collapsedGroups = next;
+	}
+
+	function openObjectMenu(
+		event: MouseEvent,
+		item: NonNullable<typeof objectContextMenu>,
+	) {
+		event.preventDefault();
+		event.stopPropagation();
+		const menuWidth = 210;
+		const menuHeight = 140;
+		const margin = 8;
+		const maxX = window.innerWidth - menuWidth - margin;
+		const maxY = window.innerHeight - menuHeight - margin;
+		objectContextMenu = {
+			...item,
+			x: Math.max(margin, Math.min(event.clientX, maxX)),
+			y: Math.max(margin, Math.min(event.clientY, maxY)),
+		};
+		contextMenu = null;
+		schemaContextMenu = null;
+	}
+
+	function openRoutine(routine: DatabaseRoutine) {
+		void onOpenObjectDefinition({
+			kind: routine.kind,
+			schema: routine.schema,
+			name: routine.name,
+			objectId: routine.objectId,
+			identityArgs: routine.identityArgs,
+		});
+	}
+
+	function openSequence(sequence: DatabaseSequence) {
+		void onViewSequence(sequence.schema, sequence.name);
+	}
+
 	let filteredExplorer = $derived.by(() => {
 		if (!explorer) return null;
-		const query = searchQuery.trim().toLowerCase();
-		if (!query) return explorer;
-
-		const filteredSchemas = explorer.schemas
-			.map((schema) => ({
-				...schema,
-				tables: schema.tables.filter((table) => {
-					if (table.name.toLowerCase().includes(query)) return true;
-					if (table.columns.some((column) => column.name.toLowerCase().includes(query))) return true;
-					return false;
-				}),
-			}))
-			.filter((schema) => schema.tables.length > 0);
-
-		return { ...explorer, schemas: filteredSchemas };
+		return filterExplorer(explorer, searchQuery);
 	});
 
-	let totalEntities = $derived.by(() => {
-		if (!explorer) return 0;
-		return explorer.schemas.reduce((sum, schema) => sum + schema.tables.length, 0);
-	});
+	let totalEntities = $derived.by(() => explorerObjectCount(explorer));
 
 	function expandAllEntities() {
 		if (!explorer) return;
@@ -343,7 +423,7 @@
 				type="text"
 				value={searchQuery}
 				oninput={handleSearchInput}
-				placeholder="Search..."
+				placeholder="Search tables, functions..."
 				class="w-full h-8 bg-white border border-gray-200 text-gray-900 text-sm rounded-md block pl-8 pr-14 py-1.5 placeholder-gray-400 focus:outline-none hover:border-gray-300 focus:border-gray-300 focus:ring-1 focus:ring-gray-200"
 			/>
 			<div class="absolute right-1.5 text-xs text-gray-500 font-medium bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded">Ctrl+K</div>
@@ -396,8 +476,8 @@
 						<button
 							type="button"
 							class="w-6 h-6 rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 flex items-center justify-center"
-							title="Refresh tables"
-							aria-label="Refresh tables"
+							title="Refresh schema"
+							aria-label="Refresh schema"
 							onclick={refreshEntities}
 						>
 							<RefreshCw size={13} class={refreshingTables ? "animate-spin" : ""} />
@@ -423,10 +503,10 @@
 
 						{#if expandedSchemas.has(schema.name)}
 							<div class="flex flex-col ml-5">
-								{#each schema.tables as table}
+								{#snippet explorerRelation(table: DatabaseTable)}
 									<button
 										onclick={() => onToggleTable(schema.name, table.name)}
-										oncontextmenu={(event) => openContextMenu(event, schema.name, table.name)}
+										oncontextmenu={(event) => openContextMenu(event, schema.name, table.name, table.kind)}
 										class="flex items-center w-full min-w-0 px-2 py-1 hover:bg-gray-50 rounded-md text-gray-700 group text-left"
 									>
 										{#if expandedTables.has(`${schema.name}.${table.name}`)}
@@ -434,7 +514,13 @@
 										{:else}
 											<ChevronRight size={14} class="mr-1 text-gray-400 group-hover:text-gray-600 shrink-0" />
 										{/if}
-										<div class="w-4 h-4 mr-2 shrink-0 flex items-center justify-center rounded bg-emerald-500 text-white"><Columns2 size={11} /></div>
+										<div class={`w-4 h-4 mr-2 shrink-0 flex items-center justify-center rounded text-white ${table.kind === "view" ? "bg-sky-500" : "bg-emerald-500"}`}>
+											{#if table.kind === "view"}
+												<Eye size={11} />
+											{:else}
+												<Columns2 size={11} />
+											{/if}
+										</div>
 										<span class="font-medium text-gray-800 truncate min-w-0" title={table.name}>{table.name}</span>
 									</button>
 
@@ -454,6 +540,80 @@
 												</div>
 											{/each}
 
+											{#if tableIndexes(table).length > 0}
+												<div class="mt-1">
+													<div class="flex items-center w-full px-2 py-1 text-gray-700">
+														<div class="w-4 h-4 mr-2 flex items-center justify-center rounded bg-slate-500 text-white"><Layers size={11} /></div>
+														<span class="font-medium text-gray-800">Indexes</span>
+													</div>
+													{#each tableIndexes(table) as index}
+														<button
+															type="button"
+															onclick={() => onOpenObjectDefinition({
+																kind: "index",
+																schema: schema.name,
+																name: index.name,
+																table: table.name,
+															})}
+															oncontextmenu={(event) => openObjectMenu(event, {
+																x: 0,
+																y: 0,
+																kind: "index",
+																schema: schema.name,
+																name: index.name,
+																table: table.name,
+															})}
+															class="flex items-center w-full px-2 py-1 hover:bg-gray-50 rounded-md text-gray-600 text-left"
+															title={index.definition ?? index.columns}
+														>
+															<Layers size={13} class="mr-2 text-gray-400 shrink-0" />
+															<span class="truncate min-w-0">{index.name}</span>
+															{#if index.isPrimary}
+																<span class="ml-1.5 text-[10px] font-medium text-amber-600">PK</span>
+															{:else if index.unique}
+																<span class="ml-1.5 text-[10px] font-medium text-slate-500">UQ</span>
+															{/if}
+															{#if index.columns}
+																<span class="ml-auto pl-2 text-[10px] text-gray-400 truncate max-w-[96px] shrink-0">{index.columns}</span>
+															{/if}
+														</button>
+													{/each}
+												</div>
+											{/if}
+
+											{#if tableTriggers(table).length > 0}
+												<div class="mt-1">
+													<div class="flex items-center w-full px-2 py-1 text-gray-700">
+														<div class="w-4 h-4 mr-2 flex items-center justify-center rounded bg-orange-500 text-white"><Zap size={11} /></div>
+														<span class="font-medium text-gray-800">Triggers</span>
+													</div>
+													{#each tableTriggers(table) as trigger}
+														<button
+															type="button"
+															onclick={() => onOpenObjectDefinition({
+																kind: "trigger",
+																schema: schema.name,
+																name: trigger.name,
+																table: table.name,
+															})}
+															oncontextmenu={(event) => openObjectMenu(event, {
+																x: 0,
+																y: 0,
+																kind: "trigger",
+																schema: schema.name,
+																name: trigger.name,
+																table: table.name,
+															})}
+															class="flex items-center w-full px-2 py-1 hover:bg-gray-50 rounded-md text-gray-600 text-left"
+															title={trigger.definition ?? trigger.name}
+														>
+															<Zap size={13} class="mr-2 text-gray-400 shrink-0" />
+															<span class="truncate min-w-0">{trigger.name}</span>
+														</button>
+													{/each}
+												</div>
+											{/if}
+
 											{#if table.foreignKeys.length > 0}
 												<div class="mt-1">
 													<div class="flex items-center w-full px-2 py-1 text-gray-700">
@@ -470,7 +630,119 @@
 											{/if}
 										</div>
 									{/if}
+								{/snippet}
+
+								{#each schemaTables(schema) as table}
+									{@render explorerRelation(table)}
 								{/each}
+
+								<ExplorerGroup
+									title="Views"
+									count={schemaViews(schema).length}
+									accentClass="bg-sky-500"
+									open={isGroupOpen(schema.name, "views")}
+									onToggle={() => toggleGroup(schema.name, "views")}
+								>
+									{#snippet icon()}<Eye size={11} />{/snippet}
+									{#each schemaViews(schema) as table}
+										{@render explorerRelation(table)}
+									{/each}
+								</ExplorerGroup>
+
+								<ExplorerGroup
+									title="Functions"
+									count={schemaFunctions(schema).length}
+									accentClass="bg-violet-500"
+									open={isGroupOpen(schema.name, "functions")}
+									onToggle={() => toggleGroup(schema.name, "functions")}
+								>
+									{#snippet icon()}<Braces size={11} />{/snippet}
+									{#each schemaFunctions(schema) as routine}
+										<button
+											type="button"
+											onclick={() => openRoutine(routine)}
+											oncontextmenu={(event) => openObjectMenu(event, {
+												x: 0,
+												y: 0,
+												kind: "function",
+												schema: routine.schema,
+												name: routine.name,
+												objectId: routine.objectId,
+												identityArgs: routine.identityArgs,
+											})}
+											class="flex items-center w-full px-2 py-1 hover:bg-gray-50 rounded-md text-gray-600 text-left"
+											title={routine.returnType ? `${routineSignature(routine)} → ${routine.returnType}` : routineSignature(routine)}
+										>
+											<Braces size={13} class="mr-2 text-violet-400 shrink-0" />
+											<span class="truncate min-w-0">{routineSignature(routine)}</span>
+											{#if routine.returnType}
+												<span class="ml-auto pl-2 text-[10px] text-gray-400 truncate max-w-[88px] shrink-0">{routine.returnType}</span>
+											{/if}
+										</button>
+									{/each}
+								</ExplorerGroup>
+
+								<ExplorerGroup
+									title="Procedures"
+									count={schemaProcedures(schema).length}
+									accentClass="bg-indigo-500"
+									open={isGroupOpen(schema.name, "procedures")}
+									onToggle={() => toggleGroup(schema.name, "procedures")}
+								>
+									{#snippet icon()}<Play size={11} />{/snippet}
+									{#each schemaProcedures(schema) as routine}
+										<button
+											type="button"
+											onclick={() => openRoutine(routine)}
+											oncontextmenu={(event) => openObjectMenu(event, {
+												x: 0,
+												y: 0,
+												kind: "procedure",
+												schema: routine.schema,
+												name: routine.name,
+												objectId: routine.objectId,
+												identityArgs: routine.identityArgs,
+											})}
+											class="flex items-center w-full px-2 py-1 hover:bg-gray-50 rounded-md text-gray-600 text-left"
+											title={routineSignature(routine)}
+										>
+											<Play size={13} class="mr-2 text-indigo-400 shrink-0" />
+											<span class="truncate min-w-0">{routineSignature(routine)}</span>
+										</button>
+									{/each}
+								</ExplorerGroup>
+
+								<ExplorerGroup
+									title="Sequences"
+									count={schemaSequences(schema).length}
+									accentClass="bg-amber-500"
+									open={isGroupOpen(schema.name, "sequences")}
+									onToggle={() => toggleGroup(schema.name, "sequences")}
+								>
+									{#snippet icon()}<Hash size={11} />{/snippet}
+									{#each schemaSequences(schema) as sequence}
+										<button
+											type="button"
+											onclick={() => openSequence(sequence)}
+											oncontextmenu={(event) => openObjectMenu(event, {
+												x: 0,
+												y: 0,
+												kind: "sequence",
+												schema: sequence.schema,
+												name: sequence.name,
+												canViewData: true,
+											})}
+											class="flex items-center w-full px-2 py-1 hover:bg-gray-50 rounded-md text-gray-600 text-left"
+											title={sequence.dataType ? `${sequence.name} (${sequence.dataType})` : sequence.name}
+										>
+											<Hash size={13} class="mr-2 text-amber-500 shrink-0" />
+											<span class="truncate min-w-0">{sequence.name}</span>
+											{#if sequence.dataType}
+												<span class="ml-auto pl-2 text-[10px] text-gray-400 truncate max-w-[88px] shrink-0">{sequence.dataType}</span>
+											{/if}
+										</button>
+									{/each}
+								</ExplorerGroup>
 							</div>
 						{/if}
 					{/each}
@@ -484,12 +756,72 @@
 		<div class="fixed z-[75] min-w-[210px] bg-white rounded-lg shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-gray-200 py-1.5 text-sm" style={`left:${contextMenu.x}px;top:${contextMenu.y}px;`}>
 			<button onclick={() => runMenuAction("view_data")} class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-gray-100">View Data</button>
 			<button onclick={() => runMenuAction("view_structure")} class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-gray-100">View Structure</button>
-			<button onclick={() => runMenuAction("sql_create")} class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-gray-100">SQL: Create</button>
+			{#if contextMenu.kind === "view"}
+				<button
+					onclick={() => {
+						const menu = contextMenu;
+						if (!menu) return;
+						void onOpenObjectDefinition({
+							kind: "view",
+							schema: menu.schema,
+							name: menu.table,
+						});
+						contextMenu = null;
+					}}
+					class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-gray-100"
+				>View Definition</button>
+			{:else}
+				<button onclick={() => runMenuAction("sql_create")} class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-gray-100">SQL: Create</button>
+			{/if}
 			<div class="h-px bg-gray-200 my-1 mx-2"></div>
 			<button onclick={() => runMenuAction("rename")} class="w-full flex items-center gap-2 text-left px-3 py-1.5 text-gray-700 hover:bg-gray-100"><SquarePen size={14} />Rename</button>
-			<button onclick={() => runMenuAction("duplicate")} class="w-full flex items-center gap-2 text-left px-3 py-1.5 text-gray-700 hover:bg-gray-100"><Copy size={14} />Duplicate</button>
+			{#if contextMenu.kind !== "view"}
+				<button onclick={() => runMenuAction("duplicate")} class="w-full flex items-center gap-2 text-left px-3 py-1.5 text-gray-700 hover:bg-gray-100"><Copy size={14} />Duplicate</button>
+			{/if}
 			<button onclick={() => runMenuAction("copy_name")} class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-gray-100">Copy Name</button>
-			<button onclick={() => runMenuAction("drop")} class="w-full flex items-center gap-2 text-left px-3 py-1.5 text-red-600 hover:bg-red-50"><Trash2 size={14} />Delete Cascade</button>
+			<button onclick={() => runMenuAction("drop")} class="w-full flex items-center gap-2 text-left px-3 py-1.5 text-red-600 hover:bg-red-50"><Trash2 size={14} />{contextMenu.kind === "view" ? "Drop View" : "Delete Cascade"}</button>
+		</div>
+	{/if}
+
+	{#if objectContextMenu}
+		<button class="fixed inset-0 z-70" aria-label="Close object action menu" onclick={() => (objectContextMenu = null)}></button>
+		<div class="fixed z-[75] min-w-[210px] bg-white rounded-lg shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-gray-200 py-1.5 text-sm" style={`left:${objectContextMenu.x}px;top:${objectContextMenu.y}px;`}>
+			{#if objectContextMenu.canViewData}
+				<button
+					onclick={() => {
+						if (objectContextMenu) void onViewSequence(objectContextMenu.schema, objectContextMenu.name);
+						objectContextMenu = null;
+					}}
+					class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-gray-100"
+				>View Data</button>
+			{/if}
+			<button
+				onclick={() => {
+					if (!objectContextMenu) return;
+					void onOpenObjectDefinition({
+						kind: objectContextMenu.kind,
+						schema: objectContextMenu.schema,
+						name: objectContextMenu.name,
+						objectId: objectContextMenu.objectId,
+						identityArgs: objectContextMenu.identityArgs,
+						table: objectContextMenu.table,
+					});
+					objectContextMenu = null;
+				}}
+				class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-gray-100"
+			>View Definition</button>
+			<button
+				onclick={async () => {
+					if (!objectContextMenu) return;
+					await navigator.clipboard.writeText(
+						objectContextMenu.identityArgs
+							? `${objectContextMenu.schema}.${objectContextMenu.name}(${objectContextMenu.identityArgs})`
+							: `${objectContextMenu.schema}.${objectContextMenu.name}`,
+					);
+					objectContextMenu = null;
+				}}
+				class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-gray-100"
+			>Copy Name</button>
 		</div>
 	{/if}
 

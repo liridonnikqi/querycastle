@@ -1,6 +1,7 @@
 import type { DatabaseExplorer, DatabaseType } from '$lib/rpc';
 import type { SchemaAction, TableAction } from '$lib/utils/workspace';
 import { buildMysqlRowHashExpression } from '$lib/utils/editable-query';
+import { findExplorerTable, isExplorerView } from '$lib/utils/schema-objects';
 import { quoteIdent, quoteSqlIdentifier } from '$lib/utils/sql';
 
 type QueryContext = { schema: string; table: string } | null;
@@ -22,11 +23,7 @@ function firstOrderColumn(
 	schema: string,
 	table: string,
 ): string | null {
-	return (
-		explorer?.schemas
-			.find((item) => item.name === schema)
-			?.tables.find((item) => item.name === table)?.columns[0]?.name ?? null
-	);
+	return findExplorerTable(explorer, schema, table)?.columns[0]?.name ?? null;
 }
 
 export function buildTableActionPlan(params: {
@@ -39,6 +36,7 @@ export function buildTableActionPlan(params: {
 	const { action, databaseType, explorer, schema, table } = params;
 	const safeSchema = quoteSqlIdentifier(databaseType, schema);
 	const safeTable = quoteSqlIdentifier(databaseType, table);
+	const viewingView = isExplorerView(explorer, schema, table);
 
 	if (action === 'copy_name') return { kind: 'copy_name', text: `${schema}.${table}` };
 	if (action === 'hide') {
@@ -51,14 +49,18 @@ export function buildTableActionPlan(params: {
 
 	if (action === 'drop') {
 		const cascade = databaseType === 'postgres' ? ' cascade' : '';
+		const objectType = viewingView ? 'view' : 'table';
 		return {
 			kind: 'run_query',
-			query: `drop table ${safeSchema}.${safeTable}${cascade};`,
+			query: `drop ${objectType} ${safeSchema}.${safeTable}${cascade};`,
 			title: `${table} [drop]`,
 			context: null,
 		};
 	}
 	if (action === 'truncate') {
+		if (viewingView) {
+			return { kind: 'error', message: `Cannot truncate view ${schema}.${table}.` };
+		}
 		return {
 			kind: 'run_query',
 			query: `truncate table ${safeSchema}.${safeTable};`,
@@ -67,6 +69,9 @@ export function buildTableActionPlan(params: {
 		};
 	}
 	if (action === 'duplicate') {
+		if (viewingView) {
+			return { kind: 'error', message: `Cannot duplicate view ${schema}.${table}.` };
+		}
 		return {
 			kind: 'run_query',
 			query: `create table ${safeSchema}.${safeTable}_copy as select * from ${safeSchema}.${safeTable};`,
@@ -94,10 +99,18 @@ export function buildTableActionPlan(params: {
 				: ` order by ${quoteSqlIdentifier(databaseType, orderColumn)} asc nulls last`
 			: '';
 
-		if (databaseType === 'postgres') {
+		if (viewingView) {
+			query = `select * from ${safeSchema}.${safeTable}${orderByClause} limit 100;`;
+			title = `${table}`;
+			context = null;
+		} else if (databaseType === 'postgres') {
 			query = `select ctid::text as _querycastle_ctid, * from ${safeSchema}.${safeTable}${orderByClause} limit 100;`;
+			title = `${table} [all]`;
+			context = { schema, table };
 		} else if (databaseType === 'sqlite') {
 			query = `select cast(rowid as text) as _querycastle_ctid, * from ${safeSchema}.${safeTable}${orderByClause} limit 100;`;
+			title = `${table} [all]`;
+			context = { schema, table };
 		} else if (databaseType === 'mysql') {
 			const rowHashWithAlias = buildMysqlRowHashExpression(
 				explorer,
@@ -112,15 +125,12 @@ export function buildTableActionPlan(params: {
 				};
 			}
 			query = `select ${rowHashWithAlias} as _querycastle_ctid, _querycastle_src.* from ${safeSchema}.${safeTable} as _querycastle_src${orderByClause} limit 100;`;
+			title = `${table} [all]`;
+			context = { schema, table };
 		} else {
 			query = `select * from ${safeSchema}.${safeTable}${orderByClause} limit 100;`;
+			title = `${table} [all]`;
 		}
-
-		title = `${table} [all]`;
-		context =
-			databaseType === 'postgres' || databaseType === 'sqlite' || databaseType === 'mysql'
-				? { schema, table }
-				: null;
 	}
 
 	if (action === 'view_structure') {

@@ -3,7 +3,8 @@ use async_trait::async_trait;
 use crate::core::error::DbError;
 use crate::core::types::{
     ApplyTableChangesParams, ApplyTableChangesResponse, ConnectionInput, ConnectionStatus,
-    DatabaseExplorer, DatabaseType, QueryResultPayload, TestConnectionResponse,
+    DatabaseExplorer, DatabaseType, ObjectDefinition, ObjectDefinitionParams, QueryResultPayload,
+    TestConnectionResponse,
 };
 
 #[async_trait]
@@ -20,6 +21,11 @@ pub trait DbAdapter: Sync + Send {
         &self,
         connection: &ConnectionInput,
     ) -> Result<DatabaseExplorer, DbError>;
+    async fn get_object_definition(
+        &self,
+        connection: &ConnectionInput,
+        params: &ObjectDefinitionParams,
+    ) -> Result<ObjectDefinition, DbError>;
     async fn list_databases(&self, connection: &ConnectionInput) -> Result<Vec<String>, DbError>;
     async fn select_database(
         &self,

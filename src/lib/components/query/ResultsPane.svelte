@@ -1,13 +1,79 @@
 <script lang="ts">
-	import { Database, KeyRound, Play, Timer, Trash2 } from '@lucide/svelte';
+	import {
+		ArrowDown,
+		ArrowUp,
+		ArrowUpDown,
+		ArrowUpRight,
+		ChevronLeft,
+		ChevronRight,
+		Filter,
+		Play,
+		Plus,
+		Timer,
+		Trash2,
+		X,
+	} from '@lucide/svelte';
 	import type {
 		ApplyTableChangesResult,
+		DatabaseExplorer,
+		DatabaseForeignKey,
 		DatabaseType,
 		QueryResultPayload,
 		TableChangesPayload,
 	} from '$lib/rpc';
+	import { rpc } from '$lib/rpc-client';
+	import {
+		outgoingFkColumns,
+		resolveIncomingRelations,
+		resolveOutgoingRelations,
+		type IncomingRelation,
+	} from '$lib/utils/relation-resolve';
+	import {
+		createRelationHop,
+		formatFollowValue,
+		isFollowableValue,
+	} from '$lib/utils/relation-sql';
+	import { loadFkOptions, type FkOption } from '$lib/utils/fk-lookup';
+	import {
+		coerceByColumn,
+		displayCellText,
+		formatBooleanLabel,
+		gridColumnsForTable,
+		isEmptyCell,
+		missingRequiredColumns,
+		valuesForInsert,
+		type GridColumnMeta,
+	} from '$lib/utils/grid-editors';
+	import { quoteSqlIdentifier } from '$lib/utils/sql';
+	import type { RelationHop } from '$lib/utils/workspace';
+	import RelationTrail from '$lib/components/query/RelationTrail.svelte';
+	import ColumnTypeIcon from '$lib/components/query/ColumnTypeIcon.svelte';
+	import GridCellEditor from '$lib/components/query/GridCellEditor.svelte';
+	import PendingChangesPane from '$lib/components/query/PendingChangesPane.svelte';
+	import {
+		buildPendingChangeCards,
+		buildPendingSqlPreview,
+		pendingChangeCount,
+	} from '$lib/utils/pending-changes';
+	import {
+		PAGE_SIZE_OPTIONS,
+		buildTableBrowseSql,
+		buildTableCountSql,
+		extractWhereClause,
+		nextSortState,
+		parseCountResult,
+		totalPages,
+		filterSortRows,
+		type GridSort,
+		type PageSize,
+	} from '$lib/utils/table-browse';
 
-	type RowContextMenu = { x: number; y: number; rowId: string } | null;
+	type RowContextMenu = {
+		x: number;
+		y: number;
+		rowId: string;
+		row: Record<string, unknown>;
+	} | null;
 	type EditingCell = { rowId: string; column: string } | null;
 	type PendingInsertRow = { id: string; values: Record<string, unknown> };
 	type ResultView = 'results' | 'messages' | 'explain';
@@ -22,8 +88,12 @@
 		sqlError,
 		databaseType,
 		resultContext,
+		explorer = null,
+		relationTrail = [],
 		onRunSql,
 		onApplyTableChanges,
+		onFollowRelation,
+		onActivateRelationTrail,
 		durationMs = 0,
 		loading = false,
 		refreshSql = '',
@@ -32,11 +102,15 @@
 		sqlError: string;
 		databaseType: DatabaseType;
 		resultContext: { schema: string; table: string } | null;
+		explorer?: DatabaseExplorer | null;
+		relationTrail?: RelationHop[];
 		onRunSql: (sql: string) => Promise<void>;
 		onApplyTableChanges?: (
 			context: { schema: string; table: string },
 			changes: TableChangesPayload,
 		) => Promise<ApplyTableChangesResult>;
+		onFollowRelation?: (hop: RelationHop) => void | Promise<void>;
+		onActivateRelationTrail?: (index: number) => void | Promise<void>;
 		durationMs?: number;
 		loading?: boolean;
 		refreshSql?: string;
@@ -54,21 +128,38 @@
 	let syncingChanges = $state(false);
 	let syncError = $state('');
 	let selectedRows = $state(new Set<string>());
+	let activeRowId = $state<string | null>(null);
 	let pendingUpdates = $state(new Map<string, Record<string, unknown>>());
 	let pendingDeletes = $state(new Set<string>());
 	let pendingInserts = $state<PendingInsertRow[]>([]);
 	let rowContextMenu = $state<RowContextMenu>(null);
+	let relatedSubmenuOpen = $state(false);
 	let editingCell = $state<EditingCell>(null);
 	let editDraft = $state('');
 	let columnWidths = $state<Record<string, number>>({});
 	let columnResizeState = $state<ColumnResizeState>(null);
-	let addRowDraft = $state<Record<string, string>>({});
-	let addingNewRow = $state(false);
 	let highlightCells = $state(new Set<string>());
 	let highlightTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 	let lastExternalResultSignature = $state('');
 	let activeView = $state<ResultView>('results');
 	const minColumnWidth = 120;
+
+	let fkOptionCache = $state(new Map<string, FkOption[]>());
+	let fkLoadingKeys = $state(new Set<string>());
+	let keepDraftsOnNextResult = $state(false);
+	let pageSize = $state<PageSize>(100);
+	let page = $state(1);
+	let totalRowCount = $state(0);
+	let sort = $state<GridSort | null>(null);
+	let columnFilters = $state<Record<string, string>>({});
+	let showFilterRow = $state(false);
+	let showSortMenu = $state(false);
+	let pendingPanelOpen = $state(false);
+	let userCollapsedPending = $state(false);
+	let baseWhere = $state('');
+	let lastBrowseSourceKey = $state('');
+	let deletedSnapshots = $state(new Map<string, Record<string, unknown>>());
+	let filterTimer: ReturnType<typeof setTimeout> | null = null;
 
 	let editable = $derived.by(
 		() =>
@@ -77,14 +168,78 @@
 	let visibleColumns = $derived.by(() =>
 		displayResult.columns.filter((column) => column !== '_querycastle_ctid'),
 	);
-	let editableColumns = $derived.by(() =>
-		displayResult.columns.filter((column) => column !== '_querycastle_ctid'),
-	);
 	let visibleRows = $derived.by(() =>
 		displayResult.rows.filter(
 			(row) => !pendingDeletes.has(String(row['_querycastle_ctid'] ?? '')),
 		),
 	);
+	let columnMetas = $derived.by(() =>
+		gridColumnsForTable(
+			explorer ?? null,
+			resultContext,
+			visibleColumns,
+			sampleValue,
+		),
+	);
+	let changeCount = $derived.by(() =>
+		pendingChangeCount({
+			updates: pendingUpdates,
+			inserts: pendingInserts,
+			deletes: pendingDeletes,
+		}),
+	);
+	let pendingCards = $derived.by(() => {
+		if (!resultContext) return [];
+		return buildPendingChangeCards({
+			schema: resultContext.schema,
+			table: resultContext.table,
+			rows: displayResult.rows,
+			updates: pendingUpdates,
+			inserts: pendingInserts,
+			deletes: pendingDeletes,
+			deletedSnapshots,
+		});
+	});
+	let pendingSqlPreview = $derived.by(() => {
+		if (!resultContext) return '';
+		return buildPendingSqlPreview({
+			databaseType,
+			schema: resultContext.schema,
+			table: resultContext.table,
+			updates: Array.from(pendingUpdates.entries()).map(([ctid, values]) => ({ ctid, values })),
+			deletes: Array.from(pendingDeletes),
+			inserts: pendingInserts.map((row) => row.values),
+		});
+	});
+	let browseSourceKey = $derived.by(() => {
+		const contextKey = resultContext ? `${resultContext.schema}.${resultContext.table}` : '';
+		const trailKey = relationTrail
+			.map((hop) => `${hop.direction}:${hop.to.schema}.${hop.to.table}:${String(hop.from.value)}`)
+			.join('|');
+		return `${contextKey}::${trailKey}`;
+	});
+	let canServerBrowse = $derived(!!resultContext);
+	let filterList = $derived.by(() =>
+		Object.entries(columnFilters)
+			.filter(([, value]) => value.trim().length > 0)
+			.map(([column, value]) => ({ column, value })),
+	);
+	let hasActiveFilters = $derived(filterList.length > 0);
+	let effectiveSort = $derived.by((): GridSort | null => {
+		if (sort) return sort;
+		const column = visibleColumns[0];
+		return column ? { column, dir: 'asc' } : null;
+	});
+	let clientPreparedRows = $derived.by(() =>
+		canServerBrowse ? visibleRows : filterSortRows(visibleRows, filterList, effectiveSort),
+	);
+	let displayTotal = $derived(canServerBrowse ? totalRowCount : clientPreparedRows.length);
+	let pageCount = $derived.by(() => totalPages(displayTotal, pageSize));
+	let pageRows = $derived.by(() => {
+		if (canServerBrowse) return visibleRows;
+		const start = (page - 1) * pageSize;
+		return clientPreparedRows.slice(start, start + pageSize);
+	});
 	const skeletonRowCount = 10;
 	const skeletonRows = Array.from(
 		{ length: skeletonRowCount },
@@ -97,7 +252,7 @@
 			(item) => String(item['_querycastle_ctid'] ?? '') === rowId,
 		);
 		if (!row) return false;
-		const nextValue = coerceValue(editDraft, sampleValue(column));
+		const nextValue = coerceValue(editDraft, column);
 		return !valuesEqual(nextValue, row[column]);
 	});
 	let hasPendingChanges = $derived.by(
@@ -108,8 +263,12 @@
 			editingCellHasPendingChange,
 	);
 
+	let fkColumns = $derived.by(() =>
+		outgoingFkColumns(explorer ?? null, resultContext, visibleColumns),
+	);
+
 	function quoteIdent(value: string) {
-		return `"${value.replaceAll('"', '""')}"`;
+		return quoteSqlIdentifier(databaseType, value);
 	}
 
 	function buildExternalResultSignature(
@@ -130,13 +289,14 @@
 		pendingDeletes = new Set();
 		pendingInserts = [];
 		rowContextMenu = null;
+		relatedSubmenuOpen = false;
 		editingCell = null;
 		editDraft = '';
 		syncError = '';
-		const nextDraft: Record<string, string> = {};
-		for (const column of editableColumns) nextDraft[column] = '';
-		addRowDraft = nextDraft;
-		addingNewRow = false;
+		deletedSnapshots = new Map();
+		keepDraftsOnNextResult = false;
+		pendingPanelOpen = false;
+		userCollapsedPending = false;
 	}
 
 	function buildDefaultContextSql() {
@@ -161,21 +321,19 @@
 			rowCount: result.rowCount,
 			durationMs: result.durationMs,
 		};
+		if (keepDraftsOnNextResult) {
+			keepDraftsOnNextResult = false;
+			if (!canServerBrowse) totalRowCount = result.rowCount;
+			return;
+		}
 		clearCellHighlights();
 		resetDraftState();
+		if (!canServerBrowse) totalRowCount = result.rowCount;
 		activeView = 'results';
 	});
 
-	function coerceValue(raw: string, sample: unknown): unknown {
-		if (raw.trim() === '') return null;
-		if (typeof sample === 'number') {
-			const num = Number(raw);
-			return Number.isNaN(num) ? raw : num;
-		}
-		if (typeof sample === 'boolean') {
-			return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
-		}
-		return raw;
+	function coerceValue(raw: string, column: string): unknown {
+		return coerceByColumn(raw, metaFor(column), sampleValue(column));
 	}
 
 	function sampleValue(column: string): unknown {
@@ -185,8 +343,80 @@
 		return firstRow ? firstRow[column] : null;
 	}
 
-	function displayValue(value: unknown): string {
-		if (value === null || value === undefined) return '';
+	function metaFor(column: string): GridColumnMeta | undefined {
+		return columnMetas.find((item) => item.name === column);
+	}
+
+	function fkCacheKey(fk: { referencedSchema: string; referencedTable: string; referencedColumn: string }) {
+		return `${fk.referencedSchema}.${fk.referencedTable}.${fk.referencedColumn}`;
+	}
+
+	async function ensureFkOptions(
+		fk: { referencedSchema: string; referencedTable: string; referencedColumn: string; column: string },
+		search = '',
+	) {
+		const key = `${fkCacheKey(fk)}::${search.trim().toLowerCase()}`;
+		if (fkOptionCache.has(key) || fkLoadingKeys.has(key)) return;
+		const nextLoading = new Set(fkLoadingKeys);
+		nextLoading.add(key);
+		fkLoadingKeys = nextLoading;
+		try {
+			const options = await loadFkOptions({
+				runQuery: (sql) => rpc.request.runQuery({ sql }),
+				databaseType,
+				explorer: explorer ?? null,
+				fk,
+				search,
+			});
+			const nextCache = new Map(fkOptionCache);
+			nextCache.set(key, options);
+			const baseKey = fkCacheKey(fk);
+			const existing = nextCache.get(baseKey) ?? [];
+			const merged = [...existing];
+			for (const option of options) {
+				if (!merged.some((item) => String(item.id) === String(option.id))) {
+					merged.push(option);
+				}
+			}
+			nextCache.set(baseKey, merged);
+			fkOptionCache = nextCache;
+		} catch {
+			const nextCache = new Map(fkOptionCache);
+			if (!nextCache.has(fkCacheKey(fk))) nextCache.set(fkCacheKey(fk), []);
+			fkOptionCache = nextCache;
+		} finally {
+			const done = new Set(fkLoadingKeys);
+			done.delete(key);
+			fkLoadingKeys = done;
+		}
+	}
+
+	function isFkLoading(fk: { referencedSchema: string; referencedTable: string; referencedColumn: string }) {
+		const prefix = fkCacheKey(fk);
+		for (const key of fkLoadingKeys) {
+			if (key === prefix || key.startsWith(`${prefix}::`)) return true;
+		}
+		return false;
+	}
+
+	function optionsForFk(fk: { referencedSchema: string; referencedTable: string; referencedColumn: string } | null) {
+		if (!fk) return [];
+		return fkOptionCache.get(fkCacheKey(fk)) ?? [];
+	}
+
+	function draftFromValue(column: string, value: unknown): string {
+		const meta = metaFor(column);
+		if (isEmptyCell(value)) return '';
+		if (meta?.kind === 'boolean') {
+			if (value === true || value === 'true' || value === 1 || value === '1') return 'true';
+			if (value === false || value === 'false' || value === 0 || value === '0') return 'false';
+		}
+		if (meta?.kind === 'date') return String(value).slice(0, 10);
+		if (meta?.kind === 'datetime') {
+			const text = String(value).trim();
+			const match = text.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/);
+			return match ? `${match[1]}T${match[2]}` : text;
+		}
 		return String(value);
 	}
 
@@ -202,6 +432,135 @@
 		column: string,
 	): unknown {
 		return pendingUpdates.get(rowId)?.[column] ?? row[column];
+	}
+
+	function getRowValueByName(
+		row: Record<string, unknown>,
+		rowId: string,
+		column: string,
+	): unknown {
+		if (Object.prototype.hasOwnProperty.call(row, column) || pendingUpdates.get(rowId)?.[column] !== undefined) {
+			return getRowValue(row, rowId, column);
+		}
+		const match = visibleColumns.find(
+			(item) => item.toLowerCase() === column.toLowerCase(),
+		);
+		if (!match) return undefined;
+		return getRowValue(row, rowId, match);
+	}
+
+	function blockFollowIfPending(): boolean {
+		return hasPendingChanges;
+	}
+
+	function startOutgoingFollow(fk: DatabaseForeignKey, value: unknown) {
+		if (!resultContext || !onFollowRelation || !isFollowableValue(value)) return;
+		if (blockFollowIfPending()) return;
+		void onFollowRelation(
+			createRelationHop({
+				direction: 'outgoing',
+				from: {
+					schema: resultContext.schema,
+					table: resultContext.table,
+					column: fk.column,
+					value,
+				},
+				to: {
+					schema: fk.referencedSchema,
+					table: fk.referencedTable,
+					column: fk.referencedColumn,
+				},
+			}),
+		);
+		rowContextMenu = null;
+	}
+
+	function startIncomingFollow(rel: IncomingRelation, value: unknown) {
+		if (!resultContext || !onFollowRelation || !isFollowableValue(value)) return;
+		if (blockFollowIfPending()) return;
+		void onFollowRelation(
+			createRelationHop({
+				direction: 'incoming',
+				from: {
+					schema: resultContext.schema,
+					table: resultContext.table,
+					column: rel.fk.referencedColumn,
+					value,
+				},
+				to: {
+					schema: rel.schema,
+					table: rel.table,
+					column: rel.fk.column,
+				},
+			}),
+		);
+		rowContextMenu = null;
+	}
+
+	function outgoingActions(
+		row: Record<string, unknown>,
+		rowId: string,
+	): Array<{ fk: DatabaseForeignKey; value: unknown }> {
+		if (!explorer || !resultContext || !onFollowRelation) return [];
+		const items: Array<{ fk: DatabaseForeignKey; value: unknown }> = [];
+		for (const column of visibleColumns) {
+			const value = getRowValue(row, rowId, column);
+			for (const fk of resolveOutgoingRelations(explorer, resultContext, column)) {
+				if (!isFollowableValue(value)) continue;
+				items.push({ fk, value });
+			}
+		}
+		return items;
+	}
+
+	function incomingActions(
+		row: Record<string, unknown>,
+		rowId: string,
+	): Array<IncomingRelation & { value: unknown }> {
+		if (!explorer || !resultContext || !onFollowRelation) return [];
+		const items: Array<IncomingRelation & { value: unknown }> = [];
+		for (const rel of resolveIncomingRelations(explorer, resultContext)) {
+			const value = getRowValueByName(row, rowId, rel.fk.referencedColumn);
+			if (!isFollowableValue(value)) continue;
+			items.push({ ...rel, value });
+		}
+		return items;
+	}
+
+	function incomingMenuLabel(
+		rel: IncomingRelation,
+		all: Array<IncomingRelation & { value: unknown }>,
+	): string {
+		const selfRef =
+			!!resultContext &&
+			rel.table === resultContext.table &&
+			rel.schema === resultContext.schema;
+		const duplicates = all.filter((item) => item.table === rel.table).length > 1;
+		return selfRef || duplicates
+			? `Related in ${rel.table} (${rel.fk.column})`
+			: `Related in ${rel.table}`;
+	}
+
+	function handleCellClick(
+		event: MouseEvent,
+		rowId: string,
+		column: string,
+		currentValue: unknown,
+	) {
+		if (rowId) activeRowId = rowId;
+		if (editingCell?.rowId === rowId && editingCell?.column === column) return;
+		const fks = explorer
+			? resolveOutgoingRelations(explorer, resultContext, column)
+			: [];
+		const canFollow =
+			fks.length > 0 && isFollowableValue(currentValue);
+		const modifierClick = event.altKey || event.metaKey || event.ctrlKey;
+		if (canFollow && (modifierClick || !editable)) {
+			event.preventDefault();
+			startOutgoingFollow(fks[0]!, currentValue);
+			return;
+		}
+		beginEdit(rowId, column, currentValue);
 	}
 
 	function cellKey(rowId: string, column: string): string {
@@ -275,14 +634,17 @@
 
 	function beginEdit(rowId: string, column: string, currentValue: unknown) {
 		if (!editable || column === '_querycastle_ctid') return;
+		const meta = metaFor(column);
+		if (meta?.isAuto || meta?.isPrimary) return;
 		editingCell = { rowId, column };
-		editDraft = displayValue(currentValue);
+		editDraft = draftFromValue(column, currentValue);
+		if (meta?.fk) void ensureFkOptions(meta.fk);
 	}
 
 	function commitEdit() {
 		if (!editingCell) return;
 		const { rowId, column } = editingCell;
-		const nextValue = coerceValue(editDraft, sampleValue(column));
+		const nextValue = coerceValue(editDraft, column);
 		const map = new Map(pendingUpdates);
 		const row = displayResult.rows.find(
 			(item) => String(item['_querycastle_ctid'] ?? '') === rowId,
@@ -302,6 +664,7 @@
 			map.set(rowId, prev);
 		}
 		pendingUpdates = map;
+		if (!userCollapsedPending) pendingPanelOpen = true;
 
 		editingCell = null;
 		editDraft = '';
@@ -317,10 +680,11 @@
 		if (next.has(rowId)) next.delete(rowId);
 		else next.add(rowId);
 		selectedRows = next;
+		activeRowId = rowId;
 	}
 
 	function toggleSelectAllVisible() {
-		const ids = visibleRows
+		const ids = pageRows
 			.map((row) => String(row['_querycastle_ctid'] ?? ''))
 			.filter((id) => id.length > 0);
 		const allSelected =
@@ -333,6 +697,14 @@
 		const nextUpdates = new Map(pendingUpdates);
 		const nextSelected = new Set(selectedRows);
 		for (const rowId of rowIds) {
+			const row = displayResult.rows.find(
+				(item) => String(item['_querycastle_ctid'] ?? '') === rowId,
+			);
+			if (row) {
+				const nextSnapshots = new Map(deletedSnapshots);
+				nextSnapshots.set(rowId, { ...row });
+				deletedSnapshots = nextSnapshots;
+			}
 			nextDeletes.add(rowId);
 			nextUpdates.delete(rowId);
 			nextSelected.delete(rowId);
@@ -341,68 +713,162 @@
 		pendingUpdates = nextUpdates;
 		selectedRows = nextSelected;
 		rowContextMenu = null;
+		if (!userCollapsedPending) pendingPanelOpen = true;
 	}
 
-	function openRowContextMenu(event: MouseEvent, rowId: string) {
-		if (!editable) return;
+	function openRowContextMenu(
+		event: MouseEvent,
+		rowId: string,
+		row: Record<string, unknown>,
+	) {
+		const outgoing = outgoingActions(row, rowId);
+		const incoming = incomingActions(row, rowId);
+		if (!editable && outgoing.length === 0 && incoming.length === 0) return;
 		event.preventDefault();
-		rowContextMenu = { x: event.clientX, y: event.clientY, rowId };
+		relatedSubmenuOpen = false;
+		rowContextMenu = { x: event.clientX, y: event.clientY, rowId, row };
 	}
 
-	function submitAddRow() {
-		if (editableColumns.length === 0) return;
-		const hasAnyValue = editableColumns.some(
-			(column) => (addRowDraft[column] ?? '').trim().length > 0,
-		);
-		if (!hasAnyValue) return;
+	function startInsertRow() {
+		if (!editable) return;
 		const values: Record<string, unknown> = {};
-		for (const column of editableColumns) {
-			values[column] = coerceValue(
-				addRowDraft[column] ?? '',
-				sampleValue(column),
-			);
-		}
 		pendingInserts = [...pendingInserts, { id: crypto.randomUUID(), values }];
-		const nextDraft: Record<string, string> = {};
-		for (const column of editableColumns) nextDraft[column] = '';
-		addRowDraft = nextDraft;
-		addingNewRow = true;
+		if (!userCollapsedPending) pendingPanelOpen = true;
+		for (const column of columnMetas) {
+			if (column.fk) void ensureFkOptions(column.fk);
+		}
+	}
+
+	function setInsertValue(id: string, column: string, raw: string) {
+		pendingInserts = pendingInserts.map((row) => {
+			if (row.id !== id) return row;
+			return {
+				...row,
+				values: { ...row.values, [column]: coerceValue(raw, column) },
+			};
+		});
 	}
 
 	function removePendingInsert(id: string) {
 		pendingInserts = pendingInserts.filter((row) => row.id !== id);
 	}
 
-	function startInlineAddRow() {
-		if (editableColumns.length === 0) return;
-		addingNewRow = true;
-		const nextDraft: Record<string, string> = {};
-		for (const column of editableColumns)
-			nextDraft[column] = addRowDraft[column] ?? '';
-		addRowDraft = nextDraft;
+	async function refreshCount() {
+		if (!resultContext) {
+			totalRowCount = visibleRows.length;
+			return;
+		}
+		try {
+			const payload = await rpc.request.runQuery({
+				sql: buildTableCountSql({
+					databaseType,
+					schema: resultContext.schema,
+					table: resultContext.table,
+					baseWhere,
+					filters: filterList,
+				}),
+			});
+			totalRowCount = parseCountResult(payload.rows);
+		} catch {
+			totalRowCount = Math.max(displayResult.rowCount, visibleRows.length);
+		}
 	}
 
-	function cancelInlineAddRow() {
-		addingNewRow = false;
-		const nextDraft: Record<string, string> = {};
-		for (const column of editableColumns) nextDraft[column] = '';
-		addRowDraft = nextDraft;
-	}
-
-	async function rerunContextQuery() {
-		if (!resultContext) return;
+	async function applyBrowse() {
+		if (!resultContext) {
+			totalRowCount = visibleRows.length;
+			const maxPage = totalPages(totalRowCount, pageSize);
+			if (page > maxPage) page = maxPage;
+			return;
+		}
+		const sql = buildTableBrowseSql({
+			databaseType,
+			explorer: explorer ?? null,
+			schema: resultContext.schema,
+			table: resultContext.table,
+			baseWhere,
+			filters: filterList,
+			sort: effectiveSort,
+			limit: pageSize,
+			offset: (page - 1) * pageSize,
+		});
+		if (!sql) return;
+		keepDraftsOnNextResult = true;
 		rerunning = true;
 		try {
-			if (refreshSql.trim().length > 0) {
-				await onRunSql(refreshSql);
-				return;
-			}
-			const sql = buildDefaultContextSql();
 			await onRunSql(sql);
+			await refreshCount();
 		} finally {
 			rerunning = false;
 		}
 	}
+
+	async function rerunContextQuery() {
+		page = 1;
+		await applyBrowse();
+	}
+
+	function scheduleFilterBrowse() {
+		if (filterTimer) clearTimeout(filterTimer);
+		filterTimer = setTimeout(() => {
+			page = 1;
+			void applyBrowse();
+		}, 280);
+	}
+
+	function handleHeaderSort(column: string) {
+		sort = nextSortState(sort, column);
+		page = 1;
+		showSortMenu = false;
+		void applyBrowse();
+	}
+
+	function clearSort() {
+		sort = null;
+		showSortMenu = false;
+		page = 1;
+		void applyBrowse();
+	}
+
+	function clearFilters() {
+		columnFilters = {};
+		showFilterRow = false;
+		page = 1;
+		if (filterTimer) clearTimeout(filterTimer);
+		void applyBrowse();
+	}
+
+	function setPageSize(next: PageSize) {
+		pageSize = next;
+		page = 1;
+		void applyBrowse();
+	}
+
+	function goToPage(next: number) {
+		const maxPage = pageCount;
+		page = Math.min(maxPage, Math.max(1, next));
+		void applyBrowse();
+	}
+
+	$effect(() => {
+		const key = browseSourceKey;
+		if (key === lastBrowseSourceKey) return;
+		lastBrowseSourceKey = key;
+		baseWhere = extractWhereClause(refreshSql);
+		page = 1;
+		columnFilters = {};
+		sort = null;
+		if (resultContext) void refreshCount();
+		else totalRowCount = displayResult.rowCount;
+	});
+
+	$effect(() => {
+		if (changeCount > 0 && !userCollapsedPending) pendingPanelOpen = true;
+		if (changeCount === 0) {
+			pendingPanelOpen = false;
+			userCollapsedPending = false;
+		}
+	});
 
 	async function runExplain() {
 		const sourceSql =
@@ -424,6 +890,20 @@
 	async function syncChanges() {
 		if (!resultContext || !onApplyTableChanges || !hasPendingChanges) return;
 		if (editingCell) commitEdit();
+		for (const insert of pendingInserts) {
+			const draft: Record<string, string> = {};
+			for (const column of columnMetas) {
+				draft[column.name] = isEmptyCell(insert.values[column.name])
+					? ''
+					: String(insert.values[column.name]);
+			}
+			const missing = missingRequiredColumns(draft, columnMetas);
+			if (missing.length > 0) {
+				syncError = `New row is missing ${missing.join(', ')}.`;
+				pendingPanelOpen = true;
+				return;
+			}
+		}
 		syncingChanges = true;
 		syncError = '';
 		try {
@@ -433,7 +913,18 @@
 					values,
 				})),
 				deletes: Array.from(pendingDeletes),
-				inserts: pendingInserts.map((row) => row.values),
+				inserts: pendingInserts
+					.map((row) => valuesForInsert(
+						Object.fromEntries(
+							Object.entries(row.values).map(([key, value]) => [
+								key,
+								isEmptyCell(value) ? '' : String(value),
+							]),
+						),
+						columnMetas,
+						sampleValue,
+					))
+					.filter((row) => Object.keys(row).length > 0),
 			};
 			const applyResult = await onApplyTableChanges(resultContext, payload);
 			if (payload.inserts.length > 0) {
@@ -488,6 +979,15 @@
 		}
 	}
 
+	function scheduleFkSearch(
+		fk: { referencedSchema: string; referencedTable: string; referencedColumn: string; column: string },
+		query: string,
+	) {
+		window.setTimeout(() => {
+			void ensureFkOptions(fk, query);
+		}, 180);
+	}
+
 	$effect(() => {
 		const columnsSet = new Set(visibleColumns);
 		const nextWidths: Record<string, number> = {};
@@ -524,54 +1024,163 @@
 </script>
 
 <div class="flex-1 flex flex-col bg-white min-w-[320px] min-h-0">
-	<div class="flex border-b border-gray-200 bg-gray-50/80 px-2 pt-2 shrink-0">
-		<button
-			onclick={() => (activeView = 'results')}
-			class={`px-4 py-1.5 border-b-2 text-sm font-medium rounded-t-md relative z-10 -mb-[1px] ${activeView === 'results' ? 'border-emerald-500 text-gray-900 bg-white shadow-[0_-1px_2px_rgba(0,0,0,0.02)]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-		>
-			Results
-		</button>
-		<button
-			onclick={() => (activeView = 'messages')}
-			class={`px-4 py-1.5 border-b-2 text-sm font-medium ${activeView === 'messages' ? 'border-emerald-500 text-gray-900 bg-white rounded-t-md shadow-[0_-1px_2px_rgba(0,0,0,0.02)] -mb-[1px]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-		>
-			Messages
-		</button>
-		<button
-			onclick={() => (activeView = 'explain')}
-			class={`px-4 py-1.5 border-b-2 text-sm font-medium ${activeView === 'explain' ? 'border-emerald-500 text-gray-900 bg-white rounded-t-md shadow-[0_-1px_2px_rgba(0,0,0,0.02)] -mb-[1px]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-		>
-			Explain
-		</button>
-		<div class="flex-1 border-b-2 border-transparent -mb-[1px]"></div>
-		<div
-			class="flex items-center space-x-2 px-2 border-b-2 border-transparent text-xs text-gray-500 font-medium -mb-[1px]"
-		>
-			{#if editable}
-				<button
-					onclick={() => queueDeleteRows(Array.from(selectedRows))}
-					disabled={selectedRows.size === 0}
-					class="h-7 px-2 rounded border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50 inline-flex items-center gap-1"
-					><Trash2 size={12} />Delete Selected</button
-				>
-			{/if}
-			<span class="flex items-center"
-				><Timer size={14} class="mr-1.5 text-gray-400" /> {durationMs}ms</span
+	<RelationTrail
+		trail={relationTrail}
+		onActivate={(index) => onActivateRelationTrail?.(index)}
+	/>
+	<div class="h-11 px-3 border-b border-gray-200 bg-gray-50 shrink-0 flex items-center gap-2">
+		{#if editable}
+			<button
+				type="button"
+				onclick={startInsertRow}
+				disabled={syncingChanges}
+				class="h-7 px-2.5 rounded-md bg-emerald-500 text-white text-xs font-medium hover:bg-emerald-600 disabled:opacity-50 inline-flex items-center gap-1"
 			>
-			<span class="flex items-center"
-				><Database size={14} class="mr-1.5 text-gray-400" />
-				{displayResult.rowCount} rows</span
+				<Plus size={12} />Insert
+			</button>
+			<button
+				type="button"
+				onclick={() => queueDeleteRows(Array.from(selectedRows))}
+				disabled={selectedRows.size === 0}
+				class="h-7 px-2 rounded-md border border-gray-200 bg-white text-xs text-red-600 hover:bg-red-50 disabled:opacity-50 inline-flex items-center gap-1"
 			>
-			{#if resultContext}
+				<Trash2 size={12} />Delete
+			</button>
+		{/if}
+		<button
+			type="button"
+			onclick={rerunContextQuery}
+			disabled={rerunning || loading}
+			class="h-7 px-2 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50 inline-flex items-center gap-1"
+		>
+			<Play size={12} />
+			{rerunning ? 'Running' : 'Refresh'}
+		</button>
+		<div class="inline-flex items-center">
+			<button
+				type="button"
+				onclick={() => (showFilterRow = !showFilterRow)}
+				class={`h-7 px-2 rounded-md border text-xs inline-flex items-center gap-1 ${showFilterRow || hasActiveFilters ? 'border-emerald-400 bg-emerald-50 text-emerald-800' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'} ${hasActiveFilters ? 'rounded-r-none' : ''}`}
+			>
+				<Filter size={12} />Filter
+				{#if hasActiveFilters}
+					<span class="text-[10px] font-medium">({filterList.length})</span>
+				{/if}
+			</button>
+			{#if hasActiveFilters}
 				<button
-					onclick={rerunContextQuery}
-					disabled={rerunning}
-					class="text-gray-500 hover:text-gray-800 disabled:opacity-60 inline-flex items-center gap-1"
+					type="button"
+					onclick={clearFilters}
+					class="h-7 w-7 rounded-md rounded-l-none border border-l-0 border-emerald-400 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 inline-flex items-center justify-center"
+					title="Clear filters"
+					aria-label="Clear filters"
 				>
-					<Play size={12} />
-					{rerunning ? 'Running' : 'Refresh'}
+					<X size={12} />
 				</button>
 			{/if}
+		</div>
+		<div class="relative inline-flex items-center">
+			<button
+				type="button"
+				onclick={() => (showSortMenu = !showSortMenu)}
+				class={`h-7 px-2 rounded-md border text-xs inline-flex items-center gap-1 ${sort ? 'border-emerald-400 bg-emerald-50 text-emerald-800' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'} ${sort ? 'rounded-r-none' : ''}`}
+			>
+				<ArrowUpDown size={12} />Sort
+			</button>
+			{#if sort}
+				<button
+					type="button"
+					onclick={clearSort}
+					class="h-7 w-7 rounded-md rounded-l-none border border-l-0 border-emerald-400 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 inline-flex items-center justify-center"
+					title="Clear sort"
+					aria-label="Clear sort"
+				>
+					<X size={12} />
+				</button>
+			{/if}
+			{#if showSortMenu}
+				<button type="button" class="fixed inset-0 z-30 cursor-default" aria-label="Close sort" onclick={() => (showSortMenu = false)}></button>
+				<div class="absolute left-0 top-8 z-40 min-w-[176px] rounded-md border border-gray-200 bg-white py-1 shadow-[0_8px_24px_rgba(0,0,0,0.12)]">
+					<button
+						type="button"
+						class="w-full px-3 py-1.5 text-left text-xs text-gray-500 hover:bg-gray-50 disabled:opacity-40"
+						disabled={!sort}
+						onclick={clearSort}
+					>
+						Clear sort
+					</button>
+					<div class="my-1 border-t border-gray-100"></div>
+					{#each visibleColumns as column}
+						<button
+							type="button"
+							class="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50 inline-flex items-center justify-between gap-2"
+							onclick={() => handleHeaderSort(column)}
+						>
+							<span class="truncate">{column}</span>
+							{#if sort?.column === column}
+								{#if sort.dir === 'asc'}<ArrowUp size={12} class="text-emerald-600" />{:else}<ArrowDown size={12} class="text-emerald-600" />{/if}
+							{/if}
+						</button>
+					{/each}
+				</div>
+			{/if}
+		</div>
+		<div class="flex items-center gap-1 ml-1">
+			<button
+				type="button"
+				class={`h-7 px-2 rounded-md border text-xs ${activeView === 'results' ? 'border-emerald-400 bg-white text-gray-900' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
+				onclick={() => (activeView = 'results')}
+			>
+				Results
+			</button>
+			<button
+				type="button"
+				class={`h-7 px-2 rounded-md border text-xs ${activeView === 'messages' ? 'border-emerald-400 bg-white text-gray-900' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
+				onclick={() => (activeView = 'messages')}
+			>
+				Messages
+			</button>
+			<button
+				type="button"
+				class={`h-7 px-2 rounded-md border text-xs ${activeView === 'explain' ? 'border-emerald-400 bg-white text-gray-900' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
+				onclick={() => (activeView = 'explain')}
+			>
+				Explain
+			</button>
+		</div>
+		<div class="flex-1"></div>
+		<div class="flex items-center gap-2 text-xs text-gray-500">
+			<button type="button" class="h-7 w-7 rounded-md border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-40 inline-flex items-center justify-center" disabled={page <= 1} onclick={() => goToPage(page - 1)} aria-label="Previous page">
+				<ChevronLeft size={14} />
+			</button>
+			<span class="tabular-nums">{page} of {pageCount}</span>
+			<button type="button" class="h-7 w-7 rounded-md border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-40 inline-flex items-center justify-center" disabled={page >= pageCount} onclick={() => goToPage(page + 1)} aria-label="Next page">
+				<ChevronRight size={14} />
+			</button>
+			<select
+				class="h-7 px-1.5 rounded-md border border-gray-200 bg-white text-xs text-gray-700 outline-none"
+				value={String(pageSize)}
+				onchange={(event) => setPageSize(Number((event.currentTarget as HTMLSelectElement).value) as PageSize)}
+			>
+				{#each PAGE_SIZE_OPTIONS as size}
+					<option value={String(size)}>{size} rows</option>
+				{/each}
+			</select>
+			<span class="tabular-nums text-gray-500">{displayTotal} rows</span>
+			<span class="hidden sm:inline-flex items-center text-gray-400"><Timer size={12} class="mr-1" />{durationMs}ms</span>
+			<button
+				type="button"
+				onclick={() => {
+					userCollapsedPending = false;
+					pendingPanelOpen = true;
+				}}
+				class={`h-7 px-2 rounded-md border text-xs inline-flex items-center gap-1 ${changeCount > 0 ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
+			>
+				Changes
+				{#if changeCount > 0}
+					<span class="min-w-4 h-4 px-1 rounded-full bg-amber-500 text-white text-[10px] leading-4 text-center">{changeCount}</span>
+				{/if}
+			</button>
 		</div>
 	</div>
 
@@ -590,6 +1199,7 @@
 		</div>
 	{/if}
 
+	<div class="flex-1 flex min-h-0">
 	<div class="flex-1 overflow-auto bg-white min-h-0">
 		{#if activeView === 'messages'}
 			<div class="h-full p-4 text-xs text-gray-700 space-y-2">
@@ -718,7 +1328,7 @@
 		{:else}
 			<div class="min-w-max">
 				<table
-					class="min-w-full text-left border-collapse text-sm whitespace-nowrap"
+					class="min-w-full table-fixed text-left border-collapse text-sm"
 				>
 					<thead
 						class="sticky top-0 bg-gray-50 border-b border-gray-200 shadow-sm z-10"
@@ -731,8 +1341,8 @@
 									<input
 										type="checkbox"
 										onchange={toggleSelectAllVisible}
-										checked={visibleRows.length > 0 &&
-											visibleRows.every((row) =>
+										checked={pageRows.length > 0 &&
+											pageRows.every((row) =>
 												selectedRows.has(
 													String(row['_querycastle_ctid'] ?? ''),
 												),
@@ -745,16 +1355,26 @@
 								>#</th
 							>
 							{#each visibleColumns as column}
+								{@const meta = metaFor(column)}
 								<th
-									class="px-4 py-2 font-medium text-gray-500 border-r border-gray-200 text-xs relative"
-									style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;`}
+									class="px-4 py-2 font-medium text-gray-500 border-r border-gray-200 text-xs relative overflow-hidden"
+									style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;max-width:${getColumnWidth(column)}px;`}
 								>
-									<div class="flex items-center pr-3">
-										{#if column.endsWith('_id')}
-											<KeyRound size={12} class="mr-1.5 text-gray-400" />
+									<button
+										type="button"
+										class="flex items-center pr-3 gap-1 min-w-0 w-full text-left hover:text-gray-800"
+										onclick={() => handleHeaderSort(column)}
+									>
+										<ColumnTypeIcon {meta} />
+										<span class="truncate">{column}</span>
+										{#if sort?.column === column}
+											{#if sort.dir === 'asc'}
+												<ArrowUp size={11} class="shrink-0 text-emerald-600" />
+											{:else}
+												<ArrowDown size={11} class="shrink-0 text-emerald-600" />
+											{/if}
 										{/if}
-										{column}
-									</div>
+									</button>
 									<button
 										type="button"
 										class="absolute right-0 top-0 h-full w-2 !cursor-col-resize touch-none"
@@ -765,16 +1385,86 @@
 								</th>
 							{/each}
 						</tr>
+						{#if showFilterRow}
+							<tr class="bg-white">
+								{#if editable}
+									<th class="border-r border-gray-200"></th>
+								{/if}
+								<th class="border-r border-gray-200"></th>
+								{#each visibleColumns as column}
+									<th
+										class="p-1 border-r border-gray-200 overflow-hidden"
+										style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;max-width:${getColumnWidth(column)}px;`}
+									>
+										<input
+											value={columnFilters[column] ?? ''}
+											oninput={(event) => {
+												const value = (event.currentTarget as HTMLInputElement).value;
+												columnFilters = { ...columnFilters, [column]: value };
+												scheduleFilterBrowse();
+											}}
+											placeholder="Contains…"
+											class="w-full h-7 px-2 rounded border border-gray-200 bg-white text-[11px] font-normal text-gray-700 outline-none focus:border-emerald-500"
+										/>
+									</th>
+								{/each}
+							</tr>
+						{/if}
 					</thead>
 					<tbody class="text-gray-700">
-						{#each visibleRows as row, rowIndex (String(row['_querycastle_ctid'] ?? `row-${rowIndex}`))}
+						{#if editable && pendingInserts.length > 0}
+							{#each pendingInserts as insertRow (insertRow.id)}
+								<tr class="border-b border-emerald-200 bg-emerald-50/40">
+									<td class="px-3 border-r border-emerald-100 text-gray-400 text-xs">
+										<button
+											type="button"
+											onclick={() => removePendingInsert(insertRow.id)}
+											class="text-red-500 hover:text-red-700"
+											aria-label="Remove pending insert">×</button
+										>
+									</td>
+									<td class="px-4 border-r border-emerald-100 text-gray-500 text-xs">New</td>
+									{#each visibleColumns as column}
+										{@const meta = metaFor(column)}
+										<td
+											class="p-0 border-r border-emerald-100 overflow-hidden whitespace-nowrap"
+											style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;max-width:${getColumnWidth(column)}px;`}
+										>
+											{#if meta?.isAuto || meta?.isPrimary}
+												<div class="h-[28px] px-4 flex items-center text-[12px] italic text-gray-400">
+													Automatic
+												</div>
+											{:else}
+												<GridCellEditor
+													kind={meta?.kind ?? 'text'}
+													value={draftFromValue(column, insertRow.values[column])}
+													nullable={!meta?.notNull}
+													flush={true}
+													placeholder={meta?.fk ? `Choose ${meta.fk.referencedTable}…` : ''}
+													fkOptions={meta?.fk ? optionsForFk(meta.fk) : []}
+													fkLoading={meta?.fk ? isFkLoading(meta.fk) : false}
+													onChange={(next) => setInsertValue(insertRow.id, column, next)}
+													onSearch={(query) => meta?.fk && scheduleFkSearch(meta.fk, query)}
+												/>
+											{/if}
+										</td>
+									{/each}
+								</tr>
+							{/each}
+						{/if}
+						{#each pageRows as row, rowIndex (String(row['_querycastle_ctid'] ?? `row-${rowIndex}`))}
 							{@const rowId = String(row['_querycastle_ctid'] ?? '')}
+							{@const isChecked = selectedRows.has(rowId)}
+							{@const isActive = activeRowId === rowId}
 							<tr
-								class="border-b border-gray-100 hover:bg-gray-50"
-								oncontextmenu={(event) => openRowContextMenu(event, rowId)}
+								class={`group h-8 max-h-8 ${isChecked ? 'relative z-[1] bg-emerald-500/15 [&>td]:border-t [&>td]:border-b [&>td]:border-t-emerald-500 [&>td]:border-b-emerald-500 [&>td:first-child]:border-l [&>td:first-child]:border-l-emerald-500 [&>td:last-child]:border-r-emerald-500' : isActive ? 'relative z-[1] bg-gray-100 [&>td]:border-t [&>td]:border-b [&>td]:border-t-gray-400 [&>td]:border-b-gray-400 [&>td:first-child]:border-l [&>td:first-child]:border-l-gray-400 [&>td:last-child]:border-r-gray-400' : 'border-b border-gray-100 hover:bg-gray-50'}`}
+								oncontextmenu={(event) => openRowContextMenu(event, rowId, row)}
+								onclick={() => {
+									if (rowId) activeRowId = rowId;
+								}}
 							>
 								{#if editable}
-									<td class="px-3 py-1.5 border-r border-gray-100">
+									<td class="px-3 py-0 border-r border-gray-100 overflow-hidden">
 										<input
 											type="checkbox"
 											checked={selectedRows.has(rowId)}
@@ -783,8 +1473,8 @@
 									</td>
 								{/if}
 								<td
-									class="px-4 py-1.5 text-gray-400 border-r border-gray-100 text-xs bg-gray-50/30"
-									>{rowIndex + 1}</td
+									class="px-4 py-0 text-gray-400 border-r border-gray-100 text-xs overflow-hidden whitespace-nowrap"
+									>{(page - 1) * pageSize + rowIndex + 1}</td
 								>
 								{#each visibleColumns as column (column)}
 									{@const currentValue = getRowValue(row, rowId, column)}
@@ -795,178 +1485,200 @@
 									{@const isRecentlyUpdated = highlightCells.has(
 										cellKey(rowId, column),
 									)}
+									{@const isFkColumn = fkColumns.has(column)}
+									{@const meta = metaFor(column)}
+									{@const canFollowFk =
+										isFkColumn && isFollowableValue(currentValue)}
+									{@const isPendingEdit =
+										pendingUpdates.get(rowId)?.[column] !== undefined}
 									<td
-										class={`px-4 py-1.5 border-r border-gray-100 font-mono-code text-[12px] transition-colors duration-700 ${editable && column !== '_querycastle_ctid' ? 'cursor-text' : ''} ${isEditing ? 'outline outline-1 -outline-offset-1 outline-emerald-400 bg-white' : ''} ${isRecentlyUpdated ? 'bg-emerald-50/70' : ''}`}
-										style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;`}
-										onclick={() => beginEdit(rowId, column, currentValue)}
+										class={`border-r border-gray-100 text-[12px] overflow-hidden whitespace-nowrap max-w-0 ${editable && !meta?.isAuto && !meta?.isPrimary ? 'cursor-pointer' : ''} ${isEditing ? 'p-0 outline outline-1 -outline-offset-1 outline-emerald-500 bg-white' : 'px-4 py-0'} ${isPendingEdit && !isEditing ? 'bg-amber-50' : ''} ${isRecentlyUpdated && !isEditing && !isPendingEdit ? 'bg-emerald-50/70' : ''}`}
+										style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;max-width:${getColumnWidth(column)}px;`}
+										onclick={(event) =>
+											handleCellClick(
+												event,
+												rowId,
+												column,
+												currentValue,
+											)}
+										title={isEmptyCell(currentValue)
+											? canFollowFk
+												? 'Open related record (Alt+Click or icon)'
+												: undefined
+											: displayCellText(currentValue, meta)}
 									>
 										{#if isEditing}
-											<input
+											<!-- svelte-ignore a11y_click_events_have_key_events -->
+											<!-- svelte-ignore a11y_no_static_element_interactions -->
+											<div
+												class="h-8 w-full overflow-hidden"
+												onclick={(event) => event.stopPropagation()}
+												onkeydown={(event) => event.stopPropagation()}
+											>
+											<GridCellEditor
+												kind={meta?.kind ?? 'text'}
 												value={editDraft}
-												onblur={commitEdit}
-												onkeydown={(event) => {
-													if (event.key === 'Enter') commitEdit();
-													if (event.key === 'Escape') discardEdit();
-												}}
-												oninput={(event) =>
-													(editDraft = (event.currentTarget as HTMLInputElement)
-														.value)}
-												class="w-full border-0 bg-transparent text-[12px] leading-[1.25rem] outline-none p-0 m-0"
+												nullable={!meta?.notNull}
+												flush={true}
+												fkOptions={meta?.fk ? optionsForFk(meta.fk) : []}
+												fkLoading={meta?.fk ? isFkLoading(meta.fk) : false}
+												autofocus={meta?.kind !== 'fk'}
+												startOpen={meta?.kind === 'fk'}
+												onChange={(next) => (editDraft = next)}
+												onCommit={commitEdit}
+												onCancel={discardEdit}
+												onSearch={(query) => meta?.fk && scheduleFkSearch(meta.fk, query)}
 											/>
+											</div>
 										{:else}
-											{currentValue == null ? 'NULL' : String(currentValue)}
+											<div class="flex items-center gap-1 min-w-0 h-8 overflow-hidden">
+												{#if isEmptyCell(currentValue)}
+													<span class="truncate min-w-0 flex-1 italic text-gray-400">Empty</span>
+												{:else if meta?.kind === 'boolean'}
+													<span class={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium shrink-0 ${currentValue === true || currentValue === 'true' || currentValue === 1 || currentValue === '1' ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>{formatBooleanLabel(currentValue)}</span>
+												{:else}
+													<span class={`truncate min-w-0 flex-1 block overflow-hidden text-ellipsis ${isFkColumn ? 'font-mono text-[11px]' : ''}`}>{displayCellText(currentValue, meta)}</span>
+												{/if}
+												{#if canFollowFk}
+													<button
+														type="button"
+														class="shrink-0 rounded p-0.5 text-emerald-600 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-emerald-50 hover:text-emerald-800"
+														title="Open related record"
+														aria-label="Follow foreign key"
+														onclick={(event) => {
+															event.stopPropagation();
+															const fk = explorer
+																? resolveOutgoingRelations(
+																		explorer,
+																		resultContext,
+																		column,
+																	)[0]
+																: undefined;
+															if (fk) startOutgoingFollow(fk, currentValue);
+														}}
+														onpointerdown={(event) => event.stopPropagation()}
+													>
+														<ArrowUpRight size={12} />
+													</button>
+												{/if}
+											</div>
 										{/if}
 									</td>
 								{/each}
 							</tr>
 						{/each}
-
-						{#if editable && pendingInserts.length > 0}
-							{#each pendingInserts as insertRow, insertIndex}
-								<tr class="border-b border-emerald-100 bg-emerald-50/30">
-									<td
-										class="px-3 py-1.5 border-r border-gray-100 text-gray-400 text-xs"
-									>
-										<button
-											onclick={() => removePendingInsert(insertRow.id)}
-											class="text-red-500 hover:text-red-700"
-											aria-label="Remove pending insert">x</button
-										>
-									</td>
-									<td
-										class="px-4 py-1.5 text-gray-400 border-r border-gray-100 text-xs bg-gray-50/30"
-										>N{insertIndex + 1}</td
-									>
-									{#each visibleColumns as column}
-										<td
-											class="px-4 py-1.5 border-r border-gray-100 font-mono-code text-[12px]"
-											style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;`}
-										>
-											{insertRow.values[column] == null
-												? 'NULL'
-												: String(insertRow.values[column])}
-										</td>
-									{/each}
-								</tr>
-							{/each}
-						{/if}
 					</tbody>
-					{#if editable && !addingNewRow}
-						<tbody>
-							<tr class="border-b border-dashed border-gray-300 bg-gray-50/50">
-								<td
-									colspan={visibleColumns.length + (editable ? 2 : 1)}
-									class="px-3 py-2"
-								>
-									<button
-										onclick={startInlineAddRow}
-										class="w-full h-9 rounded-md text-left px-3 text-xs text-gray-500 hover:text-gray-700 hover:bg-white border border-dashed border-transparent hover:border-gray-300"
-									>
-										+ Click here to add a new row
-									</button>
-								</td>
-							</tr>
-						</tbody>
-					{:else if editable && addingNewRow}
-						<tbody>
-							<tr class="border-b border-dashed border-gray-300 bg-gray-50/60">
-								<td
-									class="px-3 py-2 border-r border-gray-100 text-gray-400 text-xs"
-									>+</td
-								>
-								<td
-									class="px-4 py-2 border-r border-gray-100 text-gray-500 text-xs"
-									>New</td
-								>
-								{#each visibleColumns as column}
-									<td
-										class="px-2 py-1.5 border-r border-gray-100"
-										style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;`}
-									>
-										<input
-											value={addRowDraft[column] ?? ''}
-											oninput={(event) =>
-												(addRowDraft = {
-													...addRowDraft,
-													[column]: (event.currentTarget as HTMLInputElement)
-														.value,
-												})}
-											onkeydown={(event) => {
-												if (event.key === 'Enter') submitAddRow();
-											}}
-											placeholder={column}
-											class="w-full h-8 px-2 rounded-md border border-gray-200 bg-white text-[12px] text-gray-800 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-										/>
-									</td>
-								{/each}
-							</tr>
-							<tr class="bg-white">
-								<td
-									colspan={visibleColumns.length + (editable ? 2 : 1)}
-									class="px-3 py-2 border-b border-gray-100"
-								>
-									<div class="flex justify-end gap-2">
-										<button
-											onclick={cancelInlineAddRow}
-											class="h-8 px-3 rounded border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-100"
-											>Cancel</button
-										>
-										<button
-											onclick={submitAddRow}
-											class="h-8 px-3 rounded border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-100"
-											>Add Staged Row</button
-										>
-									</div>
-								</td>
-							</tr>
-						</tbody>
-					{/if}
 				</table>
 			</div>
 		{/if}
 	</div>
-
-	{#if hasPendingChanges}
-		<div
-			class="shrink-0 border-t border-amber-200 bg-amber-50 px-3 py-2 flex items-center justify-between"
-		>
-			<div class="text-xs text-amber-700">
-				You have unsaved changes. Please Save/Commit.
-			</div>
-			<div class="flex items-center gap-2">
-				<button
-					onclick={resetDraftState}
-					class="h-8 px-3 rounded border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-100"
-					>Discard</button
-				>
-				<button
-					onclick={syncChanges}
-					disabled={syncingChanges}
-					class="h-8 px-3 rounded border border-emerald-500 bg-emerald-500 text-xs text-white hover:bg-emerald-600 disabled:opacity-60"
-					>{syncingChanges ? 'Committing...' : 'Save / Commit'}</button
-				>
-			</div>
-		</div>
-	{/if}
+	<PendingChangesPane
+		open={pendingPanelOpen}
+		{changeCount}
+		cards={pendingCards}
+		sqlPreview={pendingSqlPreview}
+		syncing={syncingChanges}
+		error={syncError}
+		onClose={() => {
+			pendingPanelOpen = false;
+			userCollapsedPending = true;
+		}}
+		onClear={resetDraftState}
+		onCommit={() => void syncChanges()}
+	/>
+	</div>
 
 	{#if rowContextMenu}
+		{@const outgoing = outgoingActions(rowContextMenu.row, rowContextMenu.rowId)}
+		{@const incoming = incomingActions(rowContextMenu.row, rowContextMenu.rowId)}
 		<button
 			class="fixed inset-0 z-40"
 			aria-label="Close row menu"
-			onclick={() => (rowContextMenu = null)}
+			onclick={() => {
+				rowContextMenu = null;
+				relatedSubmenuOpen = false;
+			}}
 		></button>
 		<div
-			class="fixed z-50 min-w-[170px] bg-white rounded-md border border-gray-200 shadow-[0_8px_24px_rgba(0,0,0,0.12)] py-1"
+			class="fixed z-50 min-w-[240px] bg-white rounded-md border border-gray-200 shadow-[0_8px_24px_rgba(0,0,0,0.12)] py-1"
 			style={`left:${rowContextMenu?.x ?? 0}px;top:${rowContextMenu?.y ?? 0}px;`}
 		>
-			<button
-				onclick={() =>
-					rowContextMenu && queueDeleteRows([rowContextMenu.rowId])}
-				class="w-full px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50 inline-flex items-center gap-2"
-			>
-				<Trash2 size={14} />
-				Delete Row
-			</button>
+			{#each outgoing as item}
+				<button
+					type="button"
+					disabled={hasPendingChanges}
+					onclick={() => startOutgoingFollow(item.fk, item.value)}
+					class="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 inline-flex items-center gap-2"
+					title={hasPendingChanges
+						? 'Save or discard grid edits first'
+						: undefined}
+				>
+					<ArrowUpRight size={14} class="shrink-0 text-emerald-600" />
+					<span class="truncate"
+						>Open {item.fk.referencedTable} where {item.fk.referencedColumn} =
+						{formatFollowValue(item.value)}</span
+					>
+				</button>
+			{/each}
+			{#if incoming.length > 6}
+				<div class="relative">
+					<button
+						type="button"
+						class="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 inline-flex items-center justify-between gap-2"
+						onmouseenter={() => (relatedSubmenuOpen = true)}
+						onclick={() => (relatedSubmenuOpen = !relatedSubmenuOpen)}
+					>
+						Related rows
+						<ChevronRight size={14} class="text-gray-400" />
+					</button>
+					{#if relatedSubmenuOpen}
+						<div
+							class="absolute left-full top-0 ml-0.5 min-w-[220px] max-h-72 overflow-auto bg-white rounded-md border border-gray-200 shadow-[0_8px_24px_rgba(0,0,0,0.12)] py-1"
+						>
+							{#each incoming as rel}
+								<button
+									type="button"
+									disabled={hasPendingChanges}
+									onclick={() => startIncomingFollow(rel, rel.value)}
+									class="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 truncate"
+									title={hasPendingChanges
+										? 'Save or discard grid edits first'
+										: undefined}
+								>
+									{incomingMenuLabel(rel, incoming)}
+								</button>
+							{/each}
+						</div>
+					{/if}
+				</div>
+			{:else}
+				{#each incoming as rel}
+					<button
+						type="button"
+						disabled={hasPendingChanges}
+						onclick={() => startIncomingFollow(rel, rel.value)}
+						class="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 truncate"
+						title={hasPendingChanges
+							? 'Save or discard grid edits first'
+							: undefined}
+					>
+						{incomingMenuLabel(rel, incoming)}
+					</button>
+				{/each}
+			{/if}
+			{#if editable && (outgoing.length > 0 || incoming.length > 0)}
+				<div class="my-1 border-t border-gray-100"></div>
+			{/if}
+			{#if editable}
+				<button
+					onclick={() =>
+						rowContextMenu && queueDeleteRows([rowContextMenu.rowId])}
+					class="w-full px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50 inline-flex items-center gap-2"
+				>
+					<Trash2 size={14} />
+					Delete Row
+				</button>
+			{/if}
 		</div>
 	{/if}
 </div>

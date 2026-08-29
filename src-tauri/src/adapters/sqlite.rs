@@ -7,7 +7,8 @@ use crate::adapters::traits::{DbAdapter, SqliteAdapter};
 use crate::core::error::DbError;
 use crate::core::types::{
     ApplyTableChangesParams, ApplyTableChangesResponse, ConnectionInput, ConnectionStatus,
-    DatabaseExplorer, DatabaseType, QueryResultPayload, TestConnectionResponse, UpdatedRowCtid,
+    DatabaseExplorer, DatabaseType, ObjectDefinition, ObjectDefinitionParams, QueryResultPayload,
+    TestConnectionResponse, UpdatedRowCtid,
 };
 
 fn sqlite_value_to_json(value: ValueRef<'_>) -> Value {
@@ -60,6 +61,14 @@ impl DbAdapter for SqliteAdapter {
 
     async fn get_database_explorer(&self, connection: &ConnectionInput) -> Result<DatabaseExplorer, DbError> {
         crate::core::db::get_sqlite_database_explorer(connection).map_err(DbError::internal)
+    }
+
+    async fn get_object_definition(
+        &self,
+        connection: &ConnectionInput,
+        params: &ObjectDefinitionParams,
+    ) -> Result<ObjectDefinition, DbError> {
+        crate::core::db::get_sqlite_object_definition(connection, params).map_err(DbError::internal)
     }
 
     async fn list_databases(&self, connection: &ConnectionInput) -> Result<Vec<String>, DbError> {

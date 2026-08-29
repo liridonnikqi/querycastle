@@ -59,17 +59,66 @@ export type DatabaseForeignKey = {
   referencedColumn: string;
 };
 
+export type DatabaseIndex = {
+  name: string;
+  columns: string;
+  unique: boolean;
+  isPrimary: boolean;
+  definition: string | null;
+};
+
+export type DatabaseTrigger = {
+  name: string;
+  definition: string | null;
+};
+
+export type DatabaseRoutineKind = "function" | "procedure";
+
+export type DatabaseRoutine = {
+  schema: string;
+  name: string;
+  kind: DatabaseRoutineKind | string;
+  identityArgs: string;
+  language: string | null;
+  returnType: string | null;
+  objectId: string;
+};
+
+export type DatabaseSequence = {
+  schema: string;
+  name: string;
+  dataType: string | null;
+};
+
 export type DatabaseTable = {
   schema: string;
   name: string;
   kind: "table" | "view";
   columns: DatabaseColumn[];
   foreignKeys: DatabaseForeignKey[];
+  indexes?: DatabaseIndex[];
+  triggers?: DatabaseTrigger[];
 };
 
 export type DatabaseSchema = {
   name: string;
   tables: DatabaseTable[];
+  routines?: DatabaseRoutine[];
+  sequences?: DatabaseSequence[];
+};
+
+export type ObjectDefinitionParams = {
+  kind: string;
+  schema: string;
+  name: string;
+  objectId?: string | null;
+  identityArgs?: string | null;
+  table?: string | null;
+};
+
+export type ObjectDefinition = {
+  title: string;
+  sql: string;
 };
 
 export type DatabaseExplorer = {

@@ -7,7 +7,8 @@ use std::time::Instant;
 use crate::core::types::ConnectionInput;
 use crate::core::db::MAX_QUERY_ROWS;
 use crate::core::types::{
-    DatabaseColumn, DatabaseExplorer, DatabaseForeignKey, DatabaseSchema, DatabaseTable,
+    DatabaseColumn, DatabaseExplorer, DatabaseForeignKey, DatabaseIndex, DatabaseRoutine,
+    DatabaseSchema, DatabaseTable, DatabaseTrigger, ObjectDefinition, ObjectDefinitionParams,
     QueryResultPayload,
 };
 
@@ -147,25 +148,20 @@ pub(crate) async fn get_mysql_database_explorer(
     for (schema_name, table_name, table_type, column_name, data_type, is_nullable, column_key) in table_rows {
         schema_map
             .entry(schema_name.clone())
-            .or_insert_with(|| DatabaseSchema {
-                name: schema_name.clone(),
-                tables: Vec::new(),
-            });
+            .or_insert_with(|| DatabaseSchema::new(schema_name.clone()));
 
         let table_key = format!("{schema_name}.{table_name}");
-        table_map
-            .entry(table_key.clone())
-            .or_insert_with(|| DatabaseTable {
-                schema: schema_name.clone(),
-                name: table_name.clone(),
-                kind: if table_type == "VIEW" {
+        table_map.entry(table_key.clone()).or_insert_with(|| {
+            DatabaseTable::new(
+                schema_name.clone(),
+                table_name.clone(),
+                if table_type == "VIEW" {
                     "view".to_string()
                 } else {
                     "table".to_string()
                 },
-                columns: Vec::new(),
-                foreign_keys: Vec::new(),
-            });
+            )
+        });
 
         if let Some(column_name) = column_name {
             if let Some(table) = table_map.get_mut(&table_key) {
@@ -214,6 +210,10 @@ pub(crate) async fn get_mysql_database_explorer(
         }
     }
 
+    load_mysql_indexes(&mut conn, &mut table_map).await?;
+    load_mysql_triggers(&mut conn, &mut table_map).await?;
+    load_mysql_routines(&mut conn, &mut schema_map).await?;
+
     for table in table_map.into_values() {
         if let Some(schema) = schema_map.get_mut(&table.schema) {
             schema.tables.push(table);
@@ -224,10 +224,253 @@ pub(crate) async fn get_mysql_database_explorer(
     schemas.sort_by(|a, b| a.name.cmp(&b.name));
     for schema in &mut schemas {
         schema.tables.sort_by(|a, b| a.name.cmp(&b.name));
+        schema.routines.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
     Ok(DatabaseExplorer {
         database: current_database,
         schemas,
     })
+}
+
+async fn load_mysql_indexes(
+    conn: &mut MySqlConn,
+    table_map: &mut HashMap<String, DatabaseTable>,
+) -> Result<(), String> {
+    let rows: Vec<(String, String, String, i64, String)> = conn
+        .query(
+            r#"
+            select
+                table_schema,
+                table_name,
+                index_name,
+                non_unique,
+                column_name
+            from information_schema.statistics
+            where table_schema = database()
+            order by table_name, index_name, seq_in_index
+            "#,
+        )
+        .await
+        .map_err(sanitize_mysql_error)?;
+
+    let mut grouped: HashMap<(String, String, String), (bool, bool, Vec<String>)> = HashMap::new();
+    for (schema, table, index_name, non_unique, column_name) in rows {
+        let key = (schema, table, index_name.clone());
+        let entry = grouped.entry(key).or_insert((non_unique == 0, index_name.eq_ignore_ascii_case("PRIMARY"), Vec::new()));
+        entry.2.push(column_name);
+    }
+
+    for ((schema, table, index_name), (unique, is_primary, columns)) in grouped {
+        let table_key = format!("{schema}.{table}");
+        if let Some(table) = table_map.get_mut(&table_key) {
+            table.indexes.push(DatabaseIndex {
+                name: index_name,
+                columns: columns.join(", "),
+                unique,
+                is_primary,
+                definition: None,
+            });
+        }
+    }
+    for table in table_map.values_mut() {
+        table.indexes.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+    Ok(())
+}
+
+async fn load_mysql_triggers(
+    conn: &mut MySqlConn,
+    table_map: &mut HashMap<String, DatabaseTable>,
+) -> Result<(), String> {
+    let rows: Vec<(String, String, String, String, String, Option<String>)> = conn
+        .query(
+            r#"
+            select
+                event_object_schema,
+                event_object_table,
+                trigger_name,
+                action_timing,
+                event_manipulation,
+                action_statement
+            from information_schema.triggers
+            where trigger_schema = database()
+            order by event_object_table, trigger_name
+            "#,
+        )
+        .await
+        .map_err(sanitize_mysql_error)?;
+
+    let mut grouped: HashMap<(String, String, String), (Vec<String>, Option<String>)> = HashMap::new();
+    for (schema, table, name, timing, event, statement) in rows {
+        let key = (schema, table, name);
+        let entry = grouped.entry(key).or_insert((Vec::new(), statement.clone()));
+        let label = format!("{timing} {event}");
+        if !entry.0.contains(&label) {
+            entry.0.push(label);
+        }
+        if entry.1.is_none() {
+            entry.1 = statement;
+        }
+    }
+
+    for ((schema, table, name), (events, statement)) in grouped {
+        let table_key = format!("{schema}.{table}");
+        if let Some(table) = table_map.get_mut(&table_key) {
+            let definition = statement.map(|body| {
+                format!(
+                    "-- {}\n{}",
+                    events.join(", "),
+                    body
+                )
+            });
+            table.triggers.push(DatabaseTrigger { name, definition });
+        }
+    }
+    Ok(())
+}
+
+async fn load_mysql_routines(
+    conn: &mut MySqlConn,
+    schema_map: &mut HashMap<String, DatabaseSchema>,
+) -> Result<(), String> {
+    let rows: Vec<(String, String, String, Option<String>, Option<String>)> = conn
+        .query(
+            r#"
+            select
+                routine_schema,
+                routine_name,
+                routine_type,
+                dtd_identifier,
+                external_language
+            from information_schema.routines
+            where routine_schema = database()
+            order by routine_type, routine_name
+            "#,
+        )
+        .await
+        .map_err(sanitize_mysql_error)?;
+
+    for (schema_name, name, routine_type, return_type, language) in rows {
+        schema_map
+            .entry(schema_name.clone())
+            .or_insert_with(|| DatabaseSchema::new(schema_name.clone()));
+        if let Some(schema) = schema_map.get_mut(&schema_name) {
+            let kind = if routine_type.eq_ignore_ascii_case("PROCEDURE") {
+                "procedure"
+            } else {
+                "function"
+            };
+            schema.routines.push(DatabaseRoutine {
+                object_id: format!("{schema_name}.{name}.{kind}"),
+                schema: schema_name,
+                name,
+                kind: kind.to_string(),
+                identity_args: String::new(),
+                language,
+                return_type,
+            });
+        }
+    }
+    Ok(())
+}
+
+pub(crate) async fn get_mysql_object_definition(
+    connection: &ConnectionInput,
+    params: &ObjectDefinitionParams,
+) -> Result<ObjectDefinition, String> {
+    let mut conn = connect_mysql_client(connection).await?;
+    let kind = params.kind.trim().to_ascii_lowercase();
+    let name = params.name.trim();
+    if name.is_empty() {
+        return Err("Name is required".to_string());
+    }
+    let quoted = crate::core::sql::quote_ident_mysql(name);
+    let sql = match kind.as_str() {
+        "function" => format!("show create function {quoted}"),
+        "procedure" => format!("show create procedure {quoted}"),
+        "trigger" => format!("show create trigger {quoted}"),
+        "view" => {
+            let schema = params.schema.trim();
+            let qualified = if schema.is_empty() {
+                quoted
+            } else {
+                format!("{}.{}", crate::core::sql::quote_ident_mysql(schema), quoted)
+            };
+            format!("show create view {qualified}")
+        }
+        "index" => {
+            let table = params.table.as_deref().unwrap_or("").trim();
+            if table.is_empty() {
+                return Err("Table is required for index definition".to_string());
+            }
+            let rows: Vec<(i64, String)> = conn
+                .exec(
+                    r#"
+                    select non_unique, column_name
+                    from information_schema.statistics
+                    where table_schema = database()
+                      and table_name = ?
+                      and index_name = ?
+                    order by seq_in_index
+                    "#,
+                    (table, name),
+                )
+                .await
+                .map_err(sanitize_mysql_error)?;
+            if rows.is_empty() {
+                return Err("Index not found".to_string());
+            }
+            let unique = rows[0].0 == 0;
+            let columns = rows
+                .into_iter()
+                .map(|(_, column)| crate::core::sql::quote_ident_mysql(&column))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let unique_sql = if unique { " unique" } else { "" };
+            let table_sql = crate::core::sql::quote_ident_mysql(table);
+            let sql_text = if name.eq_ignore_ascii_case("PRIMARY") {
+                format!("alter table {table_sql} add primary key ({columns});")
+            } else {
+                format!("create{unique_sql} index {quoted} on {table_sql} ({columns});")
+            };
+            return Ok(ObjectDefinition {
+                title: name.to_string(),
+                sql: sql_text,
+            });
+        }
+        _ => return Err(format!("Unsupported object type: {kind}")),
+    };
+
+    let rows: Vec<MySqlRow> = conn.query(sql).await.map_err(sanitize_mysql_error)?;
+    let create_sql = rows
+        .first()
+        .and_then(extract_mysql_create_sql)
+        .ok_or_else(|| "Could not load object definition".to_string())?;
+
+    Ok(ObjectDefinition {
+        title: name.to_string(),
+        sql: if create_sql.trim_end().ends_with(';') {
+            create_sql
+        } else {
+            format!("{};", create_sql.trim_end())
+        },
+    })
+}
+
+fn extract_mysql_create_sql(row: &MySqlRow) -> Option<String> {
+    let mut best: Option<String> = None;
+    for index in 0..row.len() {
+        let value = row.as_ref(index).map(mysql_value_to_json).unwrap_or(Value::Null);
+        if let Value::String(text) = value {
+            let trimmed = text.trim();
+            if trimmed.to_ascii_lowercase().starts_with("create") {
+                return Some(text);
+            }
+            if trimmed.len() > best.as_ref().map(|item| item.len()).unwrap_or(0) {
+                best = Some(text);
+            }
+        }
+    }
+    best
 }

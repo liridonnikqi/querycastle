@@ -2,7 +2,9 @@ use tauri::State;
 
 use crate::adapters::traits::get_adapter;
 use crate::core::state::AppState;
-use crate::core::types::{ConnectionStatus, DatabaseExplorer, SelectDatabaseParams};
+use crate::core::types::{
+    ConnectionStatus, DatabaseExplorer, ObjectDefinition, ObjectDefinitionParams, SelectDatabaseParams,
+};
 
 #[tauri::command]
 pub async fn get_database_explorer(
@@ -11,6 +13,18 @@ pub async fn get_database_explorer(
     let (connection, _) = crate::core::db::get_connection_snapshot(&state).await?;
     get_adapter(connection.database_type)
         .get_database_explorer(&connection)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_object_definition(
+    params: ObjectDefinitionParams,
+    state: State<'_, AppState>,
+) -> Result<ObjectDefinition, String> {
+    let (connection, _) = crate::core::db::get_connection_snapshot(&state).await?;
+    get_adapter(connection.database_type)
+        .get_object_definition(&connection, &params)
         .await
         .map_err(|e| e.to_string())
 }

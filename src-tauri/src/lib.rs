@@ -22,6 +22,7 @@ pub fn run() {
             commands::connection::disconnect,
             commands::query::run_query,
             commands::explorer::get_database_explorer,
+            commands::explorer::get_object_definition,
             commands::explorer::list_databases,
             commands::explorer::select_database,
             commands::editing::apply_table_changes,

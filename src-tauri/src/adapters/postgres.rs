@@ -7,8 +7,10 @@ use crate::core::{db, sql};
 use crate::core::error::{DbError, sanitize_pg_error_to_db_error};
 use crate::core::types::{
     ApplyTableChangesParams, ApplyTableChangesResponse, ConnectionInput, ConnectionStatus,
-    DatabaseColumn, DatabaseExplorer, DatabaseForeignKey, DatabaseSchema, DatabaseTable,
-    DatabaseType, QueryResultPayload, TestConnectionResponse, UpdatedRowCtid,
+    DatabaseColumn, DatabaseExplorer, DatabaseForeignKey, DatabaseIndex, DatabaseRoutine,
+    DatabaseSchema, DatabaseSequence, DatabaseTable, DatabaseTrigger, DatabaseType,
+    ObjectDefinition, ObjectDefinitionParams, QueryResultPayload, TestConnectionResponse,
+    UpdatedRowCtid,
 };
 
 #[async_trait]
@@ -168,25 +170,20 @@ impl DbAdapter for PostgresAdapter {
 
             schema_map
                 .entry(schema_name.clone())
-                .or_insert_with(|| DatabaseSchema {
-                    name: schema_name.clone(),
-                    tables: Vec::new(),
-                });
+                .or_insert_with(|| DatabaseSchema::new(schema_name.clone()));
 
             let table_key = format!("{schema_name}.{table_name}");
-            table_map
-                .entry(table_key.clone())
-                .or_insert_with(|| DatabaseTable {
-                    schema: schema_name.clone(),
-                    name: table_name.clone(),
-                    kind: if relkind == "v" || relkind == "m" {
+            table_map.entry(table_key.clone()).or_insert_with(|| {
+                DatabaseTable::new(
+                    schema_name.clone(),
+                    table_name.clone(),
+                    if relkind == "v" || relkind == "m" {
                         "view".to_string()
                     } else {
                         "table".to_string()
                     },
-                    columns: Vec::new(),
-                    foreign_keys: Vec::new(),
-                });
+                )
+            });
 
             if let Some(column) = column_name {
                 if let Some(table) = table_map.get_mut(&table_key) {
@@ -240,6 +237,11 @@ impl DbAdapter for PostgresAdapter {
             }
         }
 
+        load_postgres_indexes(&client, &mut table_map).await?;
+        load_postgres_triggers(&client, &mut table_map).await?;
+        load_postgres_routines(&client, &mut schema_map).await?;
+        load_postgres_sequences(&client, &mut schema_map).await?;
+
         for table in table_map.into_values() {
             if let Some(schema) = schema_map.get_mut(&table.schema) {
                 schema.tables.push(table);
@@ -250,6 +252,8 @@ impl DbAdapter for PostgresAdapter {
         schemas.sort_by(|a, b| a.name.cmp(&b.name));
         for schema in &mut schemas {
             schema.tables.sort_by(|a, b| a.name.cmp(&b.name));
+            schema.routines.sort_by(|a, b| a.name.cmp(&b.name).then(a.identity_args.cmp(&b.identity_args)));
+            schema.sequences.sort_by(|a, b| a.name.cmp(&b.name));
         }
 
         Ok(DatabaseExplorer {
@@ -410,4 +414,358 @@ impl DbAdapter for PostgresAdapter {
             updated_rows,
         })
     }
+
+    async fn get_object_definition(
+        &self,
+        connection: &ConnectionInput,
+        params: &ObjectDefinitionParams,
+    ) -> Result<ObjectDefinition, DbError> {
+        postgres_object_definition(connection, params).await
+    }
+}
+
+async fn load_postgres_indexes(
+    client: &tokio_postgres::Client,
+    table_map: &mut HashMap<String, DatabaseTable>,
+) -> Result<(), DbError> {
+    let rows = client
+        .query(
+            "
+            select
+                n.nspname as schema_name,
+                t.relname as table_name,
+                i.relname as index_name,
+                ix.indisunique as is_unique,
+                ix.indisprimary as is_primary,
+                pg_catalog.pg_get_indexdef(ix.indexrelid) as definition
+            from pg_catalog.pg_index ix
+            join pg_catalog.pg_class t on t.oid = ix.indrelid
+            join pg_catalog.pg_class i on i.oid = ix.indexrelid
+            join pg_catalog.pg_namespace n on n.oid = t.relnamespace
+            where n.nspname not in ('pg_catalog', 'information_schema')
+                and t.relkind in ('r', 'p', 'm', 'f')
+            order by n.nspname, t.relname, i.relname
+            ",
+            &[],
+        )
+        .await
+        .map_err(sanitize_pg_error_to_db_error)?;
+
+    for row in rows {
+        let schema_name: String = row.try_get("schema_name").map_err(sanitize_pg_error_to_db_error)?;
+        let table_name: String = row.try_get("table_name").map_err(sanitize_pg_error_to_db_error)?;
+        let key = format!("{schema_name}.{table_name}");
+        if let Some(table) = table_map.get_mut(&key) {
+            let definition: Option<String> = row.try_get("definition").map_err(sanitize_pg_error_to_db_error)?;
+            table.indexes.push(DatabaseIndex {
+                name: row.try_get("index_name").map_err(sanitize_pg_error_to_db_error)?,
+                columns: String::new(),
+                unique: row.try_get("is_unique").map_err(sanitize_pg_error_to_db_error)?,
+                is_primary: row.try_get("is_primary").map_err(sanitize_pg_error_to_db_error)?,
+                definition,
+            });
+        }
+    }
+    Ok(())
+}
+
+async fn load_postgres_triggers(
+    client: &tokio_postgres::Client,
+    table_map: &mut HashMap<String, DatabaseTable>,
+) -> Result<(), DbError> {
+    let rows = client
+        .query(
+            "
+            select
+                n.nspname as schema_name,
+                c.relname as table_name,
+                t.tgname as trigger_name,
+                pg_catalog.pg_get_triggerdef(t.oid, true) as definition
+            from pg_catalog.pg_trigger t
+            join pg_catalog.pg_class c on c.oid = t.tgrelid
+            join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+            where not t.tgisinternal
+                and n.nspname not in ('pg_catalog', 'information_schema')
+            order by n.nspname, c.relname, t.tgname
+            ",
+            &[],
+        )
+        .await
+        .map_err(sanitize_pg_error_to_db_error)?;
+
+    for row in rows {
+        let schema_name: String = row.try_get("schema_name").map_err(sanitize_pg_error_to_db_error)?;
+        let table_name: String = row.try_get("table_name").map_err(sanitize_pg_error_to_db_error)?;
+        let key = format!("{schema_name}.{table_name}");
+        if let Some(table) = table_map.get_mut(&key) {
+            table.triggers.push(DatabaseTrigger {
+                name: row.try_get("trigger_name").map_err(sanitize_pg_error_to_db_error)?,
+                definition: row.try_get("definition").map_err(sanitize_pg_error_to_db_error)?,
+            });
+        }
+    }
+    Ok(())
+}
+
+async fn load_postgres_routines(
+    client: &tokio_postgres::Client,
+    schema_map: &mut HashMap<String, DatabaseSchema>,
+) -> Result<(), DbError> {
+    let rows = client
+        .query(
+            "
+            select
+                n.nspname as schema_name,
+                p.proname as name,
+                p.oid::text as object_id,
+                case p.prokind
+                    when 'p' then 'procedure'
+                    else 'function'
+                end as kind,
+                pg_catalog.pg_get_function_identity_arguments(p.oid) as identity_args,
+                l.lanname as language,
+                pg_catalog.pg_get_function_result(p.oid) as return_type
+            from pg_catalog.pg_proc p
+            join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+            join pg_catalog.pg_language l on l.oid = p.prolang
+            where n.nspname not in ('pg_catalog', 'information_schema')
+                and p.prokind in ('f', 'p')
+            order by n.nspname, p.proname
+            ",
+            &[],
+        )
+        .await
+        .map_err(sanitize_pg_error_to_db_error)?;
+
+    for row in rows {
+        let schema_name: String = row.try_get("schema_name").map_err(sanitize_pg_error_to_db_error)?;
+        schema_map
+            .entry(schema_name.clone())
+            .or_insert_with(|| DatabaseSchema::new(schema_name.clone()));
+        if let Some(schema) = schema_map.get_mut(&schema_name) {
+            schema.routines.push(DatabaseRoutine {
+                schema: schema_name,
+                name: row.try_get("name").map_err(sanitize_pg_error_to_db_error)?,
+                kind: row.try_get("kind").map_err(sanitize_pg_error_to_db_error)?,
+                identity_args: row
+                    .try_get::<_, Option<String>>("identity_args")
+                    .map_err(sanitize_pg_error_to_db_error)?
+                    .unwrap_or_default(),
+                language: row.try_get("language").map_err(sanitize_pg_error_to_db_error)?,
+                return_type: row.try_get("return_type").map_err(sanitize_pg_error_to_db_error)?,
+                object_id: row.try_get("object_id").map_err(sanitize_pg_error_to_db_error)?,
+            });
+        }
+    }
+    Ok(())
+}
+
+async fn load_postgres_sequences(
+    client: &tokio_postgres::Client,
+    schema_map: &mut HashMap<String, DatabaseSchema>,
+) -> Result<(), DbError> {
+    let rows = client
+        .query(
+            "
+            select
+                n.nspname as schema_name,
+                c.relname as name,
+                pg_catalog.format_type(s.seqtypid, null) as data_type
+            from pg_catalog.pg_class c
+            join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+            left join pg_catalog.pg_sequence s on s.seqrelid = c.oid
+            where c.relkind = 'S'
+                and n.nspname not in ('pg_catalog', 'information_schema')
+            order by n.nspname, c.relname
+            ",
+            &[],
+        )
+        .await
+        .map_err(sanitize_pg_error_to_db_error)?;
+
+    for row in rows {
+        let schema_name: String = row.try_get("schema_name").map_err(sanitize_pg_error_to_db_error)?;
+        schema_map
+            .entry(schema_name.clone())
+            .or_insert_with(|| DatabaseSchema::new(schema_name.clone()));
+        if let Some(schema) = schema_map.get_mut(&schema_name) {
+            schema.sequences.push(DatabaseSequence {
+                schema: schema_name,
+                name: row.try_get("name").map_err(sanitize_pg_error_to_db_error)?,
+                data_type: row.try_get("data_type").map_err(sanitize_pg_error_to_db_error)?,
+            });
+        }
+    }
+    Ok(())
+}
+
+async fn postgres_object_definition(
+    connection: &ConnectionInput,
+    params: &ObjectDefinitionParams,
+) -> Result<ObjectDefinition, DbError> {
+    let client = db::connect_client(connection).await.map_err(DbError::internal)?;
+    let kind = params.kind.trim().to_ascii_lowercase();
+    let schema = params.schema.trim();
+    let name = params.name.trim();
+    if schema.is_empty() || name.is_empty() {
+        return Err(DbError::validation("Schema and name are required"));
+    }
+
+    let qualified = format!("{}.{}", sql::quote_ident(schema), sql::quote_ident(name));
+    let sql_text = match kind.as_str() {
+        "function" | "procedure" => postgres_routine_definition(&client, params, schema, name).await?,
+        "sequence" => {
+            let row = client
+                .query_opt(
+                    "
+                    select format(
+                        'CREATE SEQUENCE %I.%I AS %s INCREMENT BY %s MINVALUE %s MAXVALUE %s START WITH %s CACHE %s%s;',
+                        n.nspname,
+                        c.relname,
+                        pg_catalog.format_type(s.seqtypid, null),
+                        s.seqincrement,
+                        s.seqmin,
+                        s.seqmax,
+                        s.seqstart,
+                        s.seqcache,
+                        case when s.seqcycle then ' CYCLE' else ' NO CYCLE' end
+                    ) as definition
+                    from pg_catalog.pg_class c
+                    join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+                    left join pg_catalog.pg_sequence s on s.seqrelid = c.oid
+                    where n.nspname = $1 and c.relname = $2 and c.relkind = 'S'
+                    ",
+                    &[&schema, &name],
+                )
+                .await
+                .map_err(sanitize_pg_error_to_db_error)?;
+            let definition = extract_definition_row(row)?;
+            if definition.trim().is_empty() {
+                format!("select * from {qualified}")
+            } else {
+                definition
+            }
+        }
+        "index" => {
+            let row = client
+                .query_opt(
+                    "
+                    select pg_catalog.pg_get_indexdef(c.oid) as definition
+                    from pg_catalog.pg_class c
+                    join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+                    where n.nspname = $1 and c.relname = $2 and c.relkind = 'i'
+                    ",
+                    &[&schema, &name],
+                )
+                .await
+                .map_err(sanitize_pg_error_to_db_error)?;
+            extract_definition_row(row)?
+        }
+        "trigger" => {
+            let table = params.table.as_deref().unwrap_or("").trim();
+            let row = client
+                .query_opt(
+                    "
+                    select pg_catalog.pg_get_triggerdef(t.oid, true) as definition
+                    from pg_catalog.pg_trigger t
+                    join pg_catalog.pg_class c on c.oid = t.tgrelid
+                    join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+                    where n.nspname = $1 and t.tgname = $2
+                        and ($3 = '' or c.relname = $3)
+                    ",
+                    &[&schema, &name, &table],
+                )
+                .await
+                .map_err(sanitize_pg_error_to_db_error)?;
+            extract_definition_row(row)?
+        }
+        "view" => {
+            let row = client
+                .query_opt(
+                    "
+                    select pg_catalog.pg_get_viewdef(c.oid, true) as definition
+                    from pg_catalog.pg_class c
+                    join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+                    where n.nspname = $1 and c.relname = $2 and c.relkind in ('v', 'm')
+                    ",
+                    &[&schema, &name],
+                )
+                .await
+                .map_err(sanitize_pg_error_to_db_error)?;
+            let body = extract_definition_row(row)?;
+            if body.is_empty() {
+                String::new()
+            } else {
+                format!("create or replace view {qualified} as\n{body}")
+            }
+        }
+        _ => {
+            return Err(DbError::validation(format!("Unsupported object type: {kind}")));
+        }
+    };
+
+    if sql_text.trim().is_empty() {
+        return Err(DbError::validation("Could not load object definition"));
+    }
+
+    let title = match kind.as_str() {
+        "function" | "procedure" => name.to_string(),
+        _ => name.to_string(),
+    };
+
+    Ok(ObjectDefinition {
+        title,
+        sql: if sql_text.trim_end().ends_with(';') {
+            sql_text
+        } else {
+            format!("{};", sql_text.trim_end())
+        },
+    })
+}
+
+async fn postgres_routine_definition(
+    client: &tokio_postgres::Client,
+    params: &ObjectDefinitionParams,
+    schema: &str,
+    name: &str,
+) -> Result<String, DbError> {
+    if let Some(object_id) = params.object_id.as_deref().filter(|value| !value.is_empty()) {
+        if let Ok(oid) = object_id.parse::<u32>() {
+            let row = client
+                .query_opt(
+                    "select pg_catalog.pg_get_functiondef($1::oid) as definition",
+                    &[&oid],
+                )
+                .await
+                .map_err(sanitize_pg_error_to_db_error)?;
+            return extract_definition_row(row);
+        }
+    }
+
+    let identity = params.identity_args.as_deref().unwrap_or("").trim();
+    let row = client
+        .query_opt(
+            "
+            select pg_catalog.pg_get_functiondef(p.oid) as definition
+            from pg_catalog.pg_proc p
+            join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = $1
+                and p.proname = $2
+                and ($3 = '' or pg_catalog.pg_get_function_identity_arguments(p.oid) = $3)
+            order by p.oid
+            limit 1
+            ",
+            &[&schema, &name, &identity],
+        )
+        .await
+        .map_err(sanitize_pg_error_to_db_error)?;
+    extract_definition_row(row)
+}
+
+fn extract_definition_row(row: Option<tokio_postgres::Row>) -> Result<String, DbError> {
+    let row = row.ok_or_else(|| DbError::validation("Could not load object definition"))?;
+    let value: Option<String> = row
+        .try_get("definition")
+        .map_err(sanitize_pg_error_to_db_error)?;
+    Ok(value.unwrap_or_default())
 }

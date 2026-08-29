@@ -1,4 +1,5 @@
 import type { DatabaseExplorer, DatabaseType } from '$lib/rpc';
+import { isExplorerView } from '$lib/utils/schema-objects';
 import { quoteSqlIdentifier, unquoteIdent } from '$lib/utils/sql';
 
 export type EditableQueryPlan = {
@@ -130,6 +131,8 @@ export function tryBuildEditableQuery(params: {
 	} else {
 		return null;
 	}
+
+	if (isExplorerView(explorer, contextSchema, contextTable)) return null;
 
 	let effectiveTail = tail;
 	if (!/\border\s+by\b/i.test(effectiveTail)) {

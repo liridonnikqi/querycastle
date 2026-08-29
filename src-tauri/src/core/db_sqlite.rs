@@ -5,8 +5,9 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::core::types::{
-    ConnectionInput, DatabaseColumn, DatabaseExplorer, DatabaseForeignKey, DatabaseSchema,
-    DatabaseTable, QueryResultPayload,
+    ConnectionInput, DatabaseColumn, DatabaseExplorer, DatabaseForeignKey, DatabaseIndex,
+    DatabaseSchema, DatabaseTable, DatabaseTrigger, ObjectDefinition, ObjectDefinitionParams,
+    QueryResultPayload,
 };
 
 fn escape_single_quotes(value: &str) -> String {
@@ -171,6 +172,9 @@ pub(crate) fn get_sqlite_database_explorer(connection: &ConnectionInput) -> Resu
             foreign_keys.push(fk.map_err(|error| format!("SQLite foreign key parse failed: {error}"))?);
         }
 
+        let indexes = load_sqlite_indexes(&conn, &table_name)?;
+        let triggers = load_sqlite_triggers(&conn, &table_name)?;
+
         tables.push(DatabaseTable {
             schema: "main".to_string(),
             name: table_name,
@@ -181,6 +185,8 @@ pub(crate) fn get_sqlite_database_explorer(connection: &ConnectionInput) -> Resu
             },
             columns,
             foreign_keys,
+            indexes,
+            triggers,
         });
     }
 
@@ -189,7 +195,127 @@ pub(crate) fn get_sqlite_database_explorer(connection: &ConnectionInput) -> Resu
         schemas: vec![DatabaseSchema {
             name: "main".to_string(),
             tables,
+            routines: Vec::new(),
+            sequences: Vec::new(),
         }],
+    })
+}
+
+fn load_sqlite_indexes(conn: &Connection, table_name: &str) -> Result<Vec<DatabaseIndex>, String> {
+    let pragma_name = escape_single_quotes(table_name);
+    let sql = format!("PRAGMA index_list('{pragma_name}')");
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|error| format!("SQLite index list failed: {error}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2).unwrap_or(0) != 0,
+                row.get::<_, String>(3).unwrap_or_default(),
+            ))
+        })
+        .map_err(|error| format!("SQLite index list read failed: {error}"))?;
+
+    let mut indexes = Vec::new();
+    for entry in rows {
+        let (name, unique, origin) = entry.map_err(|error| format!("SQLite index parse failed: {error}"))?;
+        let columns = sqlite_index_columns(conn, &name)?;
+        let definition = sqlite_master_sql(conn, "index", &name)?;
+        indexes.push(DatabaseIndex {
+            name,
+            columns,
+            unique,
+            is_primary: origin.eq_ignore_ascii_case("pk"),
+            definition,
+        });
+    }
+    Ok(indexes)
+}
+
+fn sqlite_index_columns(conn: &Connection, index_name: &str) -> Result<String, String> {
+    let pragma_name = escape_single_quotes(index_name);
+    let sql = format!("PRAGMA index_info('{pragma_name}')");
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|error| format!("SQLite index info failed: {error}"))?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, Option<String>>(2))
+        .map_err(|error| format!("SQLite index info read failed: {error}"))?;
+    let mut columns = Vec::new();
+    for entry in rows {
+        if let Some(name) = entry.map_err(|error| format!("SQLite index column parse failed: {error}"))? {
+            columns.push(name);
+        }
+    }
+    Ok(columns.join(", "))
+}
+
+fn load_sqlite_triggers(conn: &Connection, table_name: &str) -> Result<Vec<DatabaseTrigger>, String> {
+    let mut stmt = conn
+        .prepare(
+            "
+            select name, sql
+            from sqlite_master
+            where type = 'trigger' and tbl_name = ?
+            order by name
+            ",
+        )
+        .map_err(|error| format!("SQLite trigger query failed: {error}"))?;
+    let rows = stmt
+        .query_map([table_name], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })
+        .map_err(|error| format!("SQLite trigger read failed: {error}"))?;
+    let mut triggers = Vec::new();
+    for entry in rows {
+        let (name, definition) = entry.map_err(|error| format!("SQLite trigger parse failed: {error}"))?;
+        triggers.push(DatabaseTrigger { name, definition });
+    }
+    Ok(triggers)
+}
+
+fn sqlite_master_sql(conn: &Connection, kind: &str, name: &str) -> Result<Option<String>, String> {
+    conn.query_row(
+        "select sql from sqlite_master where type = ?1 and name = ?2",
+        [kind, name],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .or_else(|error| {
+        if matches!(error, rusqlite::Error::QueryReturnedNoRows) {
+            Ok(None)
+        } else {
+            Err(format!("SQLite definition lookup failed: {error}"))
+        }
+    })
+}
+
+pub(crate) fn get_sqlite_object_definition(
+    connection: &ConnectionInput,
+    params: &ObjectDefinitionParams,
+) -> Result<ObjectDefinition, String> {
+    let conn = open_sqlite_connection(connection)?;
+    let kind = params.kind.trim().to_ascii_lowercase();
+    let name = params.name.trim();
+    if name.is_empty() {
+        return Err("Name is required".to_string());
+    }
+    let master_kind = match kind.as_str() {
+        "index" => "index",
+        "trigger" => "trigger",
+        "view" => "view",
+        "table" => "table",
+        _ => return Err(format!("SQLite does not support {kind} definitions")),
+    };
+    let sql = sqlite_master_sql(&conn, master_kind, name)?
+        .ok_or_else(|| "Could not load object definition".to_string())?;
+    Ok(ObjectDefinition {
+        title: name.to_string(),
+        sql: if sql.trim_end().ends_with(';') {
+            sql
+        } else {
+            format!("{};", sql.trim_end())
+        },
     })
 }
 
