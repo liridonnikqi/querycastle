@@ -22,6 +22,7 @@ export type ConnectionStatus = {
   database: string;
   user: string;
   serverVersion: string | null;
+  sessionId?: string;
 };
 
 export type QueryResultPayload = {
