@@ -1,9 +1,14 @@
 import type { DatabaseExplorer, DatabaseType } from '$lib/rpc';
-import { buildMysqlRowHashExpression } from '$lib/utils/editable-query';
-import { HIDDEN_ROW_ID_COLUMN } from '$lib/utils/relation-sql';
+import { mysqlRowAlias } from '$lib/utils/dialect';
 import { quoteLiteral } from '$lib/utils/relation-sql';
 import { isExplorerView } from '$lib/utils/schema-objects';
 import { quoteSqlIdentifier } from '$lib/utils/sql';
+import {
+	buildLimitClause,
+	buildOrderByClause,
+	buildTableSelect,
+	qualifyTable,
+} from '$lib/utils/table-select';
 
 export const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const;
 export type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
@@ -50,26 +55,7 @@ export function combineWhereClauses(parts: string[]): string {
 	return ` where ${clauses.join(' and ')}`;
 }
 
-export function buildOrderByClause(
-	databaseType: DatabaseType,
-	sort: GridSort | null,
-): string {
-	if (!sort) return '';
-	const ident = quoteSqlIdentifier(databaseType, sort.column);
-	if (databaseType === 'mysql') return ` order by ${ident} ${sort.dir}`;
-	return ` order by ${ident} ${sort.dir} nulls last`;
-}
-
-export function buildLimitClause(limit: number, offset: number): string {
-	const safeLimit = Math.max(1, Math.floor(limit));
-	const safeOffset = Math.max(0, Math.floor(offset));
-	if (safeOffset === 0) return ` limit ${safeLimit}`;
-	return ` limit ${safeLimit} offset ${safeOffset}`;
-}
-
-export function qualifyTable(databaseType: DatabaseType, schema: string, table: string): string {
-	return `${quoteSqlIdentifier(databaseType, schema)}.${quoteSqlIdentifier(databaseType, table)}`;
-}
+export { buildLimitClause, buildOrderByClause, qualifyTable };
 
 export function buildTableCountSql(params: {
 	databaseType: DatabaseType;
@@ -112,33 +98,22 @@ export function buildTableBrowseSql(params: {
 }): string | null {
 	const { databaseType, explorer, schema, table, baseWhere, filters, sort, limit, offset } =
 		params;
-	const tableRef = qualifyTable(databaseType, schema, table);
-	const viewingView = isExplorerView(explorer, schema, table);
-	const alias = databaseType === 'mysql' && !viewingView ? '_querycastle_src' : undefined;
+	const alias = mysqlRowAlias(databaseType, explorer, schema, table);
 	const filterParts = filters
 		.filter((item) => item.value.trim().length > 0)
 		.map((item) => buildFilterPredicate(databaseType, item.column, item.value.trim(), alias));
 	const where = combineWhereClauses([stripRowAlias(baseWhere), ...filterParts]);
-	const orderBy = buildOrderByClause(databaseType, sort);
-	const paging = buildLimitClause(limit, offset);
-
-	if (viewingView) {
-		return `select * from ${tableRef}${where}${orderBy}${paging};`;
-	}
-	if (databaseType === 'sqlite') {
-		return `select cast(rowid as text) as ${HIDDEN_ROW_ID_COLUMN}, * from ${tableRef}${where}${orderBy}${paging};`;
-	}
-	if (databaseType === 'mysql') {
-		const rowHashWithAlias = buildMysqlRowHashExpression(
-			explorer,
-			schema,
-			table,
-			'_querycastle_src',
-		);
-		if (!rowHashWithAlias) return null;
-		return `select ${rowHashWithAlias} as ${HIDDEN_ROW_ID_COLUMN}, _querycastle_src.* from ${tableRef} as _querycastle_src${where}${orderBy}${paging};`;
-	}
-	return `select ctid::text as ${HIDDEN_ROW_ID_COLUMN}, * from ${tableRef}${where}${orderBy}${paging};`;
+	return buildTableSelect({
+		databaseType,
+		explorer,
+		schema,
+		table,
+		whereClause: where,
+		orderClause: buildOrderByClause(databaseType, sort),
+		limit,
+		offset,
+		includeRowId: !isExplorerView(explorer, schema, table),
+	});
 }
 
 export function nextSortState(current: GridSort | null, column: string): GridSort | null {
