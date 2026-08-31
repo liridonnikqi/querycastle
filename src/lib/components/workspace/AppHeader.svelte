@@ -1,160 +1,100 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-import { ChevronRight, Maximize2, Minimize2, Minus, Unplug, X } from '@lucide/svelte';
-import { isTauri } from '@tauri-apps/api/core';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import type { ConnectionStatus } from '$lib/rpc';
+	import { LogOut, Search } from '@lucide/svelte';
+	import { isTauri } from '@tauri-apps/api/core';
+	import { getCurrentWindow } from '@tauri-apps/api/window';
+	import type { ConnectionStatus } from '$lib/rpc';
+	import ThemeToggle from '$lib/components/ui/ThemeToggle.svelte';
+	import WindowControls from '$lib/components/ui/WindowControls.svelte';
+	import QueryCastleLogo from '$lib/components/ui/QueryCastleLogo.svelte';
+	import { gridChrome, requestOpenPendingChanges } from '$lib/stores/grid-chrome.svelte';
+	import type { Snippet } from 'svelte';
 
 	let {
 		connectionStatus,
 		onDisconnect,
+		onOpenSearch,
+		leading,
 	}: {
 		connectionStatus: ConnectionStatus;
 		onDisconnect: () => void;
+		onOpenSearch: () => void;
+		leading?: Snippet;
 	} = $props();
 
-	const appWindow = getCurrentWindow();
-	let maximized = $state(false);
-	let desktopWindowControls = $state(false);
-	let mounted = false;
+	const isMac = $derived(
+		typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform),
+	);
 
 	async function handleHeaderDoubleClick() {
-		if (!mounted || !desktopWindowControls) return;
-		await handleToggleMaximize();
-	}
-
-	async function refreshMaximizedState() {
-		if (!mounted || !desktopWindowControls) return;
-		maximized = await appWindow.isMaximized();
-	}
-
-	async function handleMinimize() {
-		if (!mounted || !desktopWindowControls) return;
+		if (!isTauri()) return;
 		try {
-			await appWindow.minimize();
+			await getCurrentWindow().toggleMaximize();
 		} catch {
-			// Ignore blocked/unsupported minimize attempts.
+			// ignore
 		}
 	}
-
-	async function handleToggleMaximize() {
-		if (!mounted || !desktopWindowControls) return;
-		try {
-			await appWindow.toggleMaximize();
-		} catch {
-			// Ignore blocked/unsupported maximize attempts.
-		}
-		await refreshMaximizedState();
-	}
-
-	async function handleClose() {
-		if (!mounted || !desktopWindowControls) return;
-		try {
-			await appWindow.close();
-		} catch {
-			// Ignore blocked/unsupported close attempts.
-		}
-	}
-
-	onMount(() => {
-		mounted = true;
-		desktopWindowControls = isTauri();
-		if (!desktopWindowControls) return () => {
-			mounted = false;
-		};
-
-		let unlistenResize: (() => void) | null = null;
-		void (async () => {
-			await refreshMaximizedState();
-			unlistenResize = await appWindow.onResized(() => {
-				void refreshMaximizedState();
-			});
-		})();
-
-		return () => {
-			mounted = false;
-			unlistenResize?.();
-		};
-	});
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <header
-	class="flex items-center h-12 bg-[#1c1c1e] text-gray-300 px-3 shrink-0 shadow-sm z-30 relative"
+	data-tauri-drag-region
+	class="h-10 grid grid-cols-[minmax(0,1fr)_minmax(200px,28rem)_minmax(0,1fr)] items-center border-b border-qc-border bg-qc-panel shrink-0 px-2 gap-2"
+	ondblclick={handleHeaderDoubleClick}
 >
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div
-		data-tauri-drag-region
-		class="flex items-center space-x-3 min-w-0 flex-1 h-full cursor-grab active:cursor-grabbing"
-		ondblclick={handleHeaderDoubleClick}
-	>
-		<img src="/icon.svg?v=2" alt="QueryCastle" class="w-6 h-6 rounded-[5px] object-contain shrink-0" />
-		<div class="flex items-center text-sm min-w-0">
-			<span class="text-gray-400 cursor-default hover:text-gray-200 truncate">
-				{connectionStatus.connected ? connectionStatus.host : 'Disconnected'}
-			</span>
-
-			<ChevronRight size={14} class="mx-1 text-gray-600 shrink-0" />
-
-			<span class="font-medium text-gray-100 cursor-default flex items-center truncate">
-				{connectionStatus.connected
-					? connectionStatus.database || 'No database selected'
-					: 'No database selected'}
-			</span>
-		</div>
+	<div class="flex items-center gap-1.5 min-w-0 overflow-hidden pl-1" data-tauri-drag-region>
+		<QueryCastleLogo size={16} class="text-[#2563eb]" alt="" />
+		{#if leading}
+			<div class="min-w-0 max-w-full overflow-hidden" data-tauri-drag-region="false">
+				{@render leading()}
+			</div>
+		{/if}
 	</div>
-	{#if connectionStatus.connected}
+
+	<div class="min-w-0" data-tauri-drag-region>
 		<button
-			onclick={onDisconnect}
+			type="button"
+			onclick={onOpenSearch}
 			onmousedown={(event) => event.stopPropagation()}
-			ondblclick={(event) => event.stopPropagation()}
-			class="h-7 px-2 rounded border border-white/15 text-xs text-gray-300 hover:text-white hover:bg-red-600 hover:border-red-600 inline-flex items-center gap-1"
+			data-tauri-drag-region="false"
+			class="w-full max-w-md h-7 flex items-center gap-2 rounded-md border border-qc-border bg-qc-bg px-2.5 text-qc-muted hover:border-qc-muted"
 		>
-			<Unplug size={12} />
-			Disconnect
+			<Search size={14} class="shrink-0" />
+			<span class="text-[12px] flex-1 text-left truncate">Search or run commands...</span>
+			<kbd class="text-[10px] text-qc-muted bg-qc-elevated border border-qc-border rounded px-1 py-0.5 font-mono">
+				{isMac ? '⌘K' : 'Ctrl+K'}
+			</kbd>
 		</button>
-	{/if}
-	{#if desktopWindowControls}
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div
-			data-tauri-drag-region
-			class="h-full w-3 cursor-grab active:cursor-grabbing"
-			ondblclick={handleHeaderDoubleClick}
-		></div>
-		<div class="flex items-center gap-1 ml-3">
+	</div>
+
+	<div class="flex items-center justify-end gap-0.5 min-w-0" data-tauri-drag-region="false">
+		{#if gridChrome.changeCount > 0}
 			<button
 				type="button"
-				aria-label="Minimize window"
-				class="w-9 h-8 rounded-md flex items-center justify-center text-gray-300 hover:bg-white/10 hover:text-white"
+				onclick={requestOpenPendingChanges}
 				onmousedown={(event) => event.stopPropagation()}
-				ondblclick={(event) => event.stopPropagation()}
-				onclick={handleMinimize}
+				class="changes-btn"
+				title="Review pending changes"
 			>
-				<Minus size={14} />
+				<span class="changes-btn-inner">
+					Changes
+					<span class="changes-btn-count">{gridChrome.changeCount}</span>
+				</span>
 			</button>
+		{/if}
+		<ThemeToggle />
+		{#if connectionStatus.connected}
+			<div class="w-px h-4 bg-qc-border mx-1"></div>
 			<button
 				type="button"
-				aria-label={maximized ? 'Restore window' : 'Maximize window'}
-				class="w-9 h-8 rounded-md flex items-center justify-center text-gray-300 hover:bg-white/10 hover:text-white"
+				onclick={onDisconnect}
 				onmousedown={(event) => event.stopPropagation()}
-				ondblclick={(event) => event.stopPropagation()}
-				onclick={handleToggleMaximize}
+				class="w-7 h-7 rounded-md flex items-center justify-center text-qc-muted hover:bg-qc-hover hover:text-qc-subtle"
+				title="Disconnect"
 			>
-				{#if maximized}
-					<Minimize2 size={13} />
-				{:else}
-					<Maximize2 size={13} />
-				{/if}
+				<LogOut size={14} />
 			</button>
-			<button
-				type="button"
-				aria-label="Close window"
-				class="w-9 h-8 rounded-md flex items-center justify-center text-gray-300 hover:bg-red-600 hover:text-white"
-				onmousedown={(event) => event.stopPropagation()}
-				ondblclick={(event) => event.stopPropagation()}
-				onclick={handleClose}
-			>
-				<X size={14} />
-			</button>
-		</div>
-	{/if}
+		{/if}
+		<div class="w-px h-4 bg-qc-border mx-1"></div>
+		<WindowControls />
+	</div>
 </header>
