@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::adapters::traits::get_adapter;
+use crate::core::error::StructuredDbError;
 use crate::core::state::AppState;
 use crate::core::types::{ApplyTableChangesParams, ApplyTableChangesResponse};
 
@@ -8,10 +8,9 @@ use crate::core::types::{ApplyTableChangesParams, ApplyTableChangesResponse};
 pub async fn apply_table_changes(
     params: ApplyTableChangesParams,
     state: State<'_, AppState>,
-) -> Result<ApplyTableChangesResponse, String> {
-    let (connection, _) = crate::core::db::get_connection_snapshot(&state).await?;
-    get_adapter(connection.database_type)
-        .apply_table_changes(&connection, &params)
+) -> Result<ApplyTableChangesResponse, StructuredDbError> {
+    let active = state.require_active().await.map_err(StructuredDbError::from)?;
+    crate::adapters::apply_table_changes(&active.pool, &params)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(StructuredDbError::from)
 }
