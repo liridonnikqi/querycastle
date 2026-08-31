@@ -24,13 +24,13 @@ You need Node.js, Rust, and the [Tauri prerequisites](https://v2.tauri.app/start
 
 ```bash
 npm install
-npm run dev
+npm run tauri dev
 ```
 
 To build an installer:
 
 ```bash
-npx tauri build
+npm run tauri build
 ```
 
 ## License
