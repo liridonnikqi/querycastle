@@ -166,8 +166,8 @@
 
 	let controlClass = $derived(
 		flush
-			? 'w-full h-full min-h-0 max-h-8 overflow-hidden text-ellipsis whitespace-nowrap px-4 py-0 rounded-none border-0 bg-transparent text-[12px] text-gray-800 outline-none shadow-none ring-0 focus:ring-0 focus:outline-none disabled:text-gray-400'
-			: 'w-full h-8 px-2 rounded-md border border-gray-200 bg-white text-[12px] text-gray-800 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 disabled:bg-gray-50 disabled:text-gray-400',
+			? 'w-full h-full min-h-0 max-h-8 overflow-hidden text-ellipsis whitespace-nowrap px-4 py-0 rounded-none border-0 bg-transparent text-[12px] text-qc-fg outline-none shadow-none ring-0 focus:ring-0 focus:outline-none disabled:text-qc-muted'
+			: 'w-full h-8 px-2 rounded-md border border-qc-border bg-qc-bg text-[12px] text-qc-fg outline-none focus:border-qc-focus-border disabled:bg-qc-elevated disabled:text-qc-muted',
 	);
 </script>
 
@@ -194,13 +194,13 @@
 		<button
 			bind:this={triggerEl}
 			type="button"
-			class={`${controlClass} flex items-center gap-1 text-left ${open && !flush ? 'border-emerald-500 ring-1 ring-emerald-500' : ''}`}
+			class={`${controlClass} flex items-center gap-1 text-left ${open && !flush ? 'border-qc-focus-border ring-1 ring-qc-focus-border' : ''}`}
 			{disabled}
 			onclick={toggleOpen}
 			onkeydown={handleKeydown}
 		>
-			<span class={`truncate flex-1 ${value ? 'text-gray-900' : 'text-gray-400'}`}>{triggerText}</span>
-			<ChevronsUpDown size={12} class="shrink-0 text-gray-400" />
+			<span class={`truncate flex-1 ${value ? 'text-qc-fg' : 'text-qc-muted'}`}>{triggerText}</span>
+			<ChevronsUpDown size={12} class="shrink-0 text-qc-muted" />
 		</button>
 		{#if open}
 			<button
@@ -210,11 +210,11 @@
 				onclick={() => (open = false)}
 			></button>
 			<div
-				class="fixed z-[100] overflow-hidden rounded-md border border-gray-200 bg-white shadow-[0_10px_30px_rgba(0,0,0,0.12)]"
+				class="fixed z-[100] overflow-hidden rounded-md border border-qc-border bg-qc-elevated shadow-[0_10px_30px_rgba(0,0,0,0.28)]"
 				style={panelStyle}
 			>
-				<div class="flex items-center gap-2 border-b border-gray-100 px-2">
-					<Search size={12} class="text-gray-400 shrink-0" />
+				<div class="flex items-center gap-2 border-b border-qc-border px-2">
+					<Search size={12} class="text-qc-muted shrink-0" />
 					<input
 						bind:this={inputEl}
 						value={filter}
@@ -230,14 +230,14 @@
 				</div>
 				<div class="max-h-48 overflow-y-auto py-1">
 					{#if fkLoading && filteredOptions.length === 0}
-						<div class="px-3 py-2 text-[12px] text-gray-500">Loading…</div>
+						<div class="px-3 py-2 text-[12px] text-qc-muted">Loading…</div>
 					{:else if filteredOptions.length === 0}
-						<div class="px-3 py-2 text-[12px] text-gray-500">No matching records</div>
+						<div class="px-3 py-2 text-[12px] text-qc-muted">No matching records</div>
 					{:else}
 						{#each filteredOptions as option, index}
 							<button
 								type="button"
-								class={`w-full px-3 py-2 text-left text-[12px] flex items-center gap-2 ${index === highlight ? 'bg-emerald-50 text-emerald-900' : 'text-gray-800 hover:bg-gray-50'}`}
+								class={`w-full px-3 py-2 text-left text-[12px] flex items-center gap-2 ${index === highlight ? 'bg-qc-hover text-qc-fg' : 'text-qc-subtle hover:bg-qc-hover'}`}
 								onmousedown={(event) => event.preventDefault()}
 								onmouseenter={() => (highlight = index)}
 								onclick={() => chooseOption(option)}
@@ -247,13 +247,13 @@
 										{hasDistinctLabel(option) ? option.label : String(option.id)}
 									</span>
 									{#if hasDistinctLabel(option)}
-										<span class="block truncate font-mono text-[10px] text-gray-400"
+										<span class="block truncate font-mono text-[10px] text-qc-muted"
 											>{option.id}</span
 										>
 									{/if}
 								</span>
 								{#if String(option.id) === value}
-									<Check size={12} class="shrink-0 text-emerald-600" />
+									<Check size={12} class="shrink-0 text-qc-fg" />
 								{/if}
 							</button>
 						{/each}
@@ -262,7 +262,7 @@
 				{#if nullable}
 					<button
 						type="button"
-						class="w-full border-t border-gray-100 px-3 py-1.5 text-left text-[12px] text-gray-500 hover:bg-gray-50"
+						class="w-full border-t border-qc-border px-3 py-1.5 text-left text-[12px] text-qc-muted hover:bg-qc-hover"
 						onmousedown={(event) => event.preventDefault()}
 						onclick={clearValue}
 					>

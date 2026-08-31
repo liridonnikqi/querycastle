@@ -16,21 +16,21 @@
 
 {#if crumbs.length > 0}
 	<nav
-		class="flex items-center gap-0.5 px-3 py-1.5 border-b border-gray-200 bg-gray-50/90 text-xs min-w-0 overflow-x-auto hide-scrollbar shrink-0"
+		class="flex items-center gap-0.5 px-3 py-1.5 border-b border-qc-border bg-qc-panel text-xs min-w-0 overflow-x-auto hide-scrollbar shrink-0"
 		aria-label="Relation trail"
 	>
 		{#each crumbs as crumb, index (crumb.index)}
 			{#if index > 0}
-				<ChevronRight size={12} class="text-gray-400 shrink-0" />
+				<ChevronRight size={12} class="text-qc-muted shrink-0" />
 			{/if}
 			{#if crumb.isCurrent}
-				<span class="truncate text-gray-800 font-medium px-1" title={crumb.tooltip}
+				<span class="truncate text-qc-fg font-medium px-1" title={crumb.tooltip}
 					>{crumb.label}</span
 				>
 			{:else}
 				<button
 					type="button"
-					class="truncate text-emerald-700 hover:text-emerald-900 hover:underline px-1"
+					class="truncate text-qc-cell hover:underline px-1"
 					title={crumb.tooltip}
 					onclick={() => onActivate(crumb.index)}
 				>

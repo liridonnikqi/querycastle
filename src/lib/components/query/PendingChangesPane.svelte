@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { PendingChangeCard } from '$lib/utils/pending-changes';
+	import { diffText, type PendingChangeCard } from '$lib/utils/pending-changes';
 
 	let {
 		open = true,
@@ -27,21 +27,21 @@
 </script>
 
 {#if open}
-	<aside class="w-[300px] shrink-0 border-l border-gray-200 bg-white flex flex-col min-h-0">
-		<div class="h-11 px-3 border-b border-gray-200 flex items-center justify-between gap-2 shrink-0">
-			<div class="text-sm font-semibold text-gray-900">Pending Changes</div>
+	<aside class="w-[320px] shrink-0 border-l border-qc-border bg-qc-panel flex flex-col min-h-0">
+		<div class="h-11 px-3 border-b border-qc-border flex items-center justify-between gap-2 shrink-0">
+			<div class="text-sm font-semibold text-qc-fg">Pending Changes</div>
 			<div class="flex items-center gap-1">
-				<div class="flex rounded-md border border-gray-200 p-0.5 text-[11px]">
+				<div class="flex rounded-md border border-qc-border p-0.5 text-[11px]">
 					<button
 						type="button"
-						class={`h-6 px-2 rounded ${view === 'visual' ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+						class={`h-6 px-2 rounded ${view === 'visual' ? 'bg-qc-fg text-qc-primary-fg' : 'text-qc-muted hover:bg-qc-hover'}`}
 						onclick={() => (view = 'visual')}
 					>
 						Visual
 					</button>
 					<button
 						type="button"
-						class={`h-6 px-2 rounded ${view === 'sql' ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+						class={`h-6 px-2 rounded ${view === 'sql' ? 'bg-qc-fg text-qc-primary-fg' : 'text-qc-muted hover:bg-qc-hover'}`}
 						onclick={() => (view = 'sql')}
 					>
 						SQL
@@ -49,7 +49,7 @@
 				</div>
 				<button
 					type="button"
-					class="h-6 w-6 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-50"
+					class="h-6 w-6 rounded text-qc-muted hover:text-qc-fg hover:bg-qc-hover"
 					onclick={onClose}
 					aria-label="Close pending changes"
 				>
@@ -59,45 +59,60 @@
 		</div>
 		<div class="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
 			{#if error}
-				<div class="rounded-md border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-700">
+				<div class="rounded-md border border-qc-danger/40 bg-qc-danger/10 px-2.5 py-2 text-xs text-qc-danger">
 					{error}
 				</div>
 			{/if}
 			{#if changeCount === 0}
-				<div class="text-xs text-gray-500 px-1 py-6 text-center">No pending changes.</div>
+				<div class="text-xs text-qc-muted px-1 py-6 text-center">No pending changes.</div>
 			{:else if view === 'sql'}
-				<pre class="font-mono-code text-[11px] text-gray-700 whitespace-pre-wrap break-words rounded-md border border-gray-200 bg-gray-50 p-2.5">{sqlPreview || 'Nothing to commit.'}</pre>
+				<pre class="font-mono-code text-[11px] text-qc-data whitespace-pre-wrap break-words rounded-md border border-qc-border bg-qc-bg p-2.5">{sqlPreview || 'Nothing to commit.'}</pre>
 			{:else}
 				{#each cards as card (card.id)}
-					<div class="rounded-md border border-gray-200 overflow-hidden">
-						<div class="px-2.5 py-1.5 bg-gray-50 border-b border-gray-200 flex items-center gap-2">
+					{@const afterEmpty = card.after === ''}
+					{@const beforeEmpty = card.before === ''}
+					{@const hunks =
+						card.kind === 'update' && card.before != null && card.after != null && !afterEmpty && !beforeEmpty
+							? diffText(card.before, card.after)
+							: []}
+					<div class="rounded-md border border-qc-border overflow-hidden">
+						<div class="px-2.5 py-1.5 bg-qc-elevated border-b border-qc-border flex items-center gap-2">
 							<span
-								class={`h-4 min-w-4 px-1 rounded text-[10px] font-bold leading-4 text-center ${card.kind === 'update' ? 'bg-amber-100 text-amber-800' : card.kind === 'insert' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-700'}`}
+								class={`h-4 min-w-4 px-1 rounded text-[10px] font-bold leading-4 text-center ${card.kind === 'update' ? 'bg-qc-amber-bg text-qc-amber' : card.kind === 'insert' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-qc-danger/15 text-qc-danger'}`}
 							>
 								{card.badge}
 							</span>
-							<div class="truncate text-[11px] text-gray-600" title={card.title}>{card.title}</div>
+							<div class="truncate text-[11px] text-qc-muted" title={card.title}>{card.title}</div>
 						</div>
-						<div class="text-[11px] font-mono">
-							{#if card.before != null}
-								<div class="px-2.5 py-1 bg-red-50 text-red-800">
-									<span class="text-red-400 mr-1">-</span>{card.before}
+						<div class="pending-diff">
+							{#if card.kind === 'update' && hunks.length > 0}
+								<div class="pending-diff-line pending-diff-del">
+									<span class="pending-diff-sign">-</span>{#each hunks as hunk}{#if hunk.kind !== 'add'}<span class={hunk.kind === 'del' ? 'pending-diff-mark-del' : ''}>{hunk.text}</span>{/if}{/each}
 								</div>
-							{/if}
-							{#if card.after != null}
-								<div class="px-2.5 py-1 bg-emerald-50 text-emerald-800">
-									<span class="text-emerald-500 mr-1">+</span>{card.after}
+								<div class="pending-diff-line pending-diff-add">
+									<span class="pending-diff-sign">+</span>{#each hunks as hunk}{#if hunk.kind !== 'del'}<span class={hunk.kind === 'add' ? 'pending-diff-mark-add' : ''}>{hunk.text}</span>{/if}{/each}
 								</div>
+							{:else}
+								{#if card.before != null}
+									<div class="pending-diff-line pending-diff-del">
+										<span class="pending-diff-sign">-</span>{#if beforeEmpty}<span class="italic opacity-80">(empty)</span>{:else}{card.before}{/if}
+									</div>
+								{/if}
+								{#if card.after != null}
+									<div class="pending-diff-line pending-diff-add">
+										<span class="pending-diff-sign">+</span>{#if afterEmpty}<span class="italic opacity-80">(empty)</span>{:else}{card.after}{/if}
+									</div>
+								{/if}
 							{/if}
 						</div>
 					</div>
 				{/each}
 			{/if}
 		</div>
-		<div class="h-12 px-3 border-t border-gray-200 flex items-center justify-between gap-2 shrink-0 bg-gray-50">
+		<div class="h-12 px-3 border-t border-qc-border flex items-center justify-between gap-2 shrink-0 bg-qc-elevated">
 			<button
 				type="button"
-				class="text-xs text-gray-500 hover:text-gray-800 disabled:opacity-40"
+				class="text-xs text-qc-muted hover:text-qc-fg disabled:opacity-40"
 				disabled={changeCount === 0 || syncing}
 				onclick={onClear}
 			>
@@ -105,7 +120,7 @@
 			</button>
 			<button
 				type="button"
-				class="h-8 px-3 rounded-md bg-emerald-500 text-white text-xs font-medium hover:bg-emerald-600 disabled:opacity-60"
+				class="h-8 px-3 btn-primary text-xs font-medium disabled:opacity-60"
 				disabled={changeCount === 0 || syncing}
 				onclick={onCommit}
 			>

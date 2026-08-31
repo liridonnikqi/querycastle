@@ -6,9 +6,12 @@
 		ArrowUpRight,
 		ChevronLeft,
 		ChevronRight,
+		Copy,
 		Filter,
+		PanelRight,
 		Play,
 		Plus,
+		Table2,
 		Timer,
 		Trash2,
 		X,
@@ -45,11 +48,14 @@
 		type GridColumnMeta,
 	} from '$lib/utils/grid-editors';
 	import { quoteSqlIdentifier } from '$lib/utils/sql';
+	import { buildTableSelect } from '$lib/utils/table-select';
 	import type { RelationHop } from '$lib/utils/workspace';
 	import RelationTrail from '$lib/components/query/RelationTrail.svelte';
 	import ColumnTypeIcon from '$lib/components/query/ColumnTypeIcon.svelte';
 	import GridCellEditor from '$lib/components/query/GridCellEditor.svelte';
 	import PendingChangesPane from '$lib/components/query/PendingChangesPane.svelte';
+	import RowInspector from '$lib/components/query/RowInspector.svelte';
+	import { gridChrome } from '$lib/stores/grid-chrome.svelte';
 	import {
 		buildPendingChangeCards,
 		buildPendingSqlPreview,
@@ -97,6 +103,7 @@
 		durationMs = 0,
 		loading = false,
 		refreshSql = '',
+		resultKey = '',
 	}: {
 		result: QueryResultPayload;
 		sqlError: string;
@@ -114,6 +121,7 @@
 		durationMs?: number;
 		loading?: boolean;
 		refreshSql?: string;
+		resultKey?: string;
 	} = $props();
 
 	let displayResult = $state<QueryResultPayload>({
@@ -155,6 +163,17 @@
 	let showFilterRow = $state(false);
 	let showSortMenu = $state(false);
 	let pendingPanelOpen = $state(false);
+	let inspectorOpen = $state(false);
+	let cellRange = $state<{ r0: number; r1: number; c0: number; c1: number } | null>(null);
+	let rangeDragging = $state(false);
+	let rangeAnchor = $state<{ r: number; c: number } | null>(null);
+	let gridScrollEl = $state<HTMLDivElement | null>(null);
+	let gridViewportH = $state(0);
+	let gridViewportW = $state(0);
+	const GRID_ROW_PX = 32;
+	const GRID_HEADER_PX = 32;
+	const FILLER_COL_PX = 120;
+	const EMPTY_SHEET_COLUMNS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 	let userCollapsedPending = $state(false);
 	let baseWhere = $state('');
 	let lastBrowseSourceKey = $state('');
@@ -168,11 +187,7 @@
 	let visibleColumns = $derived.by(() =>
 		displayResult.columns.filter((column) => column !== '_querycastle_ctid'),
 	);
-	let visibleRows = $derived.by(() =>
-		displayResult.rows.filter(
-			(row) => !pendingDeletes.has(String(row['_querycastle_ctid'] ?? '')),
-		),
-	);
+	let visibleRows = $derived(displayResult.rows);
 	let columnMetas = $derived.by(() =>
 		gridColumnsForTable(
 			explorer ?? null,
@@ -240,6 +255,39 @@
 		const start = (page - 1) * pageSize;
 		return clientPreparedRows.slice(start, start + pageSize);
 	});
+	let inspectorRow = $derived.by(() => {
+		if (pageRows.length === 0) return null;
+		if (!activeRowId) return pageRows[0] ?? null;
+		return (
+			pageRows.find((row) => String(row['_querycastle_ctid'] ?? '') === activeRowId) ??
+			pageRows[0] ??
+			null
+		);
+	});
+	let inspectorValues = $derived.by(() => {
+		if (!inspectorRow || !activeRowId) return {} as Record<string, unknown>;
+		return { ...inspectorRow, ...(pendingUpdates.get(activeRowId) ?? {}) };
+	});
+	let inspectorSql = $derived.by(() => {
+		if (!resultContext || !activeRowId) return '';
+		const values = pendingUpdates.get(activeRowId);
+		return buildPendingSqlPreview({
+			databaseType,
+			schema: resultContext.schema,
+			table: resultContext.table,
+			updates: values ? [{ ctid: activeRowId, values }] : [],
+			deletes: pendingDeletes.has(activeRowId) ? [activeRowId] : [],
+			inserts: [],
+		});
+	});
+	let inspectorLabel = $derived.by(() => {
+		if (pageRows.length === 0) return 'Row';
+		let index = activeRowId
+			? pageRows.findIndex((row) => String(row['_querycastle_ctid'] ?? '') === activeRowId)
+			: 0;
+		if (index < 0) index = 0;
+		return `Row #${(page - 1) * pageSize + index + 1}`;
+	});
 	const skeletonRowCount = 10;
 	const skeletonRows = Array.from(
 		{ length: skeletonRowCount },
@@ -267,20 +315,23 @@
 		outgoingFkColumns(explorer ?? null, resultContext, visibleColumns),
 	);
 
-	function quoteIdent(value: string) {
-		return quoteSqlIdentifier(databaseType, value);
-	}
-
 	function buildExternalResultSignature(
 		context: { schema: string; table: string } | null,
 		payload: QueryResultPayload,
+		key: string,
 	): string {
-		return JSON.stringify({
-			context: context ? `${context.schema}.${context.table}` : '',
-			columns: payload.columns,
-			rowCount: payload.rowCount,
-			rows: payload.rows,
-		});
+		if (key) return key;
+		const first = payload.rows[0];
+		const last = payload.rows[payload.rows.length - 1];
+		return [
+			context ? `${context.schema}.${context.table}` : '',
+			payload.columns.join('\0'),
+			String(payload.rowCount),
+			String(payload.durationMs),
+			String(payload.rows.length),
+			first ? String(first['_querycastle_ctid'] ?? '') : '',
+			last ? String(last['_querycastle_ctid'] ?? '') : '',
+		].join('|');
 	}
 
 	function resetDraftState() {
@@ -302,17 +353,22 @@
 	function buildDefaultContextSql() {
 		if (!resultContext) return '';
 		const firstVisibleColumn = visibleColumns[0];
-		const orderByClause = firstVisibleColumn
-			? ` order by ${quoteIdent(firstVisibleColumn)} asc nulls last`
-			: '';
-		if (databaseType === 'sqlite') {
-			return `select cast(rowid as text) as _querycastle_ctid, * from ${quoteIdent(resultContext.schema)}.${quoteIdent(resultContext.table)}${orderByClause} limit 100;`;
-		}
-		return `select ctid::text as _querycastle_ctid, * from ${quoteIdent(resultContext.schema)}.${quoteIdent(resultContext.table)}${orderByClause} limit 100;`;
+		return (
+			buildTableSelect({
+				databaseType,
+				explorer,
+				schema: resultContext.schema,
+				table: resultContext.table,
+				orderClause: firstVisibleColumn
+					? ` order by ${quoteSqlIdentifier(databaseType, firstVisibleColumn)} asc${databaseType === 'mysql' ? '' : ' nulls last'}`
+					: '',
+				limit: 100,
+			}) ?? ''
+		);
 	}
 
 	$effect(() => {
-		const signature = buildExternalResultSignature(resultContext, result);
+		const signature = buildExternalResultSignature(resultContext, result, resultKey);
 		if (signature === lastExternalResultSignature) return;
 		lastExternalResultSignature = signature;
 		displayResult = {
@@ -431,7 +487,11 @@
 		rowId: string,
 		column: string,
 	): unknown {
-		return pendingUpdates.get(rowId)?.[column] ?? row[column];
+		const pending = pendingUpdates.get(rowId);
+		if (pending && Object.prototype.hasOwnProperty.call(pending, column)) {
+			return pending[column];
+		}
+		return row[column];
 	}
 
 	function getRowValueByName(
@@ -547,7 +607,9 @@
 		column: string,
 		currentValue: unknown,
 	) {
-		if (rowId) activeRowId = rowId;
+		if (rowId) {
+			activeRowId = rowId;
+		}
 		if (editingCell?.rowId === rowId && editingCell?.column === column) return;
 		const fks = explorer
 			? resolveOutgoingRelations(explorer, resultContext, column)
@@ -560,7 +622,30 @@
 			startOutgoingFollow(fks[0]!, currentValue);
 			return;
 		}
+		if (inspectorOpen) return;
 		beginEdit(rowId, column, currentValue);
+	}
+
+	function toggleInspector() {
+		if (inspectorOpen) {
+			inspectorOpen = false;
+			return;
+		}
+		if (!activeRowId) {
+			const first = pageRows[0];
+			if (first) activeRowId = String(first['_querycastle_ctid'] ?? '');
+		}
+		if (!activeRowId) return;
+		editingCell = null;
+		inspectorOpen = true;
+	}
+
+	function inspectRow(rowId: string) {
+		activeRowId = rowId;
+		editingCell = null;
+		inspectorOpen = true;
+		rowContextMenu = null;
+		relatedSubmenuOpen = false;
 	}
 
 	function cellKey(rowId: string, column: string): string {
@@ -620,20 +705,32 @@
 
 	function handleColumnResizeMove(event: PointerEvent) {
 		if (!columnResizeState) return;
-		const deltaX = event.clientX - columnResizeState.startX;
-		setColumnWidth(
-			columnResizeState.column,
-			columnResizeState.startWidth + deltaX,
-		);
+		const column = columnResizeState.column;
+		const prevWidth = getColumnWidth(column);
+		setColumnWidth(column, columnResizeState.startWidth + (event.clientX - columnResizeState.startX));
+		const dw = getColumnWidth(column) - prevWidth;
+		if (dw === 0 || !cellRange) return;
+		const overlay = document.getElementById('qc-range-overlay');
+		if (!overlay || overlay.hidden) return;
+		const colIndex = visibleColumns.indexOf(column);
+		if (colIndex < 0) return;
+		if (colIndex < cellRange.c0) {
+			overlay.style.left = `${(parseFloat(overlay.style.left) || 0) + dw}px`;
+		} else if (colIndex <= cellRange.c1) {
+			overlay.style.width = `${(parseFloat(overlay.style.width) || 0) + dw}px`;
+		}
 	}
 
 	function stopColumnResize() {
 		if (!columnResizeState) return;
 		columnResizeState = null;
+		requestAnimationFrame(updateRangeOverlay);
 	}
 
 	function beginEdit(rowId: string, column: string, currentValue: unknown) {
+		if (inspectorOpen) return;
 		if (!editable || column === '_querycastle_ctid') return;
+		if (pendingDeletes.has(rowId)) return;
 		const meta = metaFor(column);
 		if (meta?.isAuto || meta?.isPrimary) return;
 		editingCell = { rowId, column };
@@ -641,10 +738,7 @@
 		if (meta?.fk) void ensureFkOptions(meta.fk);
 	}
 
-	function commitEdit() {
-		if (!editingCell) return;
-		const { rowId, column } = editingCell;
-		const nextValue = coerceValue(editDraft, column);
+	function applyCellValue(rowId: string, column: string, nextValue: unknown) {
 		const map = new Map(pendingUpdates);
 		const row = displayResult.rows.find(
 			(item) => String(item['_querycastle_ctid'] ?? '') === rowId,
@@ -665,14 +759,99 @@
 		}
 		pendingUpdates = map;
 		if (!userCollapsedPending) pendingPanelOpen = true;
+	}
 
+	function commitEdit() {
+		if (!editingCell) return;
+		applyCellValue(editingCell.rowId, editingCell.column, coerceValue(editDraft, editingCell.column));
 		editingCell = null;
 		editDraft = '';
+	}
+
+	function setInspectorField(column: string, raw: string) {
+		if (!activeRowId) return;
+		applyCellValue(activeRowId, column, coerceValue(raw, column));
 	}
 
 	function discardEdit() {
 		editingCell = null;
 		editDraft = '';
+	}
+
+	function beginCellRange(rowIndex: number, colIndex: number, event: PointerEvent) {
+		if ((event.target as HTMLElement).closest('input,button,textarea,select')) return;
+		rangeAnchor = { r: rowIndex, c: colIndex };
+		cellRange = { r0: rowIndex, r1: rowIndex, c0: colIndex, c1: colIndex };
+		rangeDragging = true;
+		(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+	}
+
+	function extendCellRange(rowIndex: number, colIndex: number) {
+		if (!rangeDragging || !rangeAnchor) return;
+		cellRange = {
+			r0: Math.min(rangeAnchor.r, rowIndex),
+			r1: Math.max(rangeAnchor.r, rowIndex),
+			c0: Math.min(rangeAnchor.c, colIndex),
+			c1: Math.max(rangeAnchor.c, colIndex),
+		};
+	}
+
+	function endCellRange() {
+		rangeDragging = false;
+	}
+
+	function copyCellRange() {
+		if (!cellRange) return;
+		const cols = visibleColumns.slice(cellRange.c0, cellRange.c1 + 1);
+		const rows = pageRows.slice(cellRange.r0, cellRange.r1 + 1);
+		const lines = [
+			cols.join('\t'),
+			...rows.map((row) => {
+				const rowId = String(row['_querycastle_ctid'] ?? '');
+				return cols.map((column) => String(getRowValue(row, rowId, column) ?? '')).join('\t');
+			}),
+		];
+		void navigator.clipboard.writeText(lines.join('\n'));
+	}
+
+	function copySelectedRows() {
+		const rows = pageRows.filter((row) => selectedRows.has(String(row['_querycastle_ctid'] ?? '')));
+		if (rows.length === 0) return;
+		const lines = [
+			visibleColumns.join('\t'),
+			...rows.map((row) => {
+				const rowId = String(row['_querycastle_ctid'] ?? '');
+				return visibleColumns.map((column) => String(getRowValue(row, rowId, column) ?? '')).join('\t');
+			}),
+		];
+		void navigator.clipboard.writeText(lines.join('\n'));
+	}
+
+	function updateRangeOverlay() {
+		const overlay = document.getElementById('qc-range-overlay');
+		const scroll = gridScrollEl;
+		if (!overlay || !scroll || !cellRange) {
+			if (overlay) overlay.hidden = true;
+			return;
+		}
+		const start = scroll.querySelector(
+			`td.grid-cell[data-r="${cellRange.r0}"][data-c="${cellRange.c0}"]`,
+		) as HTMLElement | null;
+		const end = scroll.querySelector(
+			`td.grid-cell[data-r="${cellRange.r1}"][data-c="${cellRange.c1}"]`,
+		) as HTMLElement | null;
+		if (!start || !end) {
+			overlay.hidden = true;
+			return;
+		}
+		const sRect = start.getBoundingClientRect();
+		const eRect = end.getBoundingClientRect();
+		const cRect = scroll.getBoundingClientRect();
+		overlay.style.top = `${sRect.top - cRect.top + scroll.scrollTop}px`;
+		overlay.style.left = `${sRect.left - cRect.left + scroll.scrollLeft}px`;
+		overlay.style.width = `${eRect.right - sRect.left}px`;
+		overlay.style.height = `${eRect.bottom - sRect.top}px`;
+		overlay.hidden = false;
 	}
 
 	function toggleRowSelected(rowId: string) {
@@ -1021,192 +1200,325 @@
 			clearCellHighlights();
 		};
 	});
+
+	$effect(() => {
+		gridChrome.changeCount = changeCount;
+	});
+
+	$effect(() => {
+		if (gridChrome.pendingOpenNonce > 0) {
+			pendingPanelOpen = true;
+			userCollapsedPending = false;
+		}
+	});
+
+	let inspectSourceKey = $state('');
+	$effect(() => {
+		if (browseSourceKey === inspectSourceKey) return;
+		inspectSourceKey = browseSourceKey;
+		const first = pageRows[0];
+		if (!first) {
+			activeRowId = null;
+			inspectorOpen = false;
+			return;
+		}
+		activeRowId = String(first['_querycastle_ctid'] ?? '');
+	});
+
+	$effect(() => {
+		cellRange;
+		pageRows;
+		requestAnimationFrame(updateRangeOverlay);
+	});
+
+	$effect(() => {
+		const onKey = (event: KeyboardEvent) => {
+			if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'c') return;
+			const target = event.target as HTMLElement | null;
+			if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+			if (cellRange) {
+				event.preventDefault();
+				copyCellRange();
+			} else if (selectedRows.size > 0) {
+				event.preventDefault();
+				copySelectedRows();
+			}
+		};
+		const onUp = () => endCellRange();
+		window.addEventListener('keydown', onKey);
+		window.addEventListener('pointerup', onUp);
+		return () => {
+			window.removeEventListener('keydown', onKey);
+			window.removeEventListener('pointerup', onUp);
+		};
+	});
+
+	$effect(() => {
+		const el = gridScrollEl;
+		if (!el) return;
+		const sync = () => {
+			gridViewportH = el.clientHeight;
+			gridViewportW = el.clientWidth;
+		};
+		sync();
+		const observer = new ResizeObserver(sync);
+		observer.observe(el);
+		return () => observer.disconnect();
+	});
+
+	let sheetColumns = $derived(visibleColumns.length > 0 ? visibleColumns : EMPTY_SHEET_COLUMNS);
+	let fillerRowCount = $derived.by(() => {
+		const headerH = GRID_HEADER_PX + (showFilterRow ? GRID_ROW_PX : 0);
+		const usedRows =
+			activeView === 'results'
+				? pageRows.length + pendingInserts.length
+				: 0;
+		const remaining = gridViewportH - headerH - usedRows * GRID_ROW_PX;
+		return Math.max(16, Math.ceil(Math.max(0, remaining) / GRID_ROW_PX) + 4);
+	});
+	let fillerColCount = $derived.by(() => {
+		const used =
+			(editable ? 32 : 0) +
+			sheetColumns.reduce((sum, column) => sum + getColumnWidth(column), 0);
+		const remaining = Math.max(0, gridViewportW - used);
+		return Math.floor(remaining / FILLER_COL_PX);
+	});
 </script>
 
-<div class="flex-1 flex flex-col bg-white min-w-[320px] min-h-0">
+<div class="results-pane flex-1 flex flex-col bg-qc-grid min-w-[320px] min-h-0">
+	{#snippet fillerHeader()}
+		{#each Array.from({ length: fillerColCount }) as _, i (`fill-h-${i}`)}
+			<th
+				class="grid-filler"
+				style={`width:${FILLER_COL_PX}px;min-width:${FILLER_COL_PX}px;max-width:${FILLER_COL_PX}px;`}
+				aria-hidden="true"
+			></th>
+		{/each}
+		<th class="grid-filler grid-filler-tail" aria-hidden="true"></th>
+	{/snippet}
+	{#snippet fillerCells()}
+		{#each Array.from({ length: fillerColCount }) as _, i (`fill-c-${i}`)}
+			<td
+				class="grid-filler"
+				style={`width:${FILLER_COL_PX}px;min-width:${FILLER_COL_PX}px;max-width:${FILLER_COL_PX}px;`}
+				aria-hidden="true"
+			></td>
+		{/each}
+		<td class="grid-filler grid-filler-tail" aria-hidden="true"></td>
+	{/snippet}
 	<RelationTrail
 		trail={relationTrail}
 		onActivate={(index) => onActivateRelationTrail?.(index)}
 	/>
-	<div class="h-11 px-3 border-b border-gray-200 bg-gray-50 shrink-0 flex items-center gap-2">
+	<div class="h-10 px-2 border-b border-qc-border bg-qc-panel shrink-0 flex items-center gap-0.5">
 		{#if editable}
-			<button
-				type="button"
-				onclick={startInsertRow}
-				disabled={syncingChanges}
-				class="h-7 px-2.5 rounded-md bg-emerald-500 text-white text-xs font-medium hover:bg-emerald-600 disabled:opacity-50 inline-flex items-center gap-1"
-			>
-				<Plus size={12} />Insert
-			</button>
-			<button
-				type="button"
-				onclick={() => queueDeleteRows(Array.from(selectedRows))}
-				disabled={selectedRows.size === 0}
-				class="h-7 px-2 rounded-md border border-gray-200 bg-white text-xs text-red-600 hover:bg-red-50 disabled:opacity-50 inline-flex items-center gap-1"
-			>
-				<Trash2 size={12} />Delete
-			</button>
+			{#if selectedRows.size > 0}
+				<button
+					type="button"
+					onclick={() => queueDeleteRows(Array.from(selectedRows))}
+					class="btn-danger h-6 w-[72px] px-2 text-[12px] font-medium inline-flex items-center justify-center gap-1 shrink-0"
+					title={`Delete ${selectedRows.size} row${selectedRows.size === 1 ? '' : 's'}`}
+				>
+					<Trash2 size={12} />Delete
+				</button>
+			{:else}
+				<button
+					type="button"
+					onclick={startInsertRow}
+					disabled={syncingChanges}
+					class="btn-primary h-6 w-[72px] px-2 text-[12px] font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1 shrink-0"
+				>
+					<Plus size={12} />Insert
+				</button>
+			{/if}
 		{/if}
 		<button
 			type="button"
 			onclick={rerunContextQuery}
 			disabled={rerunning || loading}
-			class="h-7 px-2 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50 inline-flex items-center gap-1"
+			class="toolbar-icon disabled:opacity-50"
+			title={rerunning ? 'Running' : 'Refresh'}
+			aria-label="Refresh results"
 		>
-			<Play size={12} />
-			{rerunning ? 'Running' : 'Refresh'}
+			<Play size={14} />
 		</button>
-		<div class="inline-flex items-center">
+		<button
+			type="button"
+			onclick={() => (showFilterRow = !showFilterRow)}
+			class={`toolbar-icon ${showFilterRow || hasActiveFilters ? 'is-on' : ''}`}
+			title="Filter"
+			aria-label="Filter"
+			aria-pressed={showFilterRow || hasActiveFilters}
+		>
+			<Filter size={14} />
+		</button>
+		{#if hasActiveFilters}
 			<button
 				type="button"
-				onclick={() => (showFilterRow = !showFilterRow)}
-				class={`h-7 px-2 rounded-md border text-xs inline-flex items-center gap-1 ${showFilterRow || hasActiveFilters ? 'border-emerald-400 bg-emerald-50 text-emerald-800' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'} ${hasActiveFilters ? 'rounded-r-none' : ''}`}
+				onclick={clearFilters}
+				class="toolbar-icon"
+				title="Clear filters"
+				aria-label="Clear filters"
 			>
-				<Filter size={12} />Filter
-				{#if hasActiveFilters}
-					<span class="text-[10px] font-medium">({filterList.length})</span>
-				{/if}
+				<X size={13} />
 			</button>
-			{#if hasActiveFilters}
-				<button
-					type="button"
-					onclick={clearFilters}
-					class="h-7 w-7 rounded-md rounded-l-none border border-l-0 border-emerald-400 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 inline-flex items-center justify-center"
-					title="Clear filters"
-					aria-label="Clear filters"
-				>
-					<X size={12} />
-				</button>
-			{/if}
-		</div>
-		<div class="relative inline-flex items-center">
+		{/if}
+		<div class="relative shrink-0 inline-flex items-center">
 			<button
 				type="button"
 				onclick={() => (showSortMenu = !showSortMenu)}
-				class={`h-7 px-2 rounded-md border text-xs inline-flex items-center gap-1 ${sort ? 'border-emerald-400 bg-emerald-50 text-emerald-800' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'} ${sort ? 'rounded-r-none' : ''}`}
+				class={`toolbar-icon ${sort || showSortMenu ? 'is-on' : ''}`}
+				title="Sort"
+				aria-label="Sort"
+				aria-pressed={Boolean(sort) || showSortMenu}
 			>
-				<ArrowUpDown size={12} />Sort
+				<ArrowUpDown size={14} />
 			</button>
 			{#if sort}
 				<button
 					type="button"
 					onclick={clearSort}
-					class="h-7 w-7 rounded-md rounded-l-none border border-l-0 border-emerald-400 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 inline-flex items-center justify-center"
+					class="toolbar-icon"
 					title="Clear sort"
 					aria-label="Clear sort"
 				>
-					<X size={12} />
+					<X size={13} />
 				</button>
 			{/if}
 			{#if showSortMenu}
 				<button type="button" class="fixed inset-0 z-30 cursor-default" aria-label="Close sort" onclick={() => (showSortMenu = false)}></button>
-				<div class="absolute left-0 top-8 z-40 min-w-[176px] rounded-md border border-gray-200 bg-white py-1 shadow-[0_8px_24px_rgba(0,0,0,0.12)]">
+				<div class="absolute left-0 top-full mt-1 z-40 min-w-[176px] rounded-md border border-qc-border bg-qc-elevated py-1 shadow-[0_8px_24px_rgba(0,0,0,0.24)]">
 					<button
 						type="button"
-						class="w-full px-3 py-1.5 text-left text-xs text-gray-500 hover:bg-gray-50 disabled:opacity-40"
+						class="w-full px-3 py-1.5 text-left text-xs text-qc-muted hover:bg-qc-hover disabled:opacity-40"
 						disabled={!sort}
 						onclick={clearSort}
 					>
 						Clear sort
 					</button>
-					<div class="my-1 border-t border-gray-100"></div>
+					<div class="my-1 border-t border-qc-border-subtle"></div>
 					{#each visibleColumns as column}
 						<button
 							type="button"
-							class="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50 inline-flex items-center justify-between gap-2"
+							class="w-full px-3 py-1.5 text-left text-xs text-qc-fg hover:bg-qc-hover inline-flex items-center justify-between gap-2"
 							onclick={() => handleHeaderSort(column)}
 						>
 							<span class="truncate">{column}</span>
 							{#if sort?.column === column}
-								{#if sort.dir === 'asc'}<ArrowUp size={12} class="text-emerald-600" />{:else}<ArrowDown size={12} class="text-emerald-600" />{/if}
+								{#if sort.dir === 'asc'}<ArrowUp size={12} class="text-qc-cell" />{:else}<ArrowDown size={12} class="text-qc-cell" />{/if}
 							{/if}
 						</button>
 					{/each}
 				</div>
 			{/if}
 		</div>
-		<div class="flex items-center gap-1 ml-1">
+		{#if selectedRows.size > 0}
 			<button
 				type="button"
-				class={`h-7 px-2 rounded-md border text-xs ${activeView === 'results' ? 'border-emerald-400 bg-white text-gray-900' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
+				onclick={copySelectedRows}
+				class="toolbar-icon"
+				title="Copy selected rows"
+				aria-label="Copy selected rows"
+			>
+				<Copy size={14} />
+			</button>
+			<button
+				type="button"
+				onclick={() => (selectedRows = new Set())}
+				class="h-7 px-1.5 text-[11px] text-qc-muted hover:text-qc-subtle inline-flex items-center gap-1 shrink-0"
+				title="Clear selection"
+			>
+				{selectedRows.size} selected
+				<X size={11} />
+			</button>
+		{/if}
+		<div class="flex-1 min-w-2"></div>
+		<div class="flex items-center gap-0.5 text-[12px] shrink-0">
+			<button
+				type="button"
+				class={`h-7 px-2 rounded ${activeView === 'results' ? 'text-qc-fg' : 'text-qc-muted hover:text-qc-subtle'}`}
 				onclick={() => (activeView = 'results')}
 			>
 				Results
 			</button>
 			<button
 				type="button"
-				class={`h-7 px-2 rounded-md border text-xs ${activeView === 'messages' ? 'border-emerald-400 bg-white text-gray-900' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
+				class={`h-7 px-2 rounded ${activeView === 'messages' ? 'text-qc-fg' : 'text-qc-muted hover:text-qc-subtle'}`}
 				onclick={() => (activeView = 'messages')}
 			>
 				Messages
 			</button>
 			<button
 				type="button"
-				class={`h-7 px-2 rounded-md border text-xs ${activeView === 'explain' ? 'border-emerald-400 bg-white text-gray-900' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
+				class={`h-7 px-2 rounded ${activeView === 'explain' ? 'text-qc-fg' : 'text-qc-muted hover:text-qc-subtle'}`}
 				onclick={() => (activeView = 'explain')}
 			>
 				Explain
 			</button>
 		</div>
-		<div class="flex-1"></div>
-		<div class="flex items-center gap-2 text-xs text-gray-500">
-			<button type="button" class="h-7 w-7 rounded-md border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-40 inline-flex items-center justify-center" disabled={page <= 1} onclick={() => goToPage(page - 1)} aria-label="Previous page">
+		<div class="w-px h-4 bg-qc-border mx-1 shrink-0"></div>
+		<div class="flex items-center gap-1 text-[12px] text-qc-muted shrink-0">
+			<button type="button" class="w-6 h-6 rounded flex items-center justify-center hover:bg-qc-hover hover:text-qc-subtle disabled:opacity-40" disabled={page <= 1} onclick={() => goToPage(page - 1)} aria-label="Previous page">
 				<ChevronLeft size={14} />
 			</button>
-			<span class="tabular-nums">{page} of {pageCount}</span>
-			<button type="button" class="h-7 w-7 rounded-md border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-40 inline-flex items-center justify-center" disabled={page >= pageCount} onclick={() => goToPage(page + 1)} aria-label="Next page">
+			<span class="tabular-nums text-qc-subtle">{page}/{pageCount}</span>
+			<button type="button" class="w-6 h-6 rounded flex items-center justify-center hover:bg-qc-hover hover:text-qc-subtle disabled:opacity-40" disabled={page >= pageCount} onclick={() => goToPage(page + 1)} aria-label="Next page">
 				<ChevronRight size={14} />
 			</button>
 			<select
-				class="h-7 px-1.5 rounded-md border border-gray-200 bg-white text-xs text-gray-700 outline-none"
+				class="h-6 rounded border border-qc-border bg-qc-elevated text-[11px] text-qc-subtle px-1 outline-none"
 				value={String(pageSize)}
 				onchange={(event) => setPageSize(Number((event.currentTarget as HTMLSelectElement).value) as PageSize)}
 			>
 				{#each PAGE_SIZE_OPTIONS as size}
-					<option value={String(size)}>{size} rows</option>
+					<option value={String(size)}>{size}</option>
 				{/each}
 			</select>
-			<span class="tabular-nums text-gray-500">{displayTotal} rows</span>
-			<span class="hidden sm:inline-flex items-center text-gray-400"><Timer size={12} class="mr-1" />{durationMs}ms</span>
 			<button
 				type="button"
-				onclick={() => {
-					userCollapsedPending = false;
-					pendingPanelOpen = true;
-				}}
-				class={`h-7 px-2 rounded-md border text-xs inline-flex items-center gap-1 ${changeCount > 0 ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
+				class={`toolbar-icon ${inspectorOpen ? 'is-on' : ''}`}
+				onclick={toggleInspector}
+				title={inspectorOpen ? 'Hide row inspector' : 'Show row inspector'}
+				aria-label={inspectorOpen ? 'Hide row inspector' : 'Show row inspector'}
+				aria-pressed={inspectorOpen}
 			>
-				Changes
-				{#if changeCount > 0}
-					<span class="min-w-4 h-4 px-1 rounded-full bg-amber-500 text-white text-[10px] leading-4 text-center">{changeCount}</span>
-				{/if}
+				<PanelRight size={14} />
 			</button>
+			<span class="inline-flex items-center gap-1 tabular-nums" title={`${displayTotal} rows`}>
+				<Table2 size={12} />
+				{displayTotal}
+			</span>
+			<span class="hidden sm:inline-flex items-center gap-1 tabular-nums" title={`Ran in ${durationMs}ms`}>
+				<Timer size={12} />
+				{durationMs}ms
+			</span>
 		</div>
 	</div>
 
 	{#if sqlError}
 		<div
-			class="px-4 py-2 text-xs text-red-600 border-b border-red-100 bg-red-50"
+			class="px-4 py-2 text-xs text-qc-danger border-b border-qc-danger/20 bg-qc-danger/10"
 		>
 			{sqlError}
 		</div>
 	{/if}
 	{#if syncError}
 		<div
-			class="px-4 py-2 text-xs text-red-600 border-b border-red-100 bg-red-50"
+			class="px-4 py-2 text-xs text-qc-danger border-b border-qc-danger/20 bg-qc-danger/10"
 		>
 			{syncError}
 		</div>
 	{/if}
 
 	<div class="flex-1 flex min-h-0">
-	<div class="flex-1 overflow-auto bg-white min-h-0">
+	<div class="flex-1 overflow-auto bg-qc-grid min-h-0 relative" bind:this={gridScrollEl} onscroll={updateRangeOverlay}>
+		<div id="qc-range-overlay" class="grid-range-overlay" hidden></div>
 		{#if activeView === 'messages'}
-			<div class="h-full p-4 text-xs text-gray-700 space-y-2">
+			<div class="h-full p-4 text-xs text-qc-subtle space-y-2 excel-grid bg-qc-grid">
 				{#if sqlError || syncError}
 					{#if sqlError}
 						<div
-							class="rounded border border-red-200 bg-red-50 px-3 py-2 text-red-700"
+							class="rounded border border-qc-danger/30 bg-qc-danger/10 px-3 py-2 text-qc-danger"
 						>
 							<div class="font-semibold mb-1">SQL Error</div>
 							<div class="whitespace-pre-wrap">{sqlError}</div>
@@ -1214,132 +1526,124 @@
 					{/if}
 					{#if syncError}
 						<div
-							class="rounded border border-red-200 bg-red-50 px-3 py-2 text-red-700"
+							class="rounded border border-qc-danger/30 bg-qc-danger/10 px-3 py-2 text-qc-danger"
 						>
 							<div class="font-semibold mb-1">Sync Error</div>
 							<div class="whitespace-pre-wrap">{syncError}</div>
 						</div>
 					{/if}
 				{:else}
-					<div class="rounded border border-gray-200 bg-gray-50 px-3 py-2">
+					<div class="rounded border border-qc-border bg-qc-elevated px-3 py-2">
 						Last query executed successfully in {durationMs}ms and returned {displayResult.rowCount}
 						rows.
 					</div>
 				{/if}
 			</div>
 		{:else if activeView === 'explain'}
-			<div class="h-full p-4 space-y-3">
-				<div class="text-xs text-gray-600">
+			<div class="h-full p-4 space-y-3 bg-qc-grid">
+				<div class="text-xs text-qc-muted">
 					Run `EXPLAIN` for the current query/result source.
 				</div>
 				<button
 					onclick={runExplain}
 					disabled={runningExplain || loading}
-					class="h-8 px-3 rounded border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-60"
+					class="h-8 px-3 rounded border border-qc-border bg-qc-elevated text-xs text-qc-subtle hover:bg-qc-hover disabled:opacity-60"
 				>
 					{runningExplain ? 'Running EXPLAIN...' : 'Run EXPLAIN'}
 				</button>
 				{#if refreshSql.trim().length > 0 || resultContext}
-					<div class="rounded border border-gray-200 bg-gray-50 p-3">
-						<div class="text-[11px] font-semibold text-gray-500 mb-1">
+					<div class="rounded border border-qc-border bg-qc-elevated p-3">
+						<div class="text-[11px] font-semibold text-qc-muted mb-1">
 							Source SQL
 						</div>
 						<pre
-							class="font-mono-code text-[11px] text-gray-700 whitespace-pre-wrap break-words">{refreshSql.trim()
+							class="font-mono text-[11px] text-qc-data whitespace-pre-wrap break-words">{refreshSql.trim()
 								.length > 0
 								? refreshSql
 								: buildDefaultContextSql()}</pre>
 					</div>
 				{:else}
-					<div class="text-xs text-gray-500">
+					<div class="text-xs text-qc-muted">
 						Run a query first to generate an explain plan.
 					</div>
 				{/if}
 			</div>
 		{:else if loading}
-			<div class="min-w-max animate-pulse">
+			<div class="min-w-full min-h-full">
 				<table
-					class="min-w-full text-left border-collapse text-sm whitespace-nowrap"
+					class="excel-grid min-w-full text-left text-sm whitespace-nowrap"
 				>
 					<thead
-						class="sticky top-0 bg-gray-50 border-b border-gray-200 shadow-sm z-10"
+						class="bg-qc-grid z-10"
 					>
 						<tr>
 							{#if editable}
-								<th class="px-3 py-2 w-8 border-r border-gray-200"></th>
+								<th class="px-3 py-2 w-8"></th>
 							{/if}
-							<th class="px-4 py-2 w-12 border-r border-gray-200"></th>
-							{#if visibleColumns.length > 0}
-								{#each visibleColumns as _}
-									<th
-										class="px-4 py-2 border-r border-gray-200"
-										style={`width:${getColumnWidth(_)}px;min-width:${getColumnWidth(_)}px;`}
-									>
-										<div class="h-3.5 w-24 rounded bg-gray-200"></div>
-									</th>
-								{/each}
-							{:else}
-								{#each Array.from({ length: 6 }) as _}
-									<th class="px-4 py-2 border-r border-gray-200">
-										<div class="h-3.5 w-24 rounded bg-gray-200"></div>
-									</th>
-								{/each}
-							{/if}
+							{#each sheetColumns as column}
+								<th
+									class="px-4 py-2"
+									style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;`}
+								>
+									<div class="h-3.5 w-24 rounded bg-qc-hover"></div>
+								</th>
+							{/each}
+							{@render fillerHeader()}
 						</tr>
 					</thead>
 					<tbody>
 						{#each skeletonRows as _}
-							<tr class="border-b border-gray-100">
+							<tr class="h-8">
 								{#if editable}
-									<td class="px-3 py-1.5 border-r border-gray-100">
-										<div class="h-3.5 w-3.5 rounded bg-gray-200"></div>
+									<td class="px-3 py-1.5">
+										<div class="h-3.5 w-3.5 rounded bg-qc-hover"></div>
 									</td>
 								{/if}
-								<td class="px-4 py-1.5 border-r border-gray-100">
-									<div class="h-3.5 w-6 rounded bg-gray-100"></div>
-								</td>
-								{#if visibleColumns.length > 0}
-									{#each visibleColumns as _}
-										<td
-											class="px-4 py-1.5 border-r border-gray-100"
-											style={`width:${getColumnWidth(_)}px;min-width:${getColumnWidth(_)}px;`}
-										>
-											<div
-												class="h-3.5 w-full max-w-[180px] rounded bg-gray-200"
-											></div>
-										</td>
-									{/each}
-								{:else}
-									{#each Array.from({ length: 6 }) as _}
-										<td class="px-4 py-1.5 border-r border-gray-100">
-											<div
-												class="h-3.5 w-full max-w-[180px] rounded bg-gray-200"
-											></div>
-										</td>
-									{/each}
+								{#each sheetColumns as column}
+									<td
+										class="px-4 py-1.5"
+										style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;`}
+									>
+										<div
+											class="h-3.5 w-full max-w-[180px] rounded bg-qc-hover"
+										></div>
+									</td>
+								{/each}
+								{@render fillerCells()}
+							</tr>
+						{/each}
+						{#each Array.from({ length: fillerRowCount }) as _, i (i)}
+							<tr class="h-8 max-h-8 pointer-events-none">
+								{#if editable}
+									<td class="px-2 py-0 w-8"></td>
 								{/if}
+								{#each sheetColumns as column}
+									<td
+										style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;max-width:${getColumnWidth(column)}px;`}
+									></td>
+								{/each}
+								{@render fillerCells()}
 							</tr>
 						{/each}
 					</tbody>
 				</table>
 			</div>
-		{:else if displayResult.columns.length === 0}
-			<div class="h-full flex items-center justify-center text-sm text-gray-500">Run a query to see results.</div>
 		{:else}
-			<div class="min-w-max">
+			<div class="min-w-full min-h-full">
 				<table
-					class="min-w-full table-fixed text-left border-collapse text-sm"
+					class="excel-grid min-w-full table-fixed text-left text-sm"
 				>
 					<thead
-						class="sticky top-0 bg-gray-50 border-b border-gray-200 shadow-sm z-10"
+						class="bg-qc-grid z-10"
 					>
 						<tr>
 							{#if editable}
 								<th
-									class="px-3 py-2 font-medium text-gray-500 border-r border-gray-200 text-xs w-8"
+									class="px-2 py-1.5 font-medium text-qc-subtle text-[11px] w-8"
 								>
 									<input
 										type="checkbox"
+										class="qc-check"
 										onchange={toggleSelectAllVisible}
 										checked={pageRows.length > 0 &&
 											pageRows.every((row) =>
@@ -1350,29 +1654,29 @@
 									/>
 								</th>
 							{/if}
-							<th
-								class="px-4 py-2 font-medium text-gray-500 w-12 border-r border-gray-200 text-xs"
-								>#</th
-							>
-							{#each visibleColumns as column}
+							{#each sheetColumns as column}
 								{@const meta = metaFor(column)}
 								<th
-									class="px-4 py-2 font-medium text-gray-500 border-r border-gray-200 text-xs relative overflow-hidden"
+									class="px-2.5 py-1.5 font-medium text-qc-subtle text-[11px] relative overflow-hidden"
 									style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;max-width:${getColumnWidth(column)}px;`}
 								>
 									<button
 										type="button"
-										class="flex items-center pr-3 gap-1 min-w-0 w-full text-left hover:text-gray-800"
+										class="flex items-center pr-3 gap-1 min-w-0 w-full text-left hover:text-qc-fg"
 										onclick={() => handleHeaderSort(column)}
 									>
-										<ColumnTypeIcon {meta} />
-										<span class="truncate">{column}</span>
-										{#if sort?.column === column}
-											{#if sort.dir === 'asc'}
-												<ArrowUp size={11} class="shrink-0 text-emerald-600" />
-											{:else}
-												<ArrowDown size={11} class="shrink-0 text-emerald-600" />
+										{#if visibleColumns.includes(column)}
+											<span class="truncate">{column}</span>
+											<ColumnTypeIcon {meta} />
+											{#if sort?.column === column}
+												{#if sort.dir === 'asc'}
+													<ArrowUp size={11} class="shrink-0 text-qc-cell" />
+												{:else}
+													<ArrowDown size={11} class="shrink-0 text-qc-cell" />
+												{/if}
 											{/if}
+										{:else}
+											<span class="truncate text-qc-muted">{column}</span>
 										{/if}
 									</button>
 									<button
@@ -1384,18 +1688,19 @@
 									></button>
 								</th>
 							{/each}
+							{@render fillerHeader()}
 						</tr>
 						{#if showFilterRow}
-							<tr class="bg-white">
+							<tr class="bg-qc-grid">
 								{#if editable}
-									<th class="border-r border-gray-200"></th>
+									<th></th>
 								{/if}
-								<th class="border-r border-gray-200"></th>
-								{#each visibleColumns as column}
+								{#each sheetColumns as column}
 									<th
-										class="p-1 border-r border-gray-200 overflow-hidden"
+										class="p-1 overflow-hidden"
 										style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;max-width:${getColumnWidth(column)}px;`}
 									>
+										{#if visibleColumns.includes(column)}
 										<input
 											value={columnFilters[column] ?? ''}
 											oninput={(event) => {
@@ -1404,34 +1709,35 @@
 												scheduleFilterBrowse();
 											}}
 											placeholder="Contains…"
-											class="w-full h-7 px-2 rounded border border-gray-200 bg-white text-[11px] font-normal text-gray-700 outline-none focus:border-emerald-500"
+											class="w-full h-7 px-2 rounded border border-qc-border bg-qc-bg text-[11px] font-normal text-qc-fg outline-none focus:border-qc-focus-border"
 										/>
+										{/if}
 									</th>
 								{/each}
+								{@render fillerHeader()}
 							</tr>
 						{/if}
 					</thead>
-					<tbody class="text-gray-700">
+					<tbody class="font-mono text-[12px] tabular-nums text-qc-data">
 						{#if editable && pendingInserts.length > 0}
 							{#each pendingInserts as insertRow (insertRow.id)}
-								<tr class="border-b border-emerald-200 bg-emerald-50/40">
-									<td class="px-3 border-r border-emerald-100 text-gray-400 text-xs">
+								<tr class="row-pending-insert">
+									<td class="px-3 text-qc-muted text-xs">
 										<button
 											type="button"
 											onclick={() => removePendingInsert(insertRow.id)}
-											class="text-red-500 hover:text-red-700"
+											class="text-qc-danger hover:text-qc-danger-hover"
 											aria-label="Remove pending insert">×</button
 										>
 									</td>
-									<td class="px-4 border-r border-emerald-100 text-gray-500 text-xs">New</td>
 									{#each visibleColumns as column}
 										{@const meta = metaFor(column)}
 										<td
-											class="p-0 border-r border-emerald-100 overflow-hidden whitespace-nowrap"
+											class="p-0 overflow-hidden whitespace-nowrap"
 											style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;max-width:${getColumnWidth(column)}px;`}
 										>
 											{#if meta?.isAuto || meta?.isPrimary}
-												<div class="h-[28px] px-4 flex items-center text-[12px] italic text-gray-400">
+												<div class="h-[28px] px-4 flex items-center text-[12px] italic text-qc-muted">
 													Automatic
 												</div>
 											{:else}
@@ -1449,6 +1755,7 @@
 											{/if}
 										</td>
 									{/each}
+									{@render fillerCells()}
 								</tr>
 							{/each}
 						{/if}
@@ -1456,35 +1763,30 @@
 							{@const rowId = String(row['_querycastle_ctid'] ?? '')}
 							{@const isChecked = selectedRows.has(rowId)}
 							{@const isActive = activeRowId === rowId}
+							{@const isPendingDelete = pendingDeletes.has(rowId)}
 							<tr
-								class={`group h-8 max-h-8 ${isChecked ? 'relative z-[1] bg-emerald-500/15 [&>td]:border-t [&>td]:border-b [&>td]:border-t-emerald-500 [&>td]:border-b-emerald-500 [&>td:first-child]:border-l [&>td:first-child]:border-l-emerald-500 [&>td:last-child]:border-r-emerald-500' : isActive ? 'relative z-[1] bg-gray-100 [&>td]:border-t [&>td]:border-b [&>td]:border-t-gray-400 [&>td]:border-b-gray-400 [&>td:first-child]:border-l [&>td:first-child]:border-l-gray-400 [&>td:last-child]:border-r-gray-400' : 'border-b border-gray-100 hover:bg-gray-50'}`}
+								class={`group table-row h-8 max-h-8 ${isPendingDelete ? 'row-pending-delete' : isChecked ? 'row-selected' : isActive ? 'row-current' : ''}`}
 								oncontextmenu={(event) => openRowContextMenu(event, rowId, row)}
 								onclick={() => {
 									if (rowId) activeRowId = rowId;
 								}}
 							>
 								{#if editable}
-									<td class="px-3 py-0 border-r border-gray-100 overflow-hidden">
+									<td class="px-2 py-0 overflow-hidden text-center">
 										<input
 											type="checkbox"
+											class="qc-check"
 											checked={selectedRows.has(rowId)}
 											onchange={() => toggleRowSelected(rowId)}
 										/>
 									</td>
 								{/if}
-								<td
-									class="px-4 py-0 text-gray-400 border-r border-gray-100 text-xs overflow-hidden whitespace-nowrap"
-									>{(page - 1) * pageSize + rowIndex + 1}</td
-								>
-								{#each visibleColumns as column (column)}
+								{#each visibleColumns as column, colIndex (column)}
 									{@const currentValue = getRowValue(row, rowId, column)}
 									{@const isEditing =
 										editingCell &&
 										editingCell.rowId === rowId &&
 										editingCell.column === column}
-									{@const isRecentlyUpdated = highlightCells.has(
-										cellKey(rowId, column),
-									)}
 									{@const isFkColumn = fkColumns.has(column)}
 									{@const meta = metaFor(column)}
 									{@const canFollowFk =
@@ -1492,8 +1794,12 @@
 									{@const isPendingEdit =
 										pendingUpdates.get(rowId)?.[column] !== undefined}
 									<td
-										class={`border-r border-gray-100 text-[12px] overflow-hidden whitespace-nowrap max-w-0 ${editable && !meta?.isAuto && !meta?.isPrimary ? 'cursor-pointer' : ''} ${isEditing ? 'p-0 outline outline-1 -outline-offset-1 outline-emerald-500 bg-white' : 'px-4 py-0'} ${isPendingEdit && !isEditing ? 'bg-amber-50' : ''} ${isRecentlyUpdated && !isEditing && !isPendingEdit ? 'bg-emerald-50/70' : ''}`}
+										class={`grid-cell text-[12px] overflow-hidden whitespace-nowrap max-w-0 font-mono tabular-nums text-qc-data ${editable && !meta?.isAuto && !meta?.isPrimary && !isPendingDelete ? 'cursor-cell' : ''} ${isEditing ? 'p-0 outline outline-1 -outline-offset-1 outline-qc-cell bg-qc-bg' : 'px-2.5 py-0'} ${isPendingEdit && !isEditing && !isPendingDelete ? 'cell-dirty' : ''} ${meta?.kind === 'number' ? 'text-right' : ''}`}
 										style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;max-width:${getColumnWidth(column)}px;`}
+										data-r={rowIndex}
+										data-c={colIndex}
+										onpointerdown={(event) => beginCellRange(rowIndex, colIndex, event)}
+										onpointerenter={() => extendCellRange(rowIndex, colIndex)}
 										onclick={(event) =>
 											handleCellClick(
 												event,
@@ -1501,11 +1807,13 @@
 												column,
 												currentValue,
 											)}
-										title={isEmptyCell(currentValue)
-											? canFollowFk
-												? 'Open related record (Alt+Click or icon)'
-												: undefined
-											: displayCellText(currentValue, meta)}
+										title={isPendingEdit
+											? `${displayCellText(row[column], meta)} → ${displayCellText(currentValue, meta)}`
+											: isEmptyCell(currentValue)
+												? canFollowFk
+													? 'Open related record (Alt+Click or icon)'
+													: undefined
+												: displayCellText(currentValue, meta)}
 									>
 										{#if isEditing}
 											<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -1533,16 +1841,16 @@
 										{:else}
 											<div class="flex items-center gap-1 min-w-0 h-8 overflow-hidden">
 												{#if isEmptyCell(currentValue)}
-													<span class="truncate min-w-0 flex-1 italic text-gray-400">Empty</span>
+													<span class="truncate min-w-0 flex-1 italic text-qc-muted">Empty</span>
 												{:else if meta?.kind === 'boolean'}
-													<span class={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium shrink-0 ${currentValue === true || currentValue === 'true' || currentValue === 1 || currentValue === '1' ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>{formatBooleanLabel(currentValue)}</span>
+													<span class={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium shrink-0 ${currentValue === true || currentValue === 'true' || currentValue === 1 || currentValue === '1' ? 'bg-qc-hover text-qc-fg' : 'bg-qc-elevated text-qc-muted'}`}>{formatBooleanLabel(currentValue)}</span>
 												{:else}
-													<span class={`truncate min-w-0 flex-1 block overflow-hidden text-ellipsis ${isFkColumn ? 'font-mono text-[11px]' : ''}`}>{displayCellText(currentValue, meta)}</span>
+													<span class={`truncate min-w-0 flex-1 block overflow-hidden text-ellipsis ${isFkColumn ? 'font-mono text-[11px]' : ''} ${meta?.kind === 'number' ? 'text-right' : ''}`}>{displayCellText(currentValue, meta)}</span>
 												{/if}
 												{#if canFollowFk}
 													<button
 														type="button"
-														class="shrink-0 rounded p-0.5 text-emerald-600 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-emerald-50 hover:text-emerald-800"
+														class="shrink-0 rounded p-0.5 text-qc-cell opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-qc-hover"
 														title="Open related record"
 														aria-label="Follow foreign key"
 														onclick={(event) => {
@@ -1565,6 +1873,20 @@
 										{/if}
 									</td>
 								{/each}
+								{@render fillerCells()}
+							</tr>
+						{/each}
+						{#each Array.from({ length: fillerRowCount }) as _, i (`fill-${i}`)}
+							<tr class="h-8 max-h-8 pointer-events-none">
+								{#if editable}
+									<td class="px-2 py-0 w-8"></td>
+								{/if}
+								{#each sheetColumns as column}
+									<td
+										style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;max-width:${getColumnWidth(column)}px;`}
+									></td>
+								{/each}
+								{@render fillerCells()}
 							</tr>
 						{/each}
 					</tbody>
@@ -1572,6 +1894,20 @@
 			</div>
 		{/if}
 	</div>
+	<RowInspector
+		open={inspectorOpen && !!inspectorRow}
+		rowLabel={inspectorLabel}
+		columns={visibleColumns}
+		values={inspectorValues}
+		metas={columnMetas}
+		sqlPreview={inspectorSql}
+		{editable}
+		onClose={() => (inspectorOpen = false)}
+		onFieldChange={setInspectorField}
+		onDelete={() => {
+			if (activeRowId) queueDeleteRows([activeRowId]);
+		}}
+	/>
 	<PendingChangesPane
 		open={pendingPanelOpen}
 		{changeCount}
@@ -1600,20 +1936,29 @@
 			}}
 		></button>
 		<div
-			class="fixed z-50 min-w-[240px] bg-white rounded-md border border-gray-200 shadow-[0_8px_24px_rgba(0,0,0,0.12)] py-1"
+			class="fixed z-50 min-w-[240px] bg-qc-elevated rounded-md border border-qc-border shadow-[0_8px_24px_rgba(0,0,0,0.28)] py-1"
 			style={`left:${rowContextMenu?.x ?? 0}px;top:${rowContextMenu?.y ?? 0}px;`}
 		>
+			<button
+				type="button"
+				onclick={() => inspectRow(rowContextMenu?.rowId ?? '')}
+				class="w-full px-3 py-1.5 text-left text-sm text-qc-fg hover:bg-qc-hover inline-flex items-center gap-2"
+			>
+				<PanelRight size={14} class="shrink-0 text-qc-muted" />
+				Inspect row
+			</button>
+			<div class="my-1 border-t border-qc-border"></div>
 			{#each outgoing as item}
 				<button
 					type="button"
 					disabled={hasPendingChanges}
 					onclick={() => startOutgoingFollow(item.fk, item.value)}
-					class="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 inline-flex items-center gap-2"
+					class="w-full px-3 py-1.5 text-left text-sm text-qc-fg hover:bg-qc-hover disabled:opacity-50 inline-flex items-center gap-2"
 					title={hasPendingChanges
 						? 'Save or discard grid edits first'
 						: undefined}
 				>
-					<ArrowUpRight size={14} class="shrink-0 text-emerald-600" />
+					<ArrowUpRight size={14} class="shrink-0 text-qc-cell" />
 					<span class="truncate"
 						>Open {item.fk.referencedTable} where {item.fk.referencedColumn} =
 						{formatFollowValue(item.value)}</span
@@ -1624,23 +1969,23 @@
 				<div class="relative">
 					<button
 						type="button"
-						class="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 inline-flex items-center justify-between gap-2"
+						class="w-full px-3 py-1.5 text-left text-sm text-qc-fg hover:bg-qc-hover inline-flex items-center justify-between gap-2"
 						onmouseenter={() => (relatedSubmenuOpen = true)}
 						onclick={() => (relatedSubmenuOpen = !relatedSubmenuOpen)}
 					>
 						Related rows
-						<ChevronRight size={14} class="text-gray-400" />
+						<ChevronRight size={14} class="text-qc-muted" />
 					</button>
 					{#if relatedSubmenuOpen}
 						<div
-							class="absolute left-full top-0 ml-0.5 min-w-[220px] max-h-72 overflow-auto bg-white rounded-md border border-gray-200 shadow-[0_8px_24px_rgba(0,0,0,0.12)] py-1"
+							class="absolute left-full top-0 ml-0.5 min-w-[220px] max-h-72 overflow-auto bg-qc-elevated rounded-md border border-qc-border shadow-[0_8px_24px_rgba(0,0,0,0.28)] py-1"
 						>
 							{#each incoming as rel}
 								<button
 									type="button"
 									disabled={hasPendingChanges}
 									onclick={() => startIncomingFollow(rel, rel.value)}
-									class="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 truncate"
+									class="w-full px-3 py-1.5 text-left text-sm text-qc-fg hover:bg-qc-hover disabled:opacity-50 truncate"
 									title={hasPendingChanges
 										? 'Save or discard grid edits first'
 										: undefined}
@@ -1657,7 +2002,7 @@
 						type="button"
 						disabled={hasPendingChanges}
 						onclick={() => startIncomingFollow(rel, rel.value)}
-						class="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 truncate"
+						class="w-full px-3 py-1.5 text-left text-sm text-qc-fg hover:bg-qc-hover disabled:opacity-50 truncate"
 						title={hasPendingChanges
 							? 'Save or discard grid edits first'
 							: undefined}
@@ -1667,13 +2012,13 @@
 				{/each}
 			{/if}
 			{#if editable && (outgoing.length > 0 || incoming.length > 0)}
-				<div class="my-1 border-t border-gray-100"></div>
+				<div class="my-1 border-t border-qc-border"></div>
 			{/if}
 			{#if editable}
 				<button
 					onclick={() =>
 						rowContextMenu && queueDeleteRows([rowContextMenu.rowId])}
-					class="w-full px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50 inline-flex items-center gap-2"
+					class="w-full px-3 py-1.5 text-left text-sm text-qc-danger hover:bg-qc-danger/10 inline-flex items-center gap-2"
 				>
 					<Trash2 size={14} />
 					Delete Row

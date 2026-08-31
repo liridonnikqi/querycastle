@@ -1,26 +1,39 @@
 <script lang="ts">
-	import { Calendar, Hash, KeyRound, Link } from '@lucide/svelte';
+	import {
+		Braces,
+		Calendar,
+		CalendarClock,
+		Fingerprint,
+		Hash,
+		KeyRound,
+		Link2,
+		ToggleLeft,
+		Type,
+	} from '@lucide/svelte';
 	import type { GridColumnMeta } from '$lib/utils/grid-editors';
 
 	let { meta }: { meta: GridColumnMeta | undefined } = $props();
+
+	const Icon = $derived.by(() => {
+		const typeName = meta?.dataType?.toLowerCase() ?? '';
+		if (meta?.fk) return Link2;
+		if (meta?.isPrimary) return KeyRound;
+		if (/\b(json|jsonb|xml)\b/.test(typeName)) return Braces;
+		if (/\b(uuid|uniqueidentifier)\b/.test(typeName)) return Fingerprint;
+		if (meta?.kind === 'boolean') return ToggleLeft;
+		if (meta?.kind === 'datetime') return CalendarClock;
+		if (meta?.kind === 'date') return Calendar;
+		if (meta?.kind === 'number') return Hash;
+		return Type;
+	});
+
+	const label = $derived.by(() => {
+		if (meta?.fk) return `Foreign key · ${meta.dataType}`;
+		if (meta?.isPrimary) return `Primary key · ${meta.dataType}`;
+		return meta?.dataType ?? 'text';
+	});
 </script>
 
-{#if meta?.isPrimary}
-	<KeyRound size={12} class="text-amber-500 shrink-0" />
-{:else if meta?.fk}
-	<Link size={12} class="text-gray-400 shrink-0" />
-{:else if meta?.kind === 'number'}
-	<Hash size={12} class="text-sky-500 shrink-0" />
-{:else if meta?.kind === 'date' || meta?.kind === 'datetime'}
-	<Calendar size={12} class="text-violet-400 shrink-0" />
-{:else if meta?.kind === 'boolean'}
-	<span
-		class="shrink-0 w-3.5 h-3.5 rounded-[3px] border border-gray-300 text-[7px] leading-3 text-center font-semibold text-gray-500"
-		title={meta.dataType}>01</span
-	>
-{:else}
-	<span
-		class="shrink-0 w-3.5 h-3.5 rounded-[3px] border border-gray-300 text-[9px] leading-3 text-center font-serif italic text-gray-500"
-		title={meta?.dataType ?? 'text'}>T</span
-	>
-{/if}
+<span class="inline-flex items-center" title={label}>
+	<Icon size={11} strokeWidth={1.75} class="shrink-0 text-qc-muted" />
+</span>
