@@ -69,6 +69,7 @@ import {
 	buildTableActionPlan,
 } from '$lib/utils/workspace-actions';
 import { initializeWorkspace } from '$lib/utils/workspace-init';
+import { toast } from '$lib/stores/toast.svelte';
 
 function disconnectedStatus(): ConnectionStatus {
 	return {
@@ -830,6 +831,14 @@ export class Workspace {
 					success: true,
 					connectionKey: this.activeConnectionKey,
 				});
+			}
+			const recordChange = query.trim().match(/^\s*(insert|update|delete|truncate)\b/i);
+			if (recordChange) {
+				const verb = recordChange[1]!.toLowerCase();
+				if (verb === 'insert') toast.success('Insert succeeded');
+				else if (verb === 'update') toast.success('Update succeeded');
+				else if (verb === 'delete') toast.success('Delete succeeded');
+				else toast.success('Table truncated');
 			}
 		} catch (error) {
 			const message = errorMessage(error);

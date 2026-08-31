@@ -6,6 +6,7 @@
 	import SqlWorkspace from '$lib/components/workspace/SqlWorkspace.svelte';
 	import WorkspaceModals from '$lib/components/workspace/WorkspaceModals.svelte';
 	import StatusBar from '$lib/components/workspace/StatusBar.svelte';
+	import ToastHost from '$lib/components/ui/ToastHost.svelte';
 	import SearchPalette from '$lib/components/workspace/SearchPalette.svelte';
 	import { Workspace } from '$lib/workspace/controller.svelte';
 	import { clampResultsHeight } from '$lib/utils/workspace';
@@ -113,6 +114,7 @@
 	{/if}
 	<WorkspaceModals {workspace} />
 	<StatusBar />
+	<ToastHost />
 	<SearchPalette
 		open={workspace.showSearchPalette}
 		searchQuery={workspace.explorerSearch}

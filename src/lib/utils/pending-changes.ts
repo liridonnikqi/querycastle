@@ -42,6 +42,24 @@ export function diffText(before: string, after: string): DiffHunk[] {
 	}));
 }
 
+export function formatApplyResultMessage(result: {
+	updated: number;
+	deleted: number;
+	inserted: number;
+}): string {
+	const parts: string[] = [];
+	if (result.inserted > 0) {
+		parts.push(result.inserted === 1 ? 'Added 1 row' : `Added ${result.inserted} rows`);
+	}
+	if (result.updated > 0) {
+		parts.push(result.updated === 1 ? 'Updated 1 row' : `Updated ${result.updated} rows`);
+	}
+	if (result.deleted > 0) {
+		parts.push(result.deleted === 1 ? 'Deleted 1 row' : `Deleted ${result.deleted} rows`);
+	}
+	return parts.length > 0 ? parts.join('. ') : 'Changes saved';
+}
+
 export function pendingChangeCount(params: {
 	updates: Map<string, Record<string, unknown>>;
 	inserts: PendingInsert[];
@@ -147,6 +165,78 @@ function setClause(
 		.join(', ');
 }
 
+function rowByCtid(
+	rows: Array<Record<string, unknown>> | undefined,
+	ctid: string,
+): Record<string, unknown> | undefined {
+	return rows?.find((row) => String(row['_querycastle_ctid'] ?? '') === ctid);
+}
+
+function whereLiteral(databaseType: DatabaseType, value: unknown): string {
+	if (value === null || value === undefined) return 'NULL';
+	if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+	if (typeof value === 'bigint') return String(value);
+	if (typeof value === 'boolean') return quoteLiteral(databaseType, value);
+	const text = String(value).trim();
+	if (/^-?\d+(\.\d+)?$/.test(text)) return text;
+	return quoteLiteral(databaseType, value);
+}
+
+function pkColumnsForRow(
+	pkColumns: string[] | undefined,
+	row: Record<string, unknown> | undefined,
+): string[] {
+	if (pkColumns && pkColumns.length > 0) return pkColumns;
+	if (row && Object.prototype.hasOwnProperty.call(row, 'id')) return ['id'];
+	return [];
+}
+
+export function rowWhereSql(
+	databaseType: DatabaseType,
+	row: Record<string, unknown> | undefined,
+	ctid: string,
+	pkColumns?: string[],
+): string {
+	const keys = pkColumnsForRow(pkColumns, row);
+	if (keys.length > 0 && row) {
+		const parts: string[] = [];
+		let complete = true;
+		for (const column of keys) {
+			if (!Object.prototype.hasOwnProperty.call(row, column) || row[column] === undefined) {
+				complete = false;
+				break;
+			}
+			parts.push(
+				`${quoteSqlIdentifier(databaseType, column)} = ${whereLiteral(databaseType, row[column])}`,
+			);
+		}
+		if (complete && parts.length > 0) return parts.join(' and ');
+	}
+
+	const loc = quoteLiteral(databaseType, ctid);
+	if (databaseType === 'postgres') return `ctid = ${loc}::tid`;
+	if (databaseType === 'sqlite') return `rowid = ${loc}`;
+	return `/* row */ ${loc}`;
+}
+
+export function buildRowInspectSql(params: {
+	databaseType: DatabaseType;
+	schema: string;
+	table: string;
+	ctid: string;
+	row?: Record<string, unknown>;
+	pkColumns?: string[];
+}): string {
+	const tableRef = qualifyTable(params.databaseType, params.schema, params.table);
+	const where = rowWhereSql(
+		params.databaseType,
+		params.row,
+		params.ctid,
+		params.pkColumns,
+	);
+	return `select * from ${tableRef} where ${where};`;
+}
+
 export function buildPendingSqlPreview(params: {
 	databaseType: DatabaseType;
 	schema: string;
@@ -154,6 +244,9 @@ export function buildPendingSqlPreview(params: {
 	updates: Array<{ ctid: string; values: Record<string, unknown> }>;
 	deletes: string[];
 	inserts: Array<Record<string, unknown>>;
+	rows?: Array<Record<string, unknown>>;
+	deletedSnapshots?: Map<string, Record<string, unknown>>;
+	pkColumns?: string[];
 }): string {
 	const tableRef = qualifyTable(params.databaseType, params.schema, params.table);
 	const statements: string[] = [];
@@ -161,31 +254,26 @@ export function buildPendingSqlPreview(params: {
 	for (const update of params.updates) {
 		const sets = setClause(params.databaseType, update.values);
 		if (!sets) continue;
-		if (params.databaseType === 'postgres') {
-			statements.push(
-				`update ${tableRef} set ${sets} where ctid = ${quoteLiteral(params.databaseType, update.ctid)}::tid;`,
-			);
-		} else if (params.databaseType === 'sqlite') {
-			statements.push(
-				`update ${tableRef} set ${sets} where rowid = ${quoteLiteral(params.databaseType, update.ctid)};`,
-			);
-		} else {
-			statements.push(`update ${tableRef} set ${sets} where /* row */ ${quoteLiteral(params.databaseType, update.ctid)};`);
-		}
+		const row = rowByCtid(params.rows, update.ctid);
+		const where = rowWhereSql(
+			params.databaseType,
+			row,
+			update.ctid,
+			params.pkColumns,
+		);
+		statements.push(`update ${tableRef} set ${sets} where ${where};`);
 	}
 
 	for (const ctid of params.deletes) {
-		if (params.databaseType === 'postgres') {
-			statements.push(
-				`delete from ${tableRef} where ctid = ${quoteLiteral(params.databaseType, ctid)}::tid;`,
-			);
-		} else if (params.databaseType === 'sqlite') {
-			statements.push(
-				`delete from ${tableRef} where rowid = ${quoteLiteral(params.databaseType, ctid)};`,
-			);
-		} else {
-			statements.push(`delete from ${tableRef} where /* row */ ${quoteLiteral(params.databaseType, ctid)};`);
-		}
+		const row =
+			params.deletedSnapshots?.get(ctid) ?? rowByCtid(params.rows, ctid);
+		const where = rowWhereSql(
+			params.databaseType,
+			row,
+			ctid,
+			params.pkColumns,
+		);
+		statements.push(`delete from ${tableRef} where ${where};`);
 	}
 
 	for (const row of params.inserts) {

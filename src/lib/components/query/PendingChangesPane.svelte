@@ -7,7 +7,6 @@
 		cards,
 		sqlPreview,
 		syncing = false,
-		error = '',
 		onClose,
 		onClear,
 		onCommit,
@@ -17,7 +16,6 @@
 		cards: PendingChangeCard[];
 		sqlPreview: string;
 		syncing?: boolean;
-		error?: string;
 		onClose: () => void;
 		onClear: () => void;
 		onCommit: () => void;
@@ -58,11 +56,6 @@
 			</div>
 		</div>
 		<div class="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
-			{#if error}
-				<div class="rounded-md border border-qc-danger/40 bg-qc-danger/10 px-2.5 py-2 text-xs text-qc-danger">
-					{error}
-				</div>
-			{/if}
 			{#if changeCount === 0}
 				<div class="text-xs text-qc-muted px-1 py-6 text-center">No pending changes.</div>
 			{:else if view === 'sql'}

@@ -1,6 +1,9 @@
+use bytes::BytesMut;
 use serde_json::Value;
 use std::collections::HashMap;
-use tokio_postgres::types::ToSql;
+use std::error::Error;
+use tokio_postgres::types::{to_sql_checked, Format, IsNull, ToSql, Type};
+use tokio_postgres::Transaction;
 
 use crate::core::connection::{MAX_QUERY_ROWS, QUERY_TIMEOUT_MS};
 use crate::core::error::{sanitize_pg_error_to_db_error, DbError};
@@ -16,29 +19,78 @@ fn pool_get_error(err: deadpool_postgres::PoolError) -> DbError {
     DbError::connection(format!("Pool get failed: {err}"))
 }
 
-fn json_to_pg_param(value: &Value) -> Box<dyn ToSql + Sync + Send> {
+fn json_to_pg_text(value: &Value) -> Option<String> {
     match value {
-        Value::Null => Box::new(Option::<String>::None),
-        Value::Bool(v) => Box::new(*v),
-        Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Box::new(i)
-            } else if let Some(f) = n.as_f64() {
-                Box::new(f)
-            } else {
-                Box::new(n.to_string())
-            }
-        }
-        Value::String(s) => Box::new(s.clone()),
-        Value::Array(_) | Value::Object(_) => Box::new(value.to_string()),
+        Value::Null => None,
+        Value::Bool(v) => Some(if *v { "true".to_string() } else { "false".to_string() }),
+        Value::Number(n) => Some(n.to_string()),
+        Value::String(s) => Some(s.clone()),
+        Value::Array(_) | Value::Object(_) => Some(value.to_string()),
     }
 }
 
-fn pg_param_refs(params: &[Box<dyn ToSql + Sync + Send>]) -> Vec<&(dyn ToSql + Sync)> {
+/// Grid edits are JSON. Postgres prepared params are typed (int4, uuid, tid, ...),
+/// so we send every value as text and let the server coerce it.
+#[derive(Debug)]
+struct PgTextParam(Option<String>);
+
+impl ToSql for PgTextParam {
+    fn to_sql(
+        &self,
+        _ty: &Type,
+        out: &mut BytesMut,
+    ) -> Result<IsNull, Box<dyn Error + Sync + Send>> {
+        match &self.0 {
+            None => Ok(IsNull::Yes),
+            Some(value) => {
+                out.extend_from_slice(value.as_bytes());
+                Ok(IsNull::No)
+            }
+        }
+    }
+
+    fn accepts(_ty: &Type) -> bool {
+        true
+    }
+
+    fn encode_format(&self, _ty: &Type) -> Format {
+        Format::Text
+    }
+
+    to_sql_checked!();
+}
+
+fn json_to_pg_param(value: &Value) -> PgTextParam {
+    PgTextParam(json_to_pg_text(value))
+}
+
+fn pg_param_refs(params: &[PgTextParam]) -> Vec<&(dyn ToSql + Sync)> {
     params
         .iter()
-        .map(|p| p.as_ref() as &(dyn ToSql + Sync))
+        .map(|value| value as &(dyn ToSql + Sync))
         .collect()
+}
+
+async fn exec_untyped(
+    tx: &Transaction<'_>,
+    sql: &str,
+    params: &[PgTextParam],
+) -> Result<u64, DbError> {
+    let bind_refs = pg_param_refs(params);
+    tx.execute(sql, bind_refs.as_slice())
+        .await
+        .map_err(sanitize_pg_error_to_db_error)
+}
+
+async fn query_opt_untyped(
+    tx: &Transaction<'_>,
+    sql: &str,
+    params: &[PgTextParam],
+) -> Result<Option<tokio_postgres::Row>, DbError> {
+    let bind_refs = pg_param_refs(params);
+    tx.query_opt(sql, bind_refs.as_slice())
+        .await
+        .map_err(sanitize_pg_error_to_db_error)
 }
 
 async fn set_statement_timeout(client: &tokio_postgres::Client) -> Result<(), DbError> {
@@ -334,18 +386,16 @@ pub async fn apply_table_changes(
             .join(", ");
         let ctid_param = entries.len() + 1;
         let query = format!(
-            "update {safe_table} as t set {set_clause} where t.ctid = ${ctid_param}::tid returning t.ctid::text as _querycastle_ctid, to_jsonb(t)::text as _querycastle_row_json"
+            "update {safe_table} as t set {set_clause} where t.ctid = ${ctid_param}::text::tid returning t.ctid::text as _querycastle_ctid, to_jsonb(t)::text as _querycastle_row_json"
         );
 
-        let mut bind_values: Vec<Box<dyn ToSql + Sync + Send>> =
-            entries.iter().map(|(_, value)| json_to_pg_param(value)).collect();
-        bind_values.push(Box::new(update.ctid.clone()));
-        let bind_refs = pg_param_refs(&bind_values);
+        let mut bind_values: Vec<PgTextParam> = entries
+            .iter()
+            .map(|(_, value)| json_to_pg_param(value))
+            .collect();
+        bind_values.push(PgTextParam(Some(update.ctid.clone())));
 
-        let updated_row = tx
-            .query_opt(query.as_str(), bind_refs.as_slice())
-            .await
-            .map_err(sanitize_pg_error_to_db_error)?;
+        let updated_row = query_opt_untyped(&tx, query.as_str(), &bind_values).await?;
         let Some(updated_row) = updated_row else {
             return Err(DbError::NotFound(format!(
                 "Could not update row with ctid {}. It may have changed. Refresh and retry.",
@@ -364,11 +414,8 @@ pub async fn apply_table_changes(
     }
 
     for ctid in &params.changes.deletes {
-        let query = format!("delete from {safe_table} where ctid = $1::tid");
-        let affected = tx
-            .execute(query.as_str(), &[&ctid])
-            .await
-            .map_err(sanitize_pg_error_to_db_error)?;
+        let query = format!("delete from {safe_table} where ctid = $1::text::tid");
+        let affected = exec_untyped(&tx, query.as_str(), &[PgTextParam(Some(ctid.clone()))]).await?;
         if affected == 0 {
             return Err(DbError::NotFound(format!(
                 "Could not delete row with ctid {ctid}. It may have changed. Refresh and retry."
@@ -396,12 +443,11 @@ pub async fn apply_table_changes(
             .collect::<Vec<_>>()
             .join(", ");
         let query = format!("insert into {safe_table} ({cols}) values ({placeholders})");
-        let bind_values: Vec<Box<dyn ToSql + Sync + Send>> =
-            entries.iter().map(|(_, value)| json_to_pg_param(value)).collect();
-        let bind_refs = pg_param_refs(&bind_values);
-        tx.execute(query.as_str(), bind_refs.as_slice())
-            .await
-            .map_err(sanitize_pg_error_to_db_error)?;
+        let bind_values: Vec<PgTextParam> = entries
+            .iter()
+            .map(|(_, value)| json_to_pg_param(value))
+            .collect();
+        exec_untyped(&tx, query.as_str(), &bind_values).await?;
         inserted += 1;
     }
 

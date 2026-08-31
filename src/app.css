@@ -82,6 +82,9 @@ html[data-theme='dark'] {
 	--qc-logo-fg: #0b0c0e;
 	--qc-amber: #d97706;
 	--qc-amber-bg: rgba(217, 119, 6, 0.16);
+	--qc-insert-accent: #3fb950;
+	--qc-insert-fg: #aff5b4;
+	--qc-delete-fg: #ffa198;
 	--qc-grid-line: #2c3038;
 	--qc-btn-emphasis: #056dff;
 	--qc-btn-emphasis-from: #3c86ff;
@@ -163,6 +166,9 @@ html[data-theme='light'] {
 	--qc-logo-fg: #ffffff;
 	--qc-amber: #b45309;
 	--qc-amber-bg: #fffbeb;
+	--qc-insert-accent: #16a34a;
+	--qc-insert-fg: #166534;
+	--qc-delete-fg: #991b1b;
 	--qc-grid-line: #e5e5e5;
 	--linear-12: rgba(255, 255, 255, 0.12);
 	--qc-btn-emphasis: #056dff;
@@ -654,6 +660,16 @@ html[data-theme='light'] .qc-check:checked {
 	z-index: 11;
 }
 
+.excel-grid .qc-select-col {
+	width: 32px;
+	min-width: 32px;
+	max-width: 32px;
+	padding: 0;
+	text-align: center;
+	vertical-align: middle;
+	overflow: hidden;
+}
+
 .excel-grid .grid-filler {
 	width: 120px;
 	min-width: 120px;
@@ -1002,7 +1018,7 @@ button.rail-btn:not(:disabled):active {
 		background-color 140ms ease;
 }
 
-.table-row:hover:not(.row-selected):not(.row-current) td {
+.table-row:hover:not(.row-selected):not(.row-current):not(.row-pending-delete) td {
 	background: var(--qc-row-hover);
 }
 
@@ -1027,19 +1043,22 @@ button.rail-btn:not(:disabled):active {
 }
 
 .cell-dirty {
-	box-shadow: inset 3px 0 0 #3fb950;
-	background: color-mix(in srgb, #3fb950 14%, var(--qc-grid)) !important;
-	color: #aff5b4 !important;
+	background: color-mix(in srgb, var(--qc-insert-accent) 14%, var(--qc-grid)) !important;
+	color: var(--qc-insert-fg) !important;
+}
+
+.row-pending-insert td {
+	background: color-mix(in srgb, var(--qc-insert-accent) 10%, var(--qc-grid));
+	transition: background-color 200ms ease;
 }
 
 .row-pending-delete td {
 	background: color-mix(in srgb, var(--qc-danger) 14%, var(--qc-grid)) !important;
-	color: #ffa198 !important;
+	color: var(--qc-delete-fg) !important;
 	text-decoration: line-through;
-}
-
-.row-pending-insert td {
-	background: color-mix(in srgb, #3fb950 10%, var(--qc-grid));
+	transition:
+		background-color 200ms ease,
+		color 200ms ease;
 }
 
 .row-current td {

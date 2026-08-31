@@ -12,6 +12,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
+bytes = "1"
 deadpool-postgres = { version = "0.14", features = ["rt_tokio_1"] }
 mysql_async = "0.34"
 native-tls = "0.2"

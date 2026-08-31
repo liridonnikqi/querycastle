@@ -111,8 +111,8 @@
 	});
 </script>
 
-<div class="tab-strip h-9 flex items-center bg-qc-panel shrink-0 min-w-0 w-full">
-	<div class="relative min-w-0 flex-1 h-full">
+<div class="tab-strip grid h-9 grid-cols-[minmax(0,max-content)_2rem] items-center bg-qc-panel shrink-0 min-w-0 w-full">
+	<div class="relative min-w-0 h-full">
 		<div
 			bind:this={scroller}
 			onwheel={onWheel}

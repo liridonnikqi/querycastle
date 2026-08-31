@@ -8,6 +8,7 @@
 		Eye,
 		Hash,
 		History,
+		Layers,
 		Play,
 		Plus,
 		RefreshCw,
@@ -430,10 +431,10 @@
 			class="flex items-center h-9 border-b border-qc-border px-1.5 gap-0.5 shrink-0 relative"
 		>
 			{#if explorerPane === 'tables'}
-				<div class="flex-1 min-w-0 flex items-center gap-1 px-1 text-[12px]">
+				<div class="flex-1 min-w-0 flex items-center gap-2.5 px-1 text-[12px]">
 					<button
 						type="button"
-						class="inline-flex items-center gap-0.5 min-w-0 text-qc-muted hover:text-qc-subtle"
+						class="inline-flex items-center gap-1 min-w-0 text-qc-muted hover:text-qc-subtle"
 						onclick={toggleDatabaseMenu}
 						oncontextmenu={(event) =>
 							currentSchema && openSchemaContextMenu(event, currentSchema.name)}
@@ -441,13 +442,14 @@
 						aria-haspopup="listbox"
 						aria-expanded={showDatabaseMenu}
 					>
+						<Database size={12} class="shrink-0 opacity-80" />
 						<span class="truncate">{selectedDatabaseLabel}</span>
 						<ChevronDown size={11} class="shrink-0 opacity-70" />
 					</button>
-					<ChevronRight size={12} class="text-qc-muted shrink-0" />
+
 					<button
 						type="button"
-						class="inline-flex items-center gap-0.5 min-w-0 text-qc-fg font-medium"
+						class="inline-flex items-center gap-1 min-w-0 text-qc-fg font-medium"
 						onclick={() => {
 							showSchemaMenu = !showSchemaMenu;
 							showDatabaseMenu = false;
@@ -458,6 +460,7 @@
 						aria-haspopup="listbox"
 						aria-expanded={showSchemaMenu}
 					>
+						<Layers size={12} class="shrink-0 opacity-80" />
 						<span class="truncate">{currentSchema?.name ?? 'schema'}</span>
 						<ChevronDown size={11} class="shrink-0 opacity-70" />
 					</button>
