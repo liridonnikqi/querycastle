@@ -4,10 +4,8 @@ export const SAVED_CONNECTIONS_KEY = 'querycastle.savedConnections.v1';
 export const QUERY_TABS_KEY = 'querycastle.queryTabs.v2';
 export const QUERY_FAVORITES_KEY = 'querycastle.queryFavorites.v1';
 export const QUERY_HISTORY_KEY = 'querycastle.queryHistory.v1';
-export const MAIN_VIEW_KEY = 'querycastle.mainView.v1';
 
-export type TabKind = 'query' | 'data';
-export type MainView = 'sql' | 'saved_queries' | 'history' | 'diagram';
+export type TabKind = 'query' | 'data' | 'diagram';
 
 export type RelationHop = {
 	direction: 'outgoing' | 'incoming';
@@ -53,7 +51,7 @@ export function createDefaultTab(): WorkspaceTab {
 		id: crypto.randomUUID(),
 		title: 'Query 1',
 		kind: 'query',
-		sql: 'SELECT 1;',
+		sql: '',
 		lastRunSql: '',
 		result: createEmptyResult(),
 		sqlError: '',

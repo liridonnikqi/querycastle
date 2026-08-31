@@ -1,9 +1,10 @@
 import type { DatabaseExplorer, DatabaseForeignKey, DatabaseType } from '$lib/rpc';
-import { buildMysqlRowHashExpression } from '$lib/utils/editable-query';
+import { HIDDEN_ROW_ID_COLUMN, mysqlRowAlias } from '$lib/utils/dialect';
 import { quoteSqlIdentifier } from '$lib/utils/sql';
+import { buildOrderByClause, buildTableSelect } from '$lib/utils/table-select';
 import type { RelationHop } from '$lib/utils/workspace';
 
-export const HIDDEN_ROW_ID_COLUMN = '_querycastle_ctid';
+export { HIDDEN_ROW_ID_COLUMN };
 const TITLE_VALUE_MAX = 24;
 const FOLLOW_ROW_LIMIT = 100;
 
@@ -139,20 +140,6 @@ function firstOrderColumn(
 	);
 }
 
-function qualifyTable(databaseType: DatabaseType, schema: string, table: string): string {
-	return `${quoteIdent(databaseType, schema)}.${quoteIdent(databaseType, table)}`;
-}
-
-function buildOrderByClause(
-	databaseType: DatabaseType,
-	orderColumn: string | null,
-): string {
-	if (!orderColumn) return '';
-	const quoted = quoteIdent(databaseType, orderColumn);
-	if (databaseType === 'mysql') return ` order by ${quoted} asc`;
-	return ` order by ${quoted} asc nulls last`;
-}
-
 export function buildFilteredTableSql(params: {
 	databaseType: DatabaseType;
 	explorer: DatabaseExplorer | null;
@@ -164,29 +151,22 @@ export function buildFilteredTableSql(params: {
 	if (!isFollowableValue(params.value)) return null;
 
 	const { databaseType, explorer, schema, table, whereColumn, value } = params;
-	const qualifiedTable = qualifyTable(databaseType, schema, table);
 	const quotedWhere = quoteIdent(databaseType, whereColumn);
 	const literal = quoteLiteral(databaseType, value);
 	const orderColumn = firstOrderColumn(explorer, schema, table) ?? whereColumn;
-	const orderByClause = buildOrderByClause(databaseType, orderColumn);
-	const whereClause = ` where ${quotedWhere} = ${literal}`;
-
-	if (databaseType === 'sqlite') {
-		return `select cast(rowid as text) as ${HIDDEN_ROW_ID_COLUMN}, * from ${qualifiedTable}${whereClause}${orderByClause} limit ${FOLLOW_ROW_LIMIT};`;
-	}
-
-	if (databaseType === 'mysql') {
-		const rowHashWithAlias = buildMysqlRowHashExpression(
-			explorer,
-			schema,
-			table,
-			'_querycastle_src',
-		);
-		if (!rowHashWithAlias) return null;
-		return `select ${rowHashWithAlias} as ${HIDDEN_ROW_ID_COLUMN}, _querycastle_src.* from ${qualifiedTable} as _querycastle_src where _querycastle_src.${quotedWhere} = ${literal}${orderByClause} limit ${FOLLOW_ROW_LIMIT};`;
-	}
-
-	return `select ctid::text as ${HIDDEN_ROW_ID_COLUMN}, * from ${qualifiedTable}${whereClause}${orderByClause} limit ${FOLLOW_ROW_LIMIT};`;
+	const alias = mysqlRowAlias(databaseType, explorer, schema, table);
+	const whereColumnSql = alias ? `${alias}.${quotedWhere}` : quotedWhere;
+	return buildTableSelect({
+		databaseType,
+		explorer,
+		schema,
+		table,
+		whereClause: ` where ${whereColumnSql} = ${literal}`,
+		orderClause: orderColumn
+			? buildOrderByClause(databaseType, { column: orderColumn, dir: 'asc' })
+			: '',
+		limit: FOLLOW_ROW_LIMIT,
+	});
 }
 
 export function buildOutgoingFollowSql(params: {

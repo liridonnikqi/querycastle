@@ -1,6 +1,12 @@
 import type { DatabaseExplorer, DatabaseType } from '$lib/rpc';
-import { isExplorerView } from '$lib/utils/schema-objects';
+import {
+	HIDDEN_ROW_ID_COLUMN,
+	buildMysqlRowHashExpression,
+	qualifyTable,
+} from '$lib/utils/dialect';
+import { findExplorerTable } from '$lib/utils/schema-objects';
 import { quoteSqlIdentifier, unquoteIdent } from '$lib/utils/sql';
+import { canEditTable } from '$lib/utils/table-select';
 
 export type EditableQueryPlan = {
 	sql: string;
@@ -42,26 +48,7 @@ function resolvePreferredOrderColumn(
 	return tableMeta?.columns[0]?.name ?? null;
 }
 
-export function buildMysqlRowHashExpression(
-	explorer: DatabaseExplorer | null,
-	schema: string,
-	table: string,
-	columnPrefix?: string,
-): string | null {
-	const tableMeta = explorer?.schemas
-		.find((item) => item.name === schema)
-		?.tables.find((item) => item.name === table);
-	if (!tableMeta || tableMeta.columns.length === 0) return null;
-
-	const parts = tableMeta.columns.map((column) => {
-		const safeColumn = quoteSqlIdentifier('mysql', column.name);
-		const qualifiedColumn = columnPrefix
-			? `${columnPrefix}.${safeColumn}`
-			: safeColumn;
-		return `coalesce(cast(${qualifiedColumn} as char), '__querycastle_null__')`;
-	});
-	return `md5(concat_ws(char(31), ${parts.join(', ')}))`;
-}
+export { buildMysqlRowHashExpression };
 
 export function tryBuildEditableQuery(params: {
 	sql: string;
@@ -132,7 +119,15 @@ export function tryBuildEditableQuery(params: {
 		return null;
 	}
 
-	if (isExplorerView(explorer, contextSchema, contextTable)) return null;
+	const matchedTable = findExplorerTable(explorer, contextSchema, contextTable);
+	if (matchedTable) {
+		contextSchema = matchedTable.schema || contextSchema;
+		contextTable = matchedTable.name;
+	}
+
+	if (!canEditTable(databaseType, explorer, contextSchema, contextTable)) {
+		return null;
+	}
 
 	let effectiveTail = tail;
 	if (!/\border\s+by\b/i.test(effectiveTail)) {
@@ -157,10 +152,13 @@ export function tryBuildEditableQuery(params: {
 		}
 	}
 
+	const quotedTableRef = qualifyTable(databaseType, contextSchema, contextTable);
+	const context = { schema: contextSchema, table: contextTable };
+
 	if (databaseType === 'sqlite') {
 		return {
-			sql: `select cast(rowid as text) as _querycastle_ctid, ${selectPart} from ${tableRef}${effectiveTail};`,
-			context: { schema: contextSchema, table: contextTable },
+			sql: `select cast(rowid as text) as ${HIDDEN_ROW_ID_COLUMN}, ${selectPart} from ${quotedTableRef}${effectiveTail};`,
+			context,
 		};
 	}
 
@@ -171,15 +169,16 @@ export function tryBuildEditableQuery(params: {
 			contextTable,
 		);
 		if (!rowHashExpression) return null;
-		const mysqlSelectPart = selectPart.trim() === '*' ? `${tableRef}.*` : selectPart;
+		const mysqlSelectPart =
+			selectPart.trim() === '*' ? `${quotedTableRef}.*` : selectPart;
 		return {
-			sql: `select ${rowHashExpression} as _querycastle_ctid, ${mysqlSelectPart} from ${tableRef}${effectiveTail};`,
-			context: { schema: contextSchema, table: contextTable },
+			sql: `select ${rowHashExpression} as ${HIDDEN_ROW_ID_COLUMN}, ${mysqlSelectPart} from ${quotedTableRef}${effectiveTail};`,
+			context,
 		};
 	}
 
 	return {
-		sql: `select ctid::text as _querycastle_ctid, ${selectPart} from ${tableRef}${effectiveTail};`,
-		context: { schema: contextSchema, table: contextTable },
+		sql: `select ctid::text as ${HIDDEN_ROW_ID_COLUMN}, ${selectPart} from ${quotedTableRef}${effectiveTail};`,
+		context,
 	};
 }

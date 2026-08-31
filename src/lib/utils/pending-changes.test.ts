@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	buildPendingChangeCards,
 	buildPendingSqlPreview,
+	diffText,
 	pendingChangeCount,
 } from '$lib/utils/pending-changes';
 
@@ -32,6 +33,28 @@ describe('pending changes', () => {
 			before: 'old@x.com',
 			after: 'new@x.com',
 		});
+	});
+
+	it('treats a cleared cell as empty, not the word Empty', () => {
+		const cards = buildPendingChangeCards({
+			schema: 'public',
+			table: 'users',
+			rows: [{ _querycastle_ctid: '1', email: 'old@x.com' }],
+			updates: new Map([['1', { email: null }]]),
+			inserts: [],
+			deletes: new Set(),
+		});
+		expect(cards[0]?.before).toBe('old@x.com');
+		expect(cards[0]?.after).toBe('');
+	});
+
+	it('diffs changed characters', () => {
+		expect(diffText('hello', 'hallo')).toEqual([
+			{ kind: 'eq', text: 'h' },
+			{ kind: 'del', text: 'e' },
+			{ kind: 'add', text: 'a' },
+			{ kind: 'eq', text: 'llo' },
+		]);
 	});
 
 	it('previews postgres update sql', () => {

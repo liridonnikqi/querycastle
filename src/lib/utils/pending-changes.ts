@@ -1,3 +1,4 @@
+import { diffChars } from 'diff';
 import type { DatabaseType } from '$lib/rpc';
 import { quoteLiteral } from '$lib/utils/relation-sql';
 import { quoteSqlIdentifier } from '$lib/utils/sql';
@@ -15,9 +16,30 @@ export type PendingChangeCard = {
 };
 
 export function formatDiffValue(value: unknown): string {
-	if (value === null || value === undefined || value === '') return 'Empty';
+	if (value === null || value === undefined || value === '') return '';
 	if (typeof value === 'boolean') return value ? 'True' : 'False';
 	return String(value);
+}
+
+export type DiffHunk = { kind: 'eq' | 'add' | 'del'; text: string };
+
+export function diffText(before: string, after: string): DiffHunk[] {
+	if (before === after) return [{ kind: 'eq', text: after }];
+	if (before.length === 0) return [{ kind: 'add', text: after }];
+	if (after.length === 0) return [{ kind: 'del', text: before }];
+
+	const parts = diffChars(before, after, { maxEditLength: 4_000 });
+	if (!parts) {
+		return [
+			{ kind: 'del', text: before },
+			{ kind: 'add', text: after },
+		];
+	}
+
+	return parts.map((part) => ({
+		kind: part.added ? 'add' : part.removed ? 'del' : 'eq',
+		text: part.value,
+	}));
 }
 
 export function pendingChangeCount(params: {

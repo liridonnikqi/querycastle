@@ -31,7 +31,11 @@ export function loadQueryTabsFromStorage(key: string): WorkspaceTab[] {
 			.map((item) => ({
 				id: item.id!,
 				title: item.title!,
-				kind: (item.kind === 'data' ? 'data' : 'query') as TabKind,
+				kind: (item.kind === 'data'
+					? 'data'
+					: item.kind === 'diagram'
+						? 'diagram'
+						: 'query') as TabKind,
 				sql: typeof item.sql === 'string' ? item.sql : '',
 				lastRunSql: '',
 				result: createEmptyResult(),

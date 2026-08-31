@@ -41,6 +41,20 @@ export function createDataTab(params: {
 	};
 }
 
+export function createDiagramTab(): WorkspaceTab {
+	return {
+		id: crypto.randomUUID(),
+		title: 'Schema diagram',
+		kind: 'diagram',
+		sql: '',
+		lastRunSql: '',
+		result: createEmptyResult(),
+		sqlError: '',
+		resultContext: null,
+		relationTrail: [],
+	};
+}
+
 export function insertTabAfter(params: {
 	tabs: WorkspaceTab[];
 	activeTabId: string;

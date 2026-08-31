@@ -40,17 +40,60 @@ export function schemaViews(schema: DatabaseSchema): DatabaseTable[] {
 	return schema.tables.filter((item) => item.kind === 'view');
 }
 
+function uniqueNamed<T extends { name: string }>(
+	items: T[],
+	name: string,
+): T | undefined {
+	const exact = items.find((item) => item.name === name);
+	if (exact) return exact;
+	const lower = name.toLowerCase();
+	const matches = items.filter((item) => item.name.toLowerCase() === lower);
+	return matches.length === 1 ? matches[0] : undefined;
+}
+
+export function explorerToSqlSchema(
+	explorer: DatabaseExplorer | null,
+): Record<string, string[]> {
+	if (!explorer) return {};
+	const schema: Record<string, string[]> = {};
+	for (const item of explorer.schemas) {
+		for (const table of item.tables) {
+			const columns = table.columns.map((column) => column.name);
+			schema[table.name] = columns;
+			schema[`${item.name}.${table.name}`] = columns;
+		}
+	}
+	return schema;
+}
+
+export function collectExplorerIdentifiers(
+	explorer: DatabaseExplorer | null,
+): string[] {
+	if (!explorer) return [];
+	const names: string[] = [];
+	for (const schema of explorer.schemas) {
+		names.push(schema.name);
+		for (const table of schema.tables) {
+			names.push(table.name);
+			for (const column of table.columns) names.push(column.name);
+			for (const index of tableIndexes(table)) names.push(index.name);
+			for (const trigger of tableTriggers(table)) names.push(trigger.name);
+		}
+		for (const routine of schemaRoutines(schema)) names.push(routine.name);
+		for (const sequence of schemaSequences(schema)) names.push(sequence.name);
+	}
+	return names;
+}
+
 export function findExplorerTable(
 	explorer: DatabaseExplorer | null,
 	schema: string,
 	table: string,
 ): DatabaseTable | null {
 	if (!explorer) return null;
-	return (
-		explorer.schemas
-			.find((item) => item.name === schema)
-			?.tables.find((item) => item.name === table) ?? null
-	);
+	const schemaObj = uniqueNamed(explorer.schemas, schema);
+	if (!schemaObj) return null;
+	return uniqueNamed(schemaObj.tables, table) ?? null;
 }
 
 export function isExplorerView(
