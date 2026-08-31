@@ -1,75 +1,39 @@
 <script lang="ts">
-	import ConnectionModalBridge from '$lib/components/workspace/ConnectionModalBridge.svelte';
+	import ConnectionModal from '$lib/components/connection/ConnectionModal.svelte';
 	import RenameTableModal from '$lib/components/workspace/RenameTableModal.svelte';
-	import type { ConnectionInput } from '$lib/rpc';
+	import type { Workspace } from '$lib/workspace/controller.svelte';
 
-	let {
-		showConnectionModal,
-		editingConnectionName,
-		connectionForm,
-		connectionStringInput,
-		testConnectionMessage,
-		testConnectionOk,
-		isTestingConnection,
-		isConnecting,
-		showRenameModal,
-		renameTarget,
-		renameValue,
-		onCloseConnectionModal,
-		onModeChange,
-		onConnectionFormChange,
-		onConnectionStringChange,
-		onTestConnection,
-		onSaveAndConnect,
-		onRenameValueChange,
-		onCloseRenameModal,
-		onSubmitRename,
-	}: {
-		showConnectionModal: boolean;
-		editingConnectionName: string | null;
-		connectionForm: ConnectionInput;
-		connectionStringInput: string;
-		testConnectionMessage: string;
-		testConnectionOk: boolean;
-		isTestingConnection: boolean;
-		isConnecting: boolean;
-		showRenameModal: boolean;
-		renameTarget: { schema: string; table: string } | null;
-		renameValue: string;
-		onCloseConnectionModal: () => void;
-		onModeChange: (mode: 'fields' | 'string') => void;
-		onConnectionFormChange: (next: ConnectionInput) => void;
-		onConnectionStringChange: (value: string) => void;
-		onTestConnection: () => void;
-		onSaveAndConnect: () => void;
-		onRenameValueChange: (value: string) => void;
-		onCloseRenameModal: () => void;
-		onSubmitRename: () => void;
-	} = $props();
+	let { workspace }: { workspace: Workspace } = $props();
 </script>
 
-<ConnectionModalBridge
-	show={showConnectionModal}
-	editing={editingConnectionName !== null}
-	{connectionForm}
-	{connectionStringInput}
-	{testConnectionMessage}
-	{testConnectionOk}
-	{isTestingConnection}
-	{isConnecting}
-	onClose={onCloseConnectionModal}
-	onModeChange={onModeChange}
-	onConnectionFormChange={onConnectionFormChange}
-	onConnectionStringChange={onConnectionStringChange}
-	onTest={onTestConnection}
-	onSaveAndConnect={onSaveAndConnect}
+<ConnectionModal
+	visible={workspace.showConnectionModal}
+	editing={workspace.editingConnectionName !== null}
+	connectionForm={workspace.connectionForm}
+	connectionStringInput={workspace.connectionStringInput}
+	testConnectionMessage={workspace.testConnectionMessage}
+	testConnectionOk={workspace.testConnectionOk}
+	isTestingConnection={workspace.isTestingConnection}
+	isConnecting={workspace.isConnecting}
+	onClose={() => {
+		workspace.showConnectionModal = false;
+		workspace.editingConnectionName = null;
+	}}
+	onModeChange={(mode) => {
+		workspace.connectionInputMode =
+			workspace.connectionForm.databaseType === 'sqlite' ? 'fields' : mode;
+	}}
+	onConnectionFormChange={(next) => (workspace.connectionForm = next)}
+	onConnectionStringChange={(value) => (workspace.connectionStringInput = value)}
+	onTest={() => void workspace.handleTestConnection()}
+	onSaveAndConnect={() => void workspace.handleConnect(true)}
 />
 
 <RenameTableModal
-	visible={showRenameModal}
-	target={renameTarget}
-	value={renameValue}
-	onValueChange={onRenameValueChange}
-	onClose={onCloseRenameModal}
-	onSubmit={onSubmitRename}
+	visible={workspace.showRenameModal}
+	target={workspace.renameTarget}
+	value={workspace.renameValue}
+	onValueChange={(value) => (workspace.renameValue = value)}
+	onClose={() => (workspace.showRenameModal = false)}
+	onSubmit={() => void workspace.submitRename()}
 />

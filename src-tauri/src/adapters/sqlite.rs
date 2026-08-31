@@ -1,264 +1,552 @@
-use async_trait::async_trait;
 use rusqlite::types::ValueRef;
+use rusqlite::{params_from_iter, Connection};
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::adapters::traits::{DbAdapter, SqliteAdapter};
-use crate::core::error::DbError;
+use crate::core::connection::MAX_QUERY_ROWS;
+use crate::core::error::{sanitize_sqlite_error_to_db_error, DbError};
+use crate::core::sql;
 use crate::core::types::{
-    ApplyTableChangesParams, ApplyTableChangesResponse, ConnectionInput, ConnectionStatus,
-    DatabaseExplorer, DatabaseType, QueryResultPayload, TestConnectionResponse, UpdatedRowCtid,
+    ApplyTableChangesParams, ApplyTableChangesResponse, DatabaseColumn, DatabaseExplorer,
+    DatabaseForeignKey, DatabaseIndex, DatabaseSchema, DatabaseTable, DatabaseTrigger,
+    ObjectDefinition, ObjectDefinitionParams, QueryResultPayload, UpdatedRowCtid,
 };
 
+type SqlitePool = r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>;
+
 fn sqlite_value_to_json(value: ValueRef<'_>) -> Value {
-    crate::core::db::sqlite_value_to_json(value)
-}
-
-fn sqlite_literal(value: &Value) -> String {
-    crate::core::sql::value_to_sql_literal_for(crate::core::types::DatabaseType::Sqlite, value)
-}
-
-#[async_trait]
-impl DbAdapter for SqliteAdapter {
-    async fn test_connection(&self, connection: &ConnectionInput) -> Result<TestConnectionResponse, DbError> {
-        let conn = match crate::core::db::open_sqlite_connection(connection) {
-            Ok(conn) => conn,
-            Err(error) => {
-                return Ok(TestConnectionResponse {
-                    ok: false,
-                    message: error,
-                    server_version: None,
-                })
+    match value {
+        ValueRef::Null => Value::Null,
+        ValueRef::Integer(v) => Value::Number(v.into()),
+        ValueRef::Real(v) => serde_json::Number::from_f64(v)
+            .map(Value::Number)
+            .unwrap_or(Value::Null),
+        ValueRef::Text(v) => Value::String(String::from_utf8_lossy(v).to_string()),
+        ValueRef::Blob(v) => {
+            let mut out = String::with_capacity(v.len() * 2 + 2);
+            out.push_str("0x");
+            for byte in v {
+                out.push_str(&format!("{byte:02x}"));
             }
-        };
-        let server_version = crate::core::db::get_sqlite_server_version(&conn).map_err(DbError::internal)?;
-        Ok(TestConnectionResponse {
-            ok: true,
-            message: "Connection successful".to_string(),
-            server_version,
-        })
-    }
-
-    async fn connect(&self, connection: &ConnectionInput) -> Result<ConnectionStatus, DbError> {
-        let conn = crate::core::db::open_sqlite_connection(connection).map_err(DbError::internal)?;
-        let server_version = crate::core::db::get_sqlite_server_version(&conn).map_err(DbError::internal)?;
-        Ok(ConnectionStatus {
-            connected: true,
-            database_type: DatabaseType::Sqlite,
-            name: connection.name.clone(),
-            host: String::new(),
-            port: 0,
-            database: connection.database.clone(),
-            user: String::new(),
-            server_version,
-        })
-    }
-
-    async fn run_query(&self, connection: &ConnectionInput, sql: &str) -> Result<QueryResultPayload, DbError> {
-        crate::core::db::run_sqlite_query(connection, sql).map_err(DbError::internal)
-    }
-
-    async fn get_database_explorer(&self, connection: &ConnectionInput) -> Result<DatabaseExplorer, DbError> {
-        crate::core::db::get_sqlite_database_explorer(connection).map_err(DbError::internal)
-    }
-
-    async fn list_databases(&self, connection: &ConnectionInput) -> Result<Vec<String>, DbError> {
-        Ok(crate::core::db::list_sqlite_databases(connection))
-    }
-
-    async fn select_database(
-        &self,
-        connection: &ConnectionInput,
-        database: &str,
-    ) -> Result<(ConnectionInput, ConnectionStatus), DbError> {
-        let next_connection = crate::core::db::with_new_database(connection, database);
-        // For SQLite, ensure file-specific fields are cleared (host/port/etc not used)
-        let mut next = next_connection;
-        if next.database_type == crate::core::types::DatabaseType::Sqlite {
-            next.host = String::new();
-            next.port = 0;
-            next.user = String::new();
-            next.ssl = false;
+            Value::String(out)
         }
-        let status = self.connect(&next).await?;
-        Ok((next, status))
     }
+}
 
-    async fn apply_table_changes(
-        &self,
-        connection: &ConnectionInput,
-        params: &ApplyTableChangesParams,
-    ) -> Result<ApplyTableChangesResponse, DbError> {
-        let schema = params.schema.trim();
-        let table = params.table.trim();
-        if schema.is_empty() || table.is_empty() {
-            return Err(DbError::validation("Schema and table are required"));
-        }
-
-        let mut conn = crate::core::db::open_sqlite_connection(connection).map_err(DbError::internal)?;
-        let tx = conn
-            .transaction()
-            .map_err(|e| DbError::internal(format!("SQLite transaction start failed: {e}")))?;
-
-        let safe_table = format!(
-            "{}.{}",
-            crate::core::sql::quote_ident(schema),
-            crate::core::sql::quote_ident(table)
-        );
-
-        // Detect WITHOUT ROWID and primary key for better error messages
-        let is_without_rowid = {
-            let stmt = tx
-                .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?1")
-                .ok();
-            if let Some(mut stmt) = stmt {
-                stmt.query_row([table], |row| row.get::<_, Option<String>>(0))
-                    .ok()
-                    .flatten()
-                    .map(|s| s.to_lowercase().contains("without rowid"))
-                    .unwrap_or(false)
+fn json_to_sqlite_value(value: &Value) -> rusqlite::types::Value {
+    match value {
+        Value::Null => rusqlite::types::Value::Null,
+        Value::Bool(v) => rusqlite::types::Value::Integer(if *v { 1 } else { 0 }),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                rusqlite::types::Value::Integer(i)
+            } else if let Some(f) = n.as_f64() {
+                rusqlite::types::Value::Real(f)
             } else {
-                false
+                rusqlite::types::Value::Text(n.to_string())
             }
-        };
-
-        let mut updated = 0usize;
-        let mut deleted = 0usize;
-        let mut inserted = 0usize;
-        let mut updated_rows: Vec<UpdatedRowCtid> = Vec::new();
-
-        for update in &params.changes.updates {
-            let rowid = update
-                .ctid
-                .trim()
-                .parse::<i64>()
-                .map_err(|_| {
-                    if is_without_rowid {
-                        DbError::validation(format!(
-                            "Table '{}' uses WITHOUT ROWID and requires primary-key editing; rowid {} is invalid. Use SQL directly.",
-                            table, update.ctid
-                        ))
-                    } else {
-                        DbError::validation(format!("Invalid SQLite row id: {}", update.ctid))
-                    }
-                })?;
-
-            let entries: Vec<_> = update
-                .values
-                .iter()
-                .filter(|(key, _)| key.as_str() != "_querycastle_ctid")
-                .collect();
-            if entries.is_empty() {
-                continue;
-            }
-
-            let set_clause = entries
-                .iter()
-                .map(|(column, value)| {
-                    format!(
-                        "{} = {}",
-                        crate::core::sql::quote_ident(column),
-                        sqlite_literal(value)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            let update_sql = format!("update {safe_table} set {set_clause} where rowid = {rowid}");
-            let affected = tx
-                .execute(update_sql.as_str(), [])
-                .map_err(|e| DbError::internal(format!("SQLite update failed: {e}")))?;
-            if affected == 0 {
-                return Err(DbError::NotFound(format!(
-                    "Could not update row with id {}. It may have changed. Refresh and retry.",
-                    update.ctid
-                )));
-            }
-
-            let select_sql = format!("select * from {safe_table} where rowid = {rowid} limit 1");
-            let mut stmt = tx
-                .prepare(select_sql.as_str())
-                .map_err(|e| DbError::internal(format!("SQLite row refresh prepare failed: {e}")))?;
-            let row_values = stmt
-                .query_row([], |row| {
-                    let mut mapped = HashMap::new();
-                    for (index, column_name) in row.as_ref().column_names().iter().enumerate() {
-                        let value = row.get_ref(index).map(sqlite_value_to_json)?;
-                        mapped.insert(column_name.to_string(), value);
-                    }
-                    Ok::<HashMap<String, Value>, rusqlite::Error>(mapped)
-                })
-                .map_err(|e| DbError::internal(format!("SQLite row refresh failed: {e}")))?;
-
-            updated_rows.push(UpdatedRowCtid {
-                old_ctid: update.ctid.clone(),
-                new_ctid: rowid.to_string(),
-                values: row_values,
-            });
-            updated += 1;
         }
-
-        for ctid in &params.changes.deletes {
-            let rowid = ctid
-                .trim()
-                .parse::<i64>()
-                .map_err(|_| {
-                    if is_without_rowid {
-                        DbError::validation(format!(
-                            "Table '{}' uses WITHOUT ROWID and requires primary-key editing; rowid {} is invalid. Use SQL directly.",
-                            table, ctid
-                        ))
-                    } else {
-                        DbError::validation(format!("Invalid SQLite row id: {ctid}"))
-                    }
-                })?;
-            let delete_sql = format!("delete from {safe_table} where rowid = {rowid}");
-            let affected = tx
-                .execute(delete_sql.as_str(), [])
-                .map_err(|e| DbError::internal(format!("SQLite delete failed: {e}")))?;
-            if affected == 0 {
-                return Err(DbError::NotFound(format!(
-                    "Could not delete row with id {}. It may have changed. Refresh and retry.",
-                    ctid
-                )));
-            }
-            deleted += 1;
-        }
-
-        for row in &params.changes.inserts {
-            let entries: Vec<_> = row
-                .iter()
-                .filter(|(key, _)| key.as_str() != "_querycastle_ctid")
-                .collect();
-            if entries.is_empty() {
-                continue;
-            }
-
-            let cols = entries
-                .iter()
-                .map(|(column, _)| crate::core::sql::quote_ident(column))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let values = entries
-                .iter()
-                .map(|(_, value)| sqlite_literal(value))
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            let insert_sql = format!("insert into {safe_table} ({cols}) values ({values})");
-            tx.execute(insert_sql.as_str(), [])
-                .map_err(|e| DbError::internal(format!("SQLite insert failed: {e}")))?;
-            inserted += 1;
-        }
-
-        tx.commit()
-            .map_err(|e| DbError::internal(format!("SQLite transaction commit failed: {e}")))?;
-
-        Ok(ApplyTableChangesResponse {
-            ok: true,
-            updated,
-            deleted,
-            inserted,
-            updated_rows,
-        })
+        Value::String(s) => rusqlite::types::Value::Text(s.clone()),
+        Value::Array(_) | Value::Object(_) => rusqlite::types::Value::Text(value.to_string()),
     }
+}
+
+fn pool_get_error(err: r2d2::Error) -> DbError {
+    DbError::connection(format!("SQLite pool get failed: {err}"))
+}
+
+fn spawn_join_error(err: tokio::task::JoinError) -> DbError {
+    DbError::internal(format!("SQLite task failed: {err}"))
+}
+
+async fn with_pool<T, F>(pool: &SqlitePool, f: F) -> Result<T, DbError>
+where
+    T: Send + 'static,
+    F: FnOnce(&SqlitePool) -> Result<T, DbError> + Send + 'static,
+{
+    let pool = pool.clone();
+    tokio::task::spawn_blocking(move || f(&pool))
+        .await
+        .map_err(spawn_join_error)?
+}
+
+fn sqlite_main_database(conn: &Connection) -> Result<String, DbError> {
+    conn.query_row("PRAGMA database_list", [], |row| {
+        let name: String = row.get(1)?;
+        let file: String = row.get(2)?;
+        Ok(if file.is_empty() { name } else { file })
+    })
+    .map_err(sanitize_sqlite_error_to_db_error)
+}
+
+pub async fn server_version(pool: &SqlitePool) -> Result<Option<String>, DbError> {
+    with_pool(pool, |pool| {
+        let conn = pool.get().map_err(pool_get_error)?;
+        conn.query_row("select sqlite_version()", [], |row| row.get::<_, String>(0))
+            .map(Some)
+            .map_err(sanitize_sqlite_error_to_db_error)
+    })
+    .await
+}
+
+pub async fn run_query(pool: &SqlitePool, sql: &str) -> Result<QueryResultPayload, DbError> {
+    let sql = sql.to_string();
+    with_pool(pool, move |pool| {
+        let conn = pool.get().map_err(pool_get_error)?;
+        let started = std::time::Instant::now();
+
+        let mut stmt = conn.prepare(&sql).map_err(sanitize_sqlite_error_to_db_error)?;
+        let column_count = stmt.column_count();
+
+        if column_count == 0 {
+            drop(stmt);
+            let affected = conn.execute(&sql, []).map_err(sanitize_sqlite_error_to_db_error)?;
+            return Ok(QueryResultPayload {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                row_count: affected,
+                duration_ms: started.elapsed().as_millis(),
+            });
+        }
+
+        let columns: Vec<String> = stmt.column_names().iter().map(|name| (*name).to_string()).collect();
+
+        let mut row_count = 0usize;
+        let mut rows: Vec<HashMap<String, Value>> = Vec::new();
+        let mut result_rows = stmt.query([]).map_err(sanitize_sqlite_error_to_db_error)?;
+
+        while let Some(row) = result_rows.next().map_err(sanitize_sqlite_error_to_db_error)? {
+            row_count += 1;
+            if rows.len() < MAX_QUERY_ROWS {
+                let mut mapped = HashMap::new();
+                for (index, column_name) in columns.iter().enumerate() {
+                    let value = row
+                        .get_ref(index)
+                        .map(sqlite_value_to_json)
+                        .unwrap_or(Value::Null);
+                    mapped.insert(column_name.clone(), value);
+                }
+                rows.push(mapped);
+            }
+        }
+
+        Ok(QueryResultPayload {
+            columns,
+            rows,
+            row_count,
+            duration_ms: started.elapsed().as_millis(),
+        })
+    })
+    .await
+}
+
+pub async fn get_database_explorer(pool: &SqlitePool) -> Result<DatabaseExplorer, DbError> {
+    with_pool(pool, |pool| {
+        let conn = pool.get().map_err(pool_get_error)?;
+        get_sqlite_database_explorer(&conn)
+    })
+    .await
+}
+
+fn get_sqlite_database_explorer(conn: &Connection) -> Result<DatabaseExplorer, DbError> {
+    let current_database = sqlite_main_database(conn)?;
+
+    let mut table_stmt = conn
+        .prepare(
+            "
+            select name, type
+            from sqlite_master
+            where type in ('table', 'view')
+              and name not like 'sqlite_%'
+            order by name
+            ",
+        )
+        .map_err(sanitize_sqlite_error_to_db_error)?;
+
+    let table_rows = table_stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(sanitize_sqlite_error_to_db_error)?;
+
+    let mut tables: Vec<DatabaseTable> = Vec::new();
+
+    for entry in table_rows {
+        let (table_name, table_type) = entry.map_err(sanitize_sqlite_error_to_db_error)?;
+
+        let pragma_name = sql::escape_single_quotes_pragma(&table_name);
+        let columns_sql = format!("PRAGMA table_info('{pragma_name}')");
+        let mut columns_stmt = conn
+            .prepare(&columns_sql)
+            .map_err(sanitize_sqlite_error_to_db_error)?;
+        let column_rows = columns_stmt
+            .query_map([], |row| {
+                Ok(DatabaseColumn {
+                    name: row.get::<_, String>(1)?,
+                    data_type: row.get::<_, String>(2).unwrap_or_else(|_| "TEXT".to_string()),
+                    not_null: row.get::<_, i64>(3).unwrap_or(0) != 0,
+                    is_primary: row.get::<_, i64>(5).unwrap_or(0) != 0,
+                })
+            })
+            .map_err(sanitize_sqlite_error_to_db_error)?;
+
+        let mut columns: Vec<DatabaseColumn> = Vec::new();
+        for column in column_rows {
+            columns.push(column.map_err(sanitize_sqlite_error_to_db_error)?);
+        }
+
+        let fk_sql = format!("PRAGMA foreign_key_list('{pragma_name}')");
+        let mut fk_stmt = conn
+            .prepare(&fk_sql)
+            .map_err(sanitize_sqlite_error_to_db_error)?;
+        let fk_rows = fk_stmt
+            .query_map([], |row| {
+                Ok(DatabaseForeignKey {
+                    column: row.get::<_, String>(3)?,
+                    referenced_schema: "main".to_string(),
+                    referenced_table: row.get::<_, String>(2)?,
+                    referenced_column: row.get::<_, String>(4)?,
+                })
+            })
+            .map_err(sanitize_sqlite_error_to_db_error)?;
+
+        let mut foreign_keys: Vec<DatabaseForeignKey> = Vec::new();
+        for fk in fk_rows {
+            foreign_keys.push(fk.map_err(sanitize_sqlite_error_to_db_error)?);
+        }
+
+        let indexes = load_sqlite_indexes(conn, &table_name)?;
+        let triggers = load_sqlite_triggers(conn, &table_name)?;
+
+        tables.push(DatabaseTable {
+            schema: "main".to_string(),
+            name: table_name,
+            kind: if table_type == "view" {
+                "view".to_string()
+            } else {
+                "table".to_string()
+            },
+            columns,
+            foreign_keys,
+            indexes,
+            triggers,
+        });
+    }
+
+    Ok(DatabaseExplorer {
+        database: current_database,
+        schemas: vec![DatabaseSchema {
+            name: "main".to_string(),
+            tables,
+            routines: Vec::new(),
+            sequences: Vec::new(),
+        }],
+    })
+}
+
+fn load_sqlite_indexes(conn: &Connection, table_name: &str) -> Result<Vec<DatabaseIndex>, DbError> {
+    let pragma_name = sql::escape_single_quotes_pragma(table_name);
+    let sql_text = format!("PRAGMA index_list('{pragma_name}')");
+    let mut stmt = conn
+        .prepare(&sql_text)
+        .map_err(sanitize_sqlite_error_to_db_error)?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2).unwrap_or(0) != 0,
+                row.get::<_, String>(3).unwrap_or_default(),
+            ))
+        })
+        .map_err(sanitize_sqlite_error_to_db_error)?;
+
+    let mut indexes = Vec::new();
+    for entry in rows {
+        let (name, unique, origin) = entry.map_err(sanitize_sqlite_error_to_db_error)?;
+        let columns = sqlite_index_columns(conn, &name)?;
+        let definition = sqlite_master_sql(conn, "index", &name)?;
+        indexes.push(DatabaseIndex {
+            name,
+            columns,
+            unique,
+            is_primary: origin.eq_ignore_ascii_case("pk"),
+            definition,
+        });
+    }
+    Ok(indexes)
+}
+
+fn sqlite_index_columns(conn: &Connection, index_name: &str) -> Result<String, DbError> {
+    let pragma_name = sql::escape_single_quotes_pragma(index_name);
+    let sql_text = format!("PRAGMA index_info('{pragma_name}')");
+    let mut stmt = conn
+        .prepare(&sql_text)
+        .map_err(sanitize_sqlite_error_to_db_error)?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, Option<String>>(2))
+        .map_err(sanitize_sqlite_error_to_db_error)?;
+    let mut columns = Vec::new();
+    for entry in rows {
+        if let Some(name) = entry.map_err(sanitize_sqlite_error_to_db_error)? {
+            columns.push(name);
+        }
+    }
+    Ok(columns.join(", "))
+}
+
+fn load_sqlite_triggers(conn: &Connection, table_name: &str) -> Result<Vec<DatabaseTrigger>, DbError> {
+    let mut stmt = conn
+        .prepare(
+            "
+            select name, sql
+            from sqlite_master
+            where type = 'trigger' and tbl_name = ?
+            order by name
+            ",
+        )
+        .map_err(sanitize_sqlite_error_to_db_error)?;
+    let rows = stmt
+        .query_map([table_name], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })
+        .map_err(sanitize_sqlite_error_to_db_error)?;
+    let mut triggers = Vec::new();
+    for entry in rows {
+        let (name, definition) = entry.map_err(sanitize_sqlite_error_to_db_error)?;
+        triggers.push(DatabaseTrigger { name, definition });
+    }
+    Ok(triggers)
+}
+
+fn sqlite_master_sql(conn: &Connection, kind: &str, name: &str) -> Result<Option<String>, DbError> {
+    conn.query_row(
+        "select sql from sqlite_master where type = ?1 and name = ?2",
+        [kind, name],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .or_else(|error| {
+        if matches!(error, rusqlite::Error::QueryReturnedNoRows) {
+            Ok(None)
+        } else {
+            Err(sanitize_sqlite_error_to_db_error(error))
+        }
+    })
+}
+
+pub async fn get_object_definition(
+    pool: &SqlitePool,
+    params: &ObjectDefinitionParams,
+) -> Result<ObjectDefinition, DbError> {
+    let params = params.clone();
+    with_pool(pool, move |pool| {
+        let conn = pool.get().map_err(pool_get_error)?;
+        get_sqlite_object_definition(&conn, &params)
+    })
+    .await
+}
+
+fn get_sqlite_object_definition(
+    conn: &Connection,
+    params: &ObjectDefinitionParams,
+) -> Result<ObjectDefinition, DbError> {
+    let kind = params.kind.trim().to_ascii_lowercase();
+    let name = params.name.trim();
+    if name.is_empty() {
+        return Err(DbError::validation("Name is required"));
+    }
+    let master_kind = match kind.as_str() {
+        "index" => "index",
+        "trigger" => "trigger",
+        "view" => "view",
+        "table" => "table",
+        _ => return Err(DbError::validation(format!("SQLite does not support {kind} definitions"))),
+    };
+    let sql_text = sqlite_master_sql(conn, master_kind, name)?
+        .ok_or_else(|| DbError::validation("Could not load object definition"))?;
+    Ok(ObjectDefinition {
+        title: name.to_string(),
+        sql: if sql_text.trim_end().ends_with(';') {
+            sql_text
+        } else {
+            format!("{};", sql_text.trim_end())
+        },
+    })
+}
+
+pub async fn list_databases(pool: &SqlitePool) -> Result<Vec<String>, DbError> {
+    with_pool(pool, |pool| {
+        let conn = pool.get().map_err(pool_get_error)?;
+        Ok(vec![sqlite_main_database(&conn)?])
+    })
+    .await
+}
+
+pub async fn apply_table_changes(
+    pool: &SqlitePool,
+    params: &ApplyTableChangesParams,
+) -> Result<ApplyTableChangesResponse, DbError> {
+    let params = params.clone();
+    with_pool(pool, move |pool| apply_sqlite_table_changes(pool, &params)).await
+}
+
+fn apply_sqlite_table_changes(
+    pool: &SqlitePool,
+    params: &ApplyTableChangesParams,
+) -> Result<ApplyTableChangesResponse, DbError> {
+    let schema = params.schema.trim();
+    let table = params.table.trim();
+    if schema.is_empty() || table.is_empty() {
+        return Err(DbError::validation("Schema and table are required"));
+    }
+
+    let mut conn = pool.get().map_err(pool_get_error)?;
+    let tx = conn
+        .transaction()
+        .map_err(sanitize_sqlite_error_to_db_error)?;
+
+    let safe_table = format!("{}.{}", sql::quote_ident(schema), sql::quote_ident(table));
+
+    let is_without_rowid = {
+        let stmt = tx
+            .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?1")
+            .ok();
+        if let Some(mut stmt) = stmt {
+            stmt.query_row([table], |row| row.get::<_, Option<String>>(0))
+                .ok()
+                .flatten()
+                .map(|s| s.to_lowercase().contains("without rowid"))
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    };
+
+    let mut updated = 0usize;
+    let mut deleted = 0usize;
+    let mut inserted = 0usize;
+    let mut updated_rows: Vec<UpdatedRowCtid> = Vec::new();
+
+    for update in &params.changes.updates {
+        let rowid = update.ctid.trim().parse::<i64>().map_err(|_| {
+            if is_without_rowid {
+                DbError::validation(format!(
+                    "Table '{}' uses WITHOUT ROWID and requires primary-key editing; rowid {} is invalid. Use SQL directly.",
+                    table, update.ctid
+                ))
+            } else {
+                DbError::validation(format!("Invalid SQLite row id: {}", update.ctid))
+            }
+        })?;
+
+        let entries: Vec<_> = update
+            .values
+            .iter()
+            .filter(|(key, _)| key.as_str() != "_querycastle_ctid")
+            .collect();
+        if entries.is_empty() {
+            continue;
+        }
+
+        let set_clause = entries
+            .iter()
+            .enumerate()
+            .map(|(index, (column, _))| format!("{} = ?{}", sql::quote_ident(column), index + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let rowid_param = entries.len() + 1;
+        let update_sql = format!("update {safe_table} set {set_clause} where rowid = ?{rowid_param}");
+        let mut sql_params: Vec<rusqlite::types::Value> =
+            entries.iter().map(|(_, value)| json_to_sqlite_value(value)).collect();
+        sql_params.push(rusqlite::types::Value::Integer(rowid));
+        let affected = tx
+            .execute(update_sql.as_str(), params_from_iter(sql_params))
+            .map_err(sanitize_sqlite_error_to_db_error)?;
+        if affected == 0 {
+            return Err(DbError::NotFound(format!(
+                "Could not update row with id {}. It may have changed. Refresh and retry.",
+                update.ctid
+            )));
+        }
+
+        let select_sql = format!("select * from {safe_table} where rowid = ?1 limit 1");
+        let mut stmt = tx
+            .prepare(select_sql.as_str())
+            .map_err(sanitize_sqlite_error_to_db_error)?;
+        let row_values = stmt
+            .query_row([rowid], |row| {
+                let mut mapped = HashMap::new();
+                for (index, column_name) in row.as_ref().column_names().iter().enumerate() {
+                    let value = row.get_ref(index).map(sqlite_value_to_json)?;
+                    mapped.insert(column_name.to_string(), value);
+                }
+                Ok::<HashMap<String, Value>, rusqlite::Error>(mapped)
+            })
+            .map_err(sanitize_sqlite_error_to_db_error)?;
+
+        updated_rows.push(UpdatedRowCtid {
+            old_ctid: update.ctid.clone(),
+            new_ctid: rowid.to_string(),
+            values: row_values,
+        });
+        updated += 1;
+    }
+
+    for ctid in &params.changes.deletes {
+        let rowid = ctid.trim().parse::<i64>().map_err(|_| {
+            if is_without_rowid {
+                DbError::validation(format!(
+                    "Table '{}' uses WITHOUT ROWID and requires primary-key editing; rowid {ctid} is invalid. Use SQL directly.",
+                    table
+                ))
+            } else {
+                DbError::validation(format!("Invalid SQLite row id: {ctid}"))
+            }
+        })?;
+        let delete_sql = format!("delete from {safe_table} where rowid = ?1");
+        let affected = tx
+            .execute(delete_sql.as_str(), [rowid])
+            .map_err(sanitize_sqlite_error_to_db_error)?;
+        if affected == 0 {
+            return Err(DbError::NotFound(format!(
+                "Could not delete row with id {ctid}. It may have changed. Refresh and retry."
+            )));
+        }
+        deleted += 1;
+    }
+
+    for row in &params.changes.inserts {
+        let entries: Vec<_> = row
+            .iter()
+            .filter(|(key, _)| key.as_str() != "_querycastle_ctid")
+            .collect();
+        if entries.is_empty() {
+            continue;
+        }
+
+        let cols = entries
+            .iter()
+            .map(|(column, _)| sql::quote_ident(column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let placeholders = (1..=entries.len())
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql_params: Vec<rusqlite::types::Value> =
+            entries.iter().map(|(_, value)| json_to_sqlite_value(value)).collect();
+        let insert_sql = format!("insert into {safe_table} ({cols}) values ({placeholders})");
+        tx.execute(insert_sql.as_str(), params_from_iter(sql_params))
+            .map_err(sanitize_sqlite_error_to_db_error)?;
+        inserted += 1;
+    }
+
+    tx.commit().map_err(sanitize_sqlite_error_to_db_error)?;
+
+    Ok(ApplyTableChangesResponse {
+        ok: true,
+        updated,
+        deleted,
+        inserted,
+        updated_rows,
+    })
 }

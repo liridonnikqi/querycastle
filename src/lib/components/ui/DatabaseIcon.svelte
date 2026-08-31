@@ -11,29 +11,44 @@
 		type,
 		size = 24,
 		class: className = '',
+		tone = 'brand',
 	}: {
 		type: 'postgres' | 'mysql' | 'sqlite' | 'duckdb' | 'mongodb' | 'mssql' | 'redis';
 		size?: number;
 		class?: string;
+		tone?: 'brand' | 'white' | 'ink';
 	} = $props();
 
+	const mono = $derived(tone !== 'brand');
+	const wrapClass = $derived(
+		tone === 'white'
+			? type === 'mysql'
+				? 'qc-db-tone-white'
+				: 'text-white'
+			: tone === 'ink'
+				? type === 'mysql'
+					? 'qc-db-tone-ink'
+					: 'qc-db-mono-ink'
+				: '',
+	);
 </script>
 
-{#if type === 'postgres'}
-	<PostgresqlIcon {size} class={className} />
-{:else if type === 'mysql'}
-	<MysqlIcon {size} class={className} />
-{:else if type === 'sqlite'}
-	<SqliteIcon {size} class={className} />
-{:else if type === 'duckdb'}
-	<DuckdbIcon {size} class={className} />
-{:else if type === 'redis'}
-	<RedisIcon {size} class={className} />
-{:else if type === 'mongodb'}
-	<MongodbIcon {size} class={className} />
-{:else if type === 'mssql'}
-	<MssqlIcon {size} class={className} />
-{:else}
-	<DuckdbIcon {size} class={className} />
-{/if}
-
+<span class={`inline-flex ${wrapClass} ${className}`}>
+	{#if type === 'postgres'}
+		<PostgresqlIcon {size} {mono} />
+	{:else if type === 'mysql'}
+		<MysqlIcon {size} />
+	{:else if type === 'sqlite'}
+		<SqliteIcon {size} {mono} />
+	{:else if type === 'duckdb'}
+		<DuckdbIcon {size} />
+	{:else if type === 'redis'}
+		<RedisIcon {size} />
+	{:else if type === 'mongodb'}
+		<MongodbIcon {size} />
+	{:else if type === 'mssql'}
+		<MssqlIcon {size} />
+	{:else}
+		<DuckdbIcon {size} />
+	{/if}
+</span>

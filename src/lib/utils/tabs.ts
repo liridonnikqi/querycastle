@@ -1,19 +1,24 @@
-import type { WorkspaceTab } from '$lib/utils/workspace';
+import type { RelationHop, WorkspaceTab } from '$lib/utils/workspace';
 import { createEmptyResult } from '$lib/utils/workspace';
 
 export function createQueryTab(
 	queryTabCount: number,
 	initialSql = '',
+	title?: string,
 ): WorkspaceTab {
 	return {
 		id: crypto.randomUUID(),
-		title: `Query ${queryTabCount + 1}`,
+		title:
+			title && title.trim().length > 0
+				? title
+				: `Query ${queryTabCount + 1}`,
 		kind: 'query',
 		sql: initialSql,
 		lastRunSql: '',
 		result: createEmptyResult(),
 		sqlError: '',
 		resultContext: null,
+		relationTrail: [],
 	};
 }
 
@@ -21,6 +26,7 @@ export function createDataTab(params: {
 	title: string;
 	sql: string;
 	context: { schema: string; table: string } | null;
+	relationTrail?: RelationHop[];
 }): WorkspaceTab {
 	return {
 		id: crypto.randomUUID(),
@@ -31,7 +37,34 @@ export function createDataTab(params: {
 		result: createEmptyResult(),
 		sqlError: '',
 		resultContext: params.context,
+		relationTrail: params.relationTrail ?? [],
 	};
+}
+
+export function createDiagramTab(): WorkspaceTab {
+	return {
+		id: crypto.randomUUID(),
+		title: 'Schema diagram',
+		kind: 'diagram',
+		sql: '',
+		lastRunSql: '',
+		result: createEmptyResult(),
+		sqlError: '',
+		resultContext: null,
+		relationTrail: [],
+	};
+}
+
+export function insertTabAfter(params: {
+	tabs: WorkspaceTab[];
+	activeTabId: string;
+	tab: WorkspaceTab;
+}): { tabs: WorkspaceTab[]; activeTabId: string } {
+	const index = params.tabs.findIndex((tab) => tab.id === params.activeTabId);
+	const insertAt = index === -1 ? params.tabs.length : index + 1;
+	const nextTabs = [...params.tabs];
+	nextTabs.splice(insertAt, 0, params.tab);
+	return { tabs: nextTabs, activeTabId: params.tab.id };
 }
 
 export function setSqlInReusableQueryTabState(params: {

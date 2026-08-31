@@ -1,0 +1,15 @@
+{
+	"app": {
+		"security": {
+			"csp": null,
+			"capabilities": [
+				"main-capability",
+				{
+					"identifier": "mcp-debug",
+					"windows": ["main"],
+					"permissions": ["mcp-bridge:default"]
+				}
+			]
+		}
+	}
+}

@@ -1,6 +1,6 @@
 import type { ConnectionInput } from '$lib/rpc';
 import type { QueryHistoryItem, SavedQueryItem } from '$lib/types';
-import type { TabKind, WorkspaceTab } from '$lib/utils/workspace';
+import type { RelationHop, TabKind, WorkspaceTab } from '$lib/utils/workspace';
 import { createEmptyResult } from '$lib/utils/workspace';
 
 export function loadSavedConnectionsFromStorage(params: {
@@ -31,12 +31,17 @@ export function loadQueryTabsFromStorage(key: string): WorkspaceTab[] {
 			.map((item) => ({
 				id: item.id!,
 				title: item.title!,
-				kind: (item.kind === 'data' ? 'data' : 'query') as TabKind,
+				kind: (item.kind === 'data'
+					? 'data'
+					: item.kind === 'diagram'
+						? 'diagram'
+						: 'query') as TabKind,
 				sql: typeof item.sql === 'string' ? item.sql : '',
 				lastRunSql: '',
 				result: createEmptyResult(),
 				sqlError: '',
 				resultContext: item.resultContext ?? null,
+				relationTrail: parseRelationTrail(item.relationTrail),
 			}));
 	} catch {
 		return [];
@@ -110,5 +115,47 @@ export function toPersistedTabs(tabs: WorkspaceTab[]) {
 		kind: tab.kind,
 		sql: tab.sql,
 		resultContext: tab.resultContext,
+		relationTrail: tab.relationTrail ?? [],
 	}));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseHopLocation(
+	value: unknown,
+): { schema: string; table: string; column: string } | null {
+	if (!isRecord(value)) return null;
+	if (
+		typeof value.schema !== 'string' ||
+		typeof value.table !== 'string' ||
+		typeof value.column !== 'string'
+	) {
+		return null;
+	}
+	return {
+		schema: value.schema,
+		table: value.table,
+		column: value.column,
+	};
+}
+
+export function parseRelationTrail(raw: unknown): RelationHop[] {
+	if (!Array.isArray(raw)) return [];
+	const hops: RelationHop[] = [];
+	for (const item of raw) {
+		if (!isRecord(item)) return [];
+		if (item.direction !== 'outgoing' && item.direction !== 'incoming') return [];
+		const from = parseHopLocation(item.from);
+		const to = parseHopLocation(item.to);
+		if (!from || !to || !isRecord(item.from) || !('value' in item.from)) return [];
+		hops.push({
+			direction: item.direction,
+			from: { ...from, value: item.from.value },
+			to,
+			label: typeof item.label === 'string' ? item.label : '',
+		});
+	}
+	return hops;
 }

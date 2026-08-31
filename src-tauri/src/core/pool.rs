@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use std::time::Duration;
 
 use crate::core::error::DbError;
@@ -11,16 +10,6 @@ pub enum Pool {
     Sqlite(r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>),
 }
 
-impl Pool {
-    pub fn database_type(&self) -> DatabaseType {
-        match self {
-            Pool::Postgres(_) => DatabaseType::Postgres,
-            Pool::Mysql(_) => DatabaseType::Mysql,
-            Pool::Sqlite(_) => DatabaseType::Sqlite,
-        }
-    }
-}
-
 pub fn create_pool(connection: &ConnectionInput) -> Result<Pool, DbError> {
     match connection.database_type {
         DatabaseType::Postgres => create_postgres_pool(connection).map(Pool::Postgres),
@@ -30,7 +19,6 @@ pub fn create_pool(connection: &ConnectionInput) -> Result<Pool, DbError> {
 }
 
 fn create_postgres_pool(connection: &ConnectionInput) -> Result<deadpool_postgres::Pool, DbError> {
-    // If connection string is provided and valid postgres URL, try to parse it
     if connection.use_connection_string.unwrap_or(false) {
         if let Some(raw) = connection.connection_string.as_deref() {
             let raw = raw.trim();
@@ -43,15 +31,12 @@ fn create_postgres_pool(connection: &ConnectionInput) -> Result<deadpool_postgre
     }
 
     let mut cfg = tokio_postgres::Config::new();
-    // Handle localhost -> try 127.0.0.1 handling via pool? deadpool will handle single host; we keep original host
-    // For localhost we could expand but keep simple
     cfg.host(&connection.host);
     cfg.port(connection.port);
     cfg.user(&connection.user);
     cfg.password(&connection.password);
     cfg.dbname(&connection.database);
     cfg.connect_timeout(Duration::from_secs(5));
-    // application_name for tracing
     cfg.application_name("querycastle");
 
     build_postgres_pool(cfg, connection.ssl)
@@ -60,7 +45,6 @@ fn create_postgres_pool(connection: &ConnectionInput) -> Result<deadpool_postgre
 fn build_postgres_pool(cfg: tokio_postgres::Config, ssl: bool) -> Result<deadpool_postgres::Pool, DbError> {
     if ssl {
         let mut builder = native_tls::TlsConnector::builder();
-        // Keep permissive as before for now; strict mode can be made configurable via SslMode later
         builder.danger_accept_invalid_certs(true);
         let connector = builder.build().map_err(|e| DbError::connection(format!("Failed to build TLS connector: {e}")))?;
         let tls = postgres_native_tls::MakeTlsConnector::new(connector);
@@ -94,10 +78,8 @@ fn create_mysql_pool(connection: &ConnectionInput) -> Result<mysql_async::Pool, 
             .user(Some(connection.user.clone()))
             .pass(Some(connection.password.clone()))
             .db_name(Some(connection.database.clone()));
-        // TODO: picks SSL handling when ssl=true; mysql_async supports ssl_opts, but we keep simple for now
         mysql_async::Opts::from(builder)
     };
-    // Pool::new creates pool lazily; we can validate with Pool::new and optional test? Keep as is
     Ok(mysql_async::Pool::new(opts))
 }
 
@@ -116,30 +98,4 @@ fn create_sqlite_pool(connection: &ConnectionInput) -> Result<r2d2::Pool<r2d2_sq
         .connection_timeout(Duration::from_secs(5))
         .build(manager)
         .map_err(|e| DbError::connection(format!("Failed to build SQLite pool: {e}")))
-}
-
-// Helpers for testing health
-pub async fn test_postgres_pool(pool: &deadpool_postgres::Pool) -> Result<Option<String>, DbError> {
-    let client = pool.get().await.map_err(|e| DbError::connection(format!("Pool get failed: {e}")))?;
-    let row = client
-        .query_one("select current_setting('server_version') as server_version", &[])
-        .await
-        .map_err(crate::core::error::sanitize_pg_error_to_db_error)?;
-    let v: Option<String> = row.try_get("server_version").map_err(crate::core::error::sanitize_pg_error_to_db_error)?;
-    Ok(v)
-}
-
-pub async fn test_mysql_pool(pool: &mysql_async::Pool) -> Result<Option<String>, DbError> {
-    let mut conn = pool.get_conn().await.map_err(|e| DbError::connection(format!("MySQL pool get failed: {e}")))?;
-    use mysql_async::prelude::Queryable;
-    let v: Option<String> = conn.query_first("select version()").await.map_err(crate::core::error::sanitize_mysql_error_to_db_error)?;
-    Ok(v)
-}
-
-pub fn test_sqlite_pool(pool: &r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>) -> Result<Option<String>, DbError> {
-    let conn = pool.get().map_err(|e| DbError::connection(format!("SQLite pool get failed: {e}")))?;
-    let v: String = conn
-        .query_row("select sqlite_version()", [], |row| row.get(0))
-        .map_err(crate::core::error::sanitize_sqlite_error_to_db_error)?;
-    Ok(Some(v))
 }

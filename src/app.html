@@ -3,22 +3,123 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem("qc-theme");
+          var theme = saved === "light" || saved === "dark" ? saved : "dark";
+          document.documentElement.setAttribute("data-theme", theme);
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      })();
+    </script>
+    <style>
+      #app-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 200;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        background: #131417;
+      }
+
+      .qc-splash-mark {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .qc-splash-icon {
+        display: block;
+        width: 48px;
+        height: 48px;
+      }
+
+      .qc-splash-track {
+        width: 52px;
+        height: 2px;
+        border-radius: 1px;
+        background: rgba(161, 161, 170, 0.18);
+        overflow: hidden;
+      }
+
+      .qc-splash-track span {
+        display: block;
+        width: 16px;
+        height: 100%;
+        border-radius: 1px;
+        background: #2563eb;
+        animation: qc-slide 1.15s ease-in-out infinite;
+      }
+
+      .qc-loading-label {
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+        font-size: 12px;
+        color: #a1a1aa;
+        letter-spacing: 0.01em;
+      }
+
+      html[data-theme="light"] #app-splash {
+        background: #f4f4f5;
+      }
+
+      html[data-theme="light"] .qc-loading-label {
+        color: #71717a;
+      }
+
+      html[data-theme="light"] .qc-splash-track {
+        background: rgba(113, 113, 122, 0.16);
+      }
+
+      html[data-theme="light"] .qc-splash-track span {
+        background: #2563eb;
+      }
+
+      @keyframes qc-slide {
+        0%,
+        100% {
+          transform: translateX(0);
+        }
+        50% {
+          transform: translateX(36px);
+        }
+      }
+    </style>
     %sveltekit.head%
   </head>
-  <body data-sveltekit-preload-data="hover" style="margin:0;background:#1c1c1e;">
-    <div id="app-splash" style="position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#1c1c1e;">
-      <img src="/icon.svg" alt="QueryCastle" style="width:56px;height:56px;display:block;" />
-      <div style="font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:#d1d5db;letter-spacing:0.025em;">Loading</div>
+  <body data-sveltekit-preload-data="hover" style="margin:0;background:#131417;">
+    <div id="app-splash">
+      <div class="qc-splash-mark">
+        <img src="/icon.svg" alt="QueryCastle" class="qc-splash-icon" />
+        <div class="qc-splash-track" aria-hidden="true"><span></span></div>
+      </div>
+      <div class="qc-loading-label">Loading</div>
     </div>
     <div style="display: contents">%sveltekit.body%</div>
     <script>
       (function() {
+        try {
+          var theme = document.documentElement.getAttribute("data-theme");
+          var bg = theme === "light" ? "#f4f4f5" : "#131417";
+          var fg = theme === "light" ? "#71717a" : "#a1a1aa";
+          var splash = document.getElementById("app-splash");
+          if (splash) {
+            splash.style.background = bg;
+            var label = splash.querySelector(".qc-loading-label");
+            if (label) label.style.color = fg;
+          }
+        } catch (e) {}
         function hide() {
+          document.body.style.background = "";
           var el = document.getElementById('app-splash');
           if (el) { el.style.opacity = '0'; el.style.transition = 'opacity 260ms ease'; setTimeout(function(){ if(el.parentNode) el.parentNode.removeChild(el); }, 260); }
         }
         window.__hideAppSplash = hide;
-        // Fallback only if Svelte fails to hide (e.g., JS error) — keep splash until app signals ready
         setTimeout(function() {
           var el = document.getElementById('app-splash');
           if (el && el.parentNode) hide();

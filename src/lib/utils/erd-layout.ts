@@ -143,10 +143,27 @@ function buildEdges(explorer: DatabaseExplorer, nodeIds: Set<string>): ErdEdge[]
 	return edges;
 }
 
-// Layered (hierarchical) layout: referenced tables sit in the leftmost
-// columns, each referencing table one column to the right of its deepest
-// parent. Column order is refined with barycenter sweeps to reduce edge
-// crossings, then nodes are pulled toward their neighbors' vertical center.
+function median(values: number[]): number {
+	if (values.length === 0) return 0;
+	const sorted = [...values].sort((a, b) => a - b);
+	const mid = Math.floor(sorted.length / 2);
+	return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+function countInversions(pairs: Array<[number, number]>): number {
+	pairs.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+	let crossings = 0;
+	for (let i = 0; i < pairs.length; i++) {
+		for (let j = i + 1; j < pairs.length; j++) {
+			if (pairs[i][1] > pairs[j][1]) crossings += 1;
+		}
+	}
+	return crossings;
+}
+
+// Sugiyama-style layout with Graphviz-inspired refinements:
+// min-rank compaction, median + transpose crossing reduction, then
+// two-way neighbor alignment with overlap resolution.
 function layoutLayered(nodes: ErdNode[], edges: ErdEdge[]) {
 	const n = nodes.length;
 	if (n === 0) return;
@@ -158,7 +175,6 @@ function layoutLayered(nodes: ErdNode[], edges: ErdEdge[]) {
 	const indexById = new Map<string, number>();
 	nodes.forEach((node, index) => indexById.set(node.id, index));
 
-	// FK edge: source (child) references target (parent)
 	const parentSets: Set<number>[] = nodes.map(() => new Set());
 	const childSets: Set<number>[] = nodes.map(() => new Set());
 	for (const edge of edges) {
@@ -170,13 +186,15 @@ function layoutLayered(nodes: ErdNode[], edges: ErdEdge[]) {
 		childSets[ti].add(si);
 	}
 
-	// Topological order (Kahn). Nodes stuck in FK cycles never reach
-	// indegree 0; append them in index order so layers stay bounded.
+	const degree = nodes.map((_, i) => parentSets[i].size + childSets[i].size);
+	const nameKey = (i: number) => `${nodes[i].schema}.${nodes[i].table}`;
+
 	const indegree = parentSets.map((set) => set.size);
 	const queue: number[] = [];
 	for (let i = 0; i < n; i++) {
 		if (indegree[i] === 0) queue.push(i);
 	}
+	queue.sort((a, b) => degree[b] - degree[a] || nameKey(a).localeCompare(nameKey(b)));
 	const inTopo = new Array<boolean>(n).fill(false);
 	const topo: number[] = [];
 	let head = 0;
@@ -184,27 +202,44 @@ function layoutLayered(nodes: ErdNode[], edges: ErdEdge[]) {
 		const i = queue[head++];
 		topo.push(i);
 		inTopo[i] = true;
+		const next: number[] = [];
 		for (const child of childSets[i]) {
 			indegree[child]--;
-			if (indegree[child] === 0) queue.push(child);
+			if (indegree[child] === 0) next.push(child);
 		}
+		next.sort((a, b) => degree[b] - degree[a] || nameKey(a).localeCompare(nameKey(b)));
+		queue.push(...next);
 	}
 	for (let i = 0; i < n; i++) {
 		if (!inTopo[i]) topo.push(i);
 	}
 
-	// Layer = longest path from any root (table that references nothing)
 	const layer = new Array<number>(n).fill(0);
 	for (const i of topo) {
-		for (const child of childSets[i]) {
-			if (layer[child] < layer[i] + 1) layer[child] = layer[i] + 1;
+		let minParent = 0;
+		for (const parent of parentSets[i]) {
+			minParent = Math.max(minParent, layer[parent] + 1);
+		}
+		layer[i] = minParent;
+	}
+	// Pull nodes toward their children so long FK chains stay compact
+	for (let t = topo.length - 1; t >= 0; t--) {
+		const i = topo[t];
+		if (childSets[i].size === 0) continue;
+		let minChild = Infinity;
+		for (const child of childSets[i]) minChild = Math.min(minChild, layer[child]);
+		if (Number.isFinite(minChild) && minChild - 1 > layer[i] && parentSets[i].size === 0) {
+			layer[i] = minChild - 1;
 		}
 	}
-	const maxLayer = Math.max(...layer);
+
+	const maxLayer = Math.max(0, ...layer);
 	const columns: number[][] = Array.from({ length: maxLayer + 1 }, () => []);
 	nodes.forEach((_, i) => columns[layer[i]].push(i));
+	for (const column of columns) {
+		column.sort((a, b) => degree[b] - degree[a] || nameKey(a).localeCompare(nameKey(b)));
+	}
 
-	// Position of each node within its column (kept in sync after sorting)
 	const pos = new Array<number>(n).fill(0);
 	const refreshPositions = (column: number[]) => {
 		column.forEach((nodeIndex, position) => {
@@ -213,41 +248,82 @@ function layoutLayered(nodes: ErdNode[], edges: ErdEdge[]) {
 	};
 	columns.forEach(refreshPositions);
 
-	const barycenterSort = (column: number[], neighborsOf: (i: number) => Set<number>) => {
-		const barycenter = new Map<number, number>();
+	const medianSort = (column: number[], neighborsOf: (i: number) => Set<number>) => {
+		const score = new Map<number, number>();
 		for (const nodeIndex of column) {
-			const neighbors = [...neighborsOf(nodeIndex)];
-			if (neighbors.length === 0) {
-				barycenter.set(nodeIndex, pos[nodeIndex]);
-			} else {
-				let sum = 0;
-				for (const neighbor of neighbors) sum += pos[neighbor];
-				barycenter.set(nodeIndex, sum / neighbors.length);
-			}
+			const neighborPos = [...neighborsOf(nodeIndex)]
+				.filter((neighbor) => layer[neighbor] !== layer[nodeIndex])
+				.map((neighbor) => pos[neighbor]);
+			score.set(nodeIndex, neighborPos.length === 0 ? pos[nodeIndex] : median(neighborPos));
 		}
 		column.sort(
-			(a, b) =>
-				(barycenter.get(a) ?? 0) - (barycenter.get(b) ?? 0) || pos[a] - pos[b],
+			(a, b) => (score.get(a) ?? 0) - (score.get(b) ?? 0) || pos[a] - pos[b] || nameKey(a).localeCompare(nameKey(b)),
 		);
 		refreshPositions(column);
 	};
 
-	// A few left-right / right-left sweeps to reduce edge crossings
-	for (let sweep = 0; sweep < 3; sweep++) {
-		for (let c = 1; c < columns.length; c++) {
-			barycenterSort(columns[c], (i) => parentSets[i]);
+	const adjacentPairs = (left: number[], right: number[]): Array<[number, number]> => {
+		const rightSet = new Set(right);
+		const pairs: Array<[number, number]> = [];
+		for (const i of left) {
+			for (const j of childSets[i]) {
+				if (rightSet.has(j)) pairs.push([pos[i], pos[j]]);
+			}
+			for (const j of parentSets[i]) {
+				if (rightSet.has(j)) pairs.push([pos[i], pos[j]]);
+			}
 		}
-		for (let c = columns.length - 2; c >= 0; c--) {
-			barycenterSort(columns[c], (i) => childSets[i]);
+		return pairs;
+	};
+
+	const twoColumnCrossings = (a: number[], b: number[]) => countInversions(adjacentPairs(a, b));
+
+	const localCrossings = (c: number) => {
+		let sum = 0;
+		if (c > 0) sum += twoColumnCrossings(columns[c - 1], columns[c]);
+		if (c < columns.length - 1) sum += twoColumnCrossings(columns[c], columns[c + 1]);
+		return sum;
+	};
+
+	for (let sweep = 0; sweep < 8; sweep++) {
+		if (sweep % 2 === 0) {
+			for (let c = 1; c < columns.length; c++) medianSort(columns[c], (i) => parentSets[i]);
+		} else {
+			for (let c = columns.length - 2; c >= 0; c--) medianSort(columns[c], (i) => childSets[i]);
 		}
 	}
 
-	// Coordinates: fixed column pitch, columns centered vertically
+	let improved = true;
+	let guard = 0;
+	while (improved && guard < 16) {
+		improved = false;
+		guard += 1;
+		for (let c = 0; c < columns.length; c++) {
+			const column = columns[c];
+			for (let k = 0; k < column.length - 1; k++) {
+				const before = localCrossings(c);
+				const tmp = column[k];
+				column[k] = column[k + 1];
+				column[k + 1] = tmp;
+				refreshPositions(column);
+				const after = localCrossings(c);
+				if (after < before) {
+					improved = true;
+				} else {
+					column[k + 1] = column[k];
+					column[k] = tmp;
+					refreshPositions(column);
+				}
+			}
+		}
+	}
+
 	const columnHeights = columns.map((column) => {
+		if (column.length === 0) return 0;
 		const heightSum = column.reduce((sum, i) => sum + nodes[i].height, 0);
 		return heightSum + Math.max(0, column.length - 1) * LAYER_GAP_Y;
 	});
-	const tallest = Math.max(...columnHeights);
+	const tallest = Math.max(0, ...columnHeights);
 	columns.forEach((column, c) => {
 		let y = (tallest - columnHeights[c]) / 2;
 		for (const nodeIndex of column) {
@@ -258,21 +334,25 @@ function layoutLayered(nodes: ErdNode[], edges: ErdEdge[]) {
 		}
 	});
 
-	// Pull each node toward the vertical center of its neighbors, clamped
-	// between its column neighbors so order and spacing are preserved
-	for (let pass = 0; pass < 3; pass++) {
-		for (let c = 0; c < columns.length; c++) {
-			const column = columns[c];
+	const neighborCenters = (i: number) => {
+		const centers: number[] = [];
+		for (const neighbor of parentSets[i]) {
+			centers.push(nodes[neighbor].y + nodes[neighbor].height / 2);
+		}
+		for (const neighbor of childSets[i]) {
+			centers.push(nodes[neighbor].y + nodes[neighbor].height / 2);
+		}
+		return centers;
+	};
+
+	for (let pass = 0; pass < 6; pass++) {
+		const order = pass % 2 === 0 ? columns : [...columns].reverse();
+		for (const column of order) {
 			for (let k = 0; k < column.length; k++) {
 				const node = nodes[column[k]];
-				const neighbors = [...parentSets[column[k]], ...childSets[column[k]]];
-				if (neighbors.length === 0) continue;
-				let sum = 0;
-				for (const neighbor of neighbors) {
-					const other = nodes[neighbor];
-					sum += other.y + other.height / 2;
-				}
-				const targetY = sum / neighbors.length - node.height / 2;
+				const centers = neighborCenters(column[k]);
+				if (centers.length === 0) continue;
+				const targetY = median(centers) - node.height / 2;
 				const minY =
 					k > 0
 						? nodes[column[k - 1]].y + nodes[column[k - 1]].height + LAYER_GAP_Y
@@ -283,6 +363,22 @@ function layoutLayered(nodes: ErdNode[], edges: ErdEdge[]) {
 						: Infinity;
 				node.y = Math.max(minY, Math.min(targetY, maxY));
 			}
+		}
+	}
+
+	for (const column of columns) {
+		if (column.length === 0) continue;
+		column.sort((a, b) => nodes[a].y - nodes[b].y);
+		let y = nodes[column[0]].y;
+		for (let k = 0; k < column.length; k++) {
+			const node = nodes[column[k]];
+			if (k === 0) {
+				y = node.y;
+			} else {
+				y = Math.max(y, node.y);
+			}
+			node.y = y;
+			y += node.height + LAYER_GAP_Y;
 		}
 	}
 }

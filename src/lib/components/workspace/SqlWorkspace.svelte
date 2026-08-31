@@ -1,238 +1,191 @@
 <script lang="ts">
 	import ExplorerSidebar from '$lib/components/explorer/ExplorerSidebar.svelte';
 	import QueryTabsBar from '$lib/components/workspace/QueryTabsBar.svelte';
+	import DiagramView from '$lib/components/workspace/DiagramView.svelte';
 	import ResultsPane from '$lib/components/query/ResultsPane.svelte';
 	import SqlEditor from '$lib/components/query/SqlEditor.svelte';
-	import type {
-		ApplyTableChangesResult,
-		ConnectionStatus,
-		DatabaseExplorer,
-		QueryResultPayload,
-		TableChangesPayload,
-	} from '$lib/rpc';
-	import type { SchemaAction, TableAction, TabContextMenu, WorkspaceTab } from '$lib/utils/workspace';
+	import type { Workspace } from '$lib/workspace/controller.svelte';
 
-	let {
-		connectionStatus,
-		explorer,
-		loadingExplorer,
-		databases,
-		explorerSearch,
-		expandedSchemas,
-		expandedTables,
-		onChangeDatabase,
-		onSearchChange,
-		onToggleSchema,
-		onToggleTable,
-		onRefreshDatabases,
-		onRefreshTables,
-		onCreateDatabase,
-		onTableAction,
-		onSchemaAction,
-		onFollowForeignKey,
-		tabs,
-		activeTabId,
-		tabContextMenu,
-		activeTab,
-		resizingResults,
-		resultsPaneHeight,
-		isRunningQuery,
-		sqlCompletions,
-		globalError,
-		queryDurationMs,
-		onSelectTab,
-		onOpenTabContextMenu,
-		onCloseTab,
-		onAddTab,
-		onCloseContextMenu,
-		onCloseAllTabs,
-		onCloseAllTabsBut,
-		onOpenDefaultQueryTab,
-		onSetActiveSql,
-		onRunQuery,
-		onSaveQuery,
-		onFormatQuery,
-		onRunSqlForTab,
-		onApplyTableChanges,
-		onStartResultsResize,
-		onSetSplitContainer,
-	}: {
-		connectionStatus: ConnectionStatus;
-		explorer: DatabaseExplorer | null;
-		loadingExplorer: boolean;
-		databases: string[];
-		explorerSearch: string;
-		expandedSchemas: Set<string>;
-		expandedTables: Set<string>;
-		onChangeDatabase: (database: string) => void;
-		onSearchChange: (value: string) => void;
-		onToggleSchema: (schema: string) => void;
-		onToggleTable: (schema: string, table: string) => void;
-		onRefreshDatabases: () => void | Promise<void>;
-		onRefreshTables: () => void | Promise<void>;
-		onCreateDatabase: (params: { name: string; encoding: string }) => void | Promise<void>;
-		onTableAction: (action: TableAction, schema: string, table: string) => void | Promise<void>;
-		onSchemaAction: (action: SchemaAction, schema: string) => void | Promise<void>;
-		onFollowForeignKey: (schema: string, table: string) => void | Promise<void>;
-		tabs: WorkspaceTab[];
-		activeTabId: string;
-		tabContextMenu: TabContextMenu;
-		activeTab: WorkspaceTab | null;
-		resizingResults: boolean;
-		resultsPaneHeight: number;
-		isRunningQuery: boolean;
-		sqlCompletions: string[];
-		globalError: string;
-		queryDurationMs: number;
-		onSelectTab: (tabId: string) => void;
-		onOpenTabContextMenu: (event: MouseEvent, tabId: string) => void;
-		onCloseTab: (tabId: string) => void;
-		onAddTab: () => void;
-		onCloseContextMenu: () => void;
-		onCloseAllTabs: () => void;
-		onCloseAllTabsBut: (tabId: string) => void;
-		onOpenDefaultQueryTab: () => void;
-		onSetActiveSql: (sql: string) => void;
-		onRunQuery: (queryOverride?: string) => void | Promise<void>;
-		onSaveQuery: () => void;
-		onFormatQuery: () => void;
-		onRunSqlForTab: (
-			query: string,
-			targetTabId: string,
-			context: { schema: string; table: string } | null,
-		) => Promise<void>;
-		onApplyTableChanges: (
-			context: { schema: string; table: string },
-			changes: TableChangesPayload,
-		) => Promise<ApplyTableChangesResult>;
-		onStartResultsResize: (event: PointerEvent) => void;
-		onSetSplitContainer: (el: HTMLDivElement | null) => void;
-	} = $props();
-
-	// kept for API compatibility (no longer shown in minimal empty state)
-	// svelte-ignore state_referenced_locally
-	void onOpenDefaultQueryTab;
+	let { workspace }: { workspace: Workspace } = $props();
 
 	let splitContainer = $state<HTMLDivElement | null>(null);
 
+	const activeTab = $derived(workspace.activeTab);
+	const showQueryResults = $derived(
+		Boolean(
+			activeTab?.kind === 'query' &&
+				(workspace.isRunningQuery ||
+					(activeTab.lastRunSql?.trim().length ?? 0) > 0 ||
+					(activeTab.sqlError?.trim().length ?? 0) > 0 ||
+					(activeTab.result.columns.length ?? 0) > 0),
+		),
+	);
+
 	$effect(() => {
-		onSetSplitContainer(splitContainer);
+		workspace.sqlSplitContainer = splitContainer;
 	});
 </script>
 
 <ExplorerSidebar
-	{connectionStatus}
-	{explorer}
-	{loadingExplorer}
-	{databases}
-	searchQuery={explorerSearch}
-	{expandedSchemas}
-	{expandedTables}
-	{onChangeDatabase}
-	{onSearchChange}
-	{onToggleSchema}
-	{onToggleTable}
-	{onRefreshDatabases}
-	{onRefreshTables}
-	{onCreateDatabase}
-	{onTableAction}
-	{onSchemaAction}
-	{onFollowForeignKey}
+	connectionStatus={workspace.connectionStatus}
+	explorer={workspace.explorer}
+	loadingExplorer={workspace.isExplorerLoading}
+	databases={workspace.databases}
+	searchQuery={workspace.explorerSearch}
+	onChangeDatabase={(database) => void workspace.handleDatabaseChange(database)}
+	onSearchChange={(value) => (workspace.explorerSearch = value)}
+	onRefreshDatabases={() => workspace.loadDatabases()}
+	onRefreshTables={() => workspace.loadExplorer()}
+	onCreateDatabase={(params) => workspace.handleCreateDatabase(params)}
+	onTableAction={(action, schema, table) => void workspace.handleTableAction(action, schema, table)}
+	onSchemaAction={(action, schema) => void workspace.handleSchemaAction(action, schema)}
+	onOpenObjectDefinition={(params) => void workspace.openObjectDefinition(params)}
+	onViewSequence={(schema, name) => void workspace.viewSequence(schema, name)}
+	activeTable={activeTab?.resultContext ?? null}
+	savedQueries={workspace.favoritesForConnection}
+	historyItems={workspace.historyForConnection}
+	onAddTab={() => workspace.addQueryTab()}
+	onOpenDiagram={() => workspace.addDiagramTab()}
+	onOpenSavedQuery={(sql) => workspace.openSavedQuery(sql)}
+	onOpenHistory={(index) => (workspace.selectedHistoryIndex = index)}
+	activeTabKind={activeTab?.kind ?? null}
 />
 
-<section class="flex-1 relative flex flex-col min-w-0 min-h-0 bg-white border-l border-gray-100">
+<section class="flex-1 relative flex flex-col min-w-0 min-h-0 bg-qc-bg">
 	<QueryTabsBar
-		{tabs}
-		{activeTabId}
-		{tabContextMenu}
-		{onSelectTab}
-		onOpenContextMenu={onOpenTabContextMenu}
-		{onCloseTab}
-		{onAddTab}
-		{onCloseContextMenu}
-		{onCloseAllTabs}
-		{onCloseAllTabsBut}
+		tabs={workspace.tabs}
+		activeTabId={workspace.activeTabId}
+		tabContextMenu={workspace.tabContextMenu}
+		onSelectTab={(tabId) => workspace.selectTab(tabId)}
+		onOpenContextMenu={(event, tabId) => workspace.openTabContextMenu(event, tabId)}
+		onCloseTab={(tabId) => workspace.closeTab(tabId)}
+		onAddTab={() => workspace.addQueryTab()}
+		onCloseContextMenu={() => (workspace.tabContextMenu = null)}
+		onCloseAllTabs={() => workspace.closeAllTabs()}
+		onCloseAllTabsBut={(tabId) => workspace.closeAllTabsBut(tabId)}
 	/>
 
 	{#if activeTab?.kind === 'query'}
 		<div
 			bind:this={splitContainer}
-			class={`flex-1 flex flex-col min-h-0 bg-white ${resizingResults ? 'select-none cursor-row-resize' : ''}`}
+			class={`flex-1 flex flex-col min-h-0 bg-qc-bg ${workspace.resizingResults ? 'select-none cursor-row-resize' : ''}`}
 		>
 			<SqlEditor
 				value={activeTab.sql}
-				onChange={onSetActiveSql}
-				onRun={onRunQuery}
-				onSaveQuery={onSaveQuery}
-				onFormatQuery={onFormatQuery}
-				running={isRunningQuery}
-				disabled={!connectionStatus.connected}
-				completions={sqlCompletions}
+				onChange={(sql) => workspace.setActiveSql(sql)}
+				onRun={(query) => void workspace.handleRunQuery(query)}
+				onSaveQuery={() => workspace.saveActiveQuery()}
+				onFormatQuery={() => workspace.formatActiveQuery()}
+				running={workspace.isRunningQuery}
+				disabled={!workspace.connectionStatus.connected}
+				explorer={workspace.explorer}
+				databaseType={workspace.connectionStatus.databaseType}
 			/>
 
-			<button
-				type="button"
-				aria-label="Resize results panel"
-				onpointerdown={onStartResultsResize}
-				class="h-1.5 bg-gray-100 border-y border-gray-200 hover:bg-emerald-400/50 cursor-row-resize transition-colors shrink-0 z-20 relative flex items-center justify-center"
-			>
-				<div class="w-8 h-0.5 bg-gray-300 rounded-full pointer-events-none"></div>
-			</button>
+			{#if showQueryResults}
+				<button
+					type="button"
+					aria-label="Resize results panel"
+					onpointerdown={(event) => workspace.startResultsResize(event)}
+					class="h-1.5 bg-qc-panel hover:bg-qc-cell/40 cursor-row-resize transition-colors shrink-0 z-20 relative flex items-center justify-center"
+				>
+					<div class="w-8 h-0.5 bg-qc-muted/50 rounded-full pointer-events-none"></div>
+				</button>
 
-			<div style={`height:${resultsPaneHeight}px;`} class="flex flex-col bg-white shrink-0 min-h-0">
-				<ResultsPane
-					result={activeTab.result as QueryResultPayload}
-					sqlError={activeTab.sqlError || globalError}
-					databaseType={connectionStatus.databaseType}
-					resultContext={activeTab.resultContext}
-					loading={isRunningQuery}
-					refreshSql={activeTab.lastRunSql}
-					onRunSql={(query) =>
-						onRunSqlForTab(query, activeTab.id, activeTab.resultContext)}
-					{onApplyTableChanges}
-					durationMs={activeTab.result.durationMs || queryDurationMs}
-				/>
-			</div>
+				<div style={`height:${workspace.resultsPaneHeight}px;`} class="flex flex-col bg-qc-bg shrink-0 min-h-0">
+					<ResultsPane
+						result={activeTab.result}
+						sqlError={activeTab.sqlError || workspace.globalError}
+						databaseType={workspace.connectionStatus.databaseType}
+						resultContext={activeTab.resultContext}
+						explorer={workspace.explorer}
+						relationTrail={activeTab.relationTrail ?? []}
+						loading={workspace.isRunningQuery}
+						refreshSql={activeTab.lastRunSql}
+						resultKey={`${activeTab.id}:${activeTab.lastRunSql}:${activeTab.result.durationMs}:${activeTab.result.rowCount}`}
+						onRunSql={(query) =>
+							workspace.executeQuery(query, {
+								pushToHistory: false,
+								targetTabId: activeTab.id,
+								context: activeTab.resultContext,
+							})}
+						onApplyTableChanges={(context, changes) =>
+							workspace.applyTableChanges(context, changes)}
+						onFollowRelation={(hop) => workspace.followRelation(hop)}
+						onActivateRelationTrail={(index) => workspace.activateRelationTrail(index)}
+						durationMs={activeTab.result.durationMs || workspace.queryDurationMs}
+					/>
+				</div>
+			{/if}
+		</div>
+	{:else if activeTab?.kind === 'diagram'}
+		<div class="flex-1 min-w-0 min-h-0 flex flex-col">
+			<DiagramView
+				connectionStatus={workspace.connectionStatus}
+				explorer={workspace.explorer}
+				loadingExplorer={workspace.isExplorerLoading}
+				onRefreshTables={() => workspace.loadExplorer()}
+				onTableAction={(action, schema, table) =>
+					void workspace.handleTableAction(action, schema, table)}
+				embedded
+			/>
 		</div>
 	{:else if activeTab}
 		<div class="flex-1 min-w-0 min-h-0 flex flex-col">
 			<ResultsPane
-				result={activeTab.result as QueryResultPayload}
-				sqlError={activeTab.sqlError || globalError}
-				databaseType={connectionStatus.databaseType}
+				result={activeTab.result}
+				sqlError={activeTab.sqlError || workspace.globalError}
+				databaseType={workspace.connectionStatus.databaseType}
 				resultContext={activeTab.resultContext}
-				loading={isRunningQuery}
+				explorer={workspace.explorer}
+				relationTrail={activeTab.relationTrail ?? []}
+				loading={workspace.isRunningQuery}
 				refreshSql={activeTab.lastRunSql}
-				onRunSql={(query) => onRunSqlForTab(query, activeTab.id, activeTab.resultContext)}
-				{onApplyTableChanges}
-				durationMs={activeTab.result.durationMs || queryDurationMs}
+				resultKey={`${activeTab.id}:${activeTab.lastRunSql}:${activeTab.result.durationMs}:${activeTab.result.rowCount}`}
+				onRunSql={(query) =>
+					workspace.executeQuery(query, {
+						pushToHistory: false,
+						targetTabId: activeTab.id,
+						context: activeTab.resultContext,
+					})}
+				onApplyTableChanges={(context, changes) =>
+					workspace.applyTableChanges(context, changes)}
+				onFollowRelation={(hop) => workspace.followRelation(hop)}
+				onActivateRelationTrail={(index) => workspace.activateRelationTrail(index)}
+				durationMs={activeTab.result.durationMs || workspace.queryDurationMs}
 			/>
 		</div>
 	{:else}
-		<div class="flex-1 flex items-center justify-center p-8 bg-gray-50">
+		<div class="flex-1 flex items-center justify-center p-8 bg-qc-bg">
 			<div class="w-full max-w-sm">
 				<div class="text-center mb-6">
-					<div class="text-sm font-medium text-gray-900">Quick Shortcuts</div>
-					<div class="text-xs text-gray-500 mt-1">No tabs open — try a shortcut</div>
+					<div class="text-sm font-medium text-qc-fg">Quick Shortcuts</div>
+					<div class="text-xs text-qc-muted mt-1">No tabs open — try a shortcut</div>
 				</div>
-				<div class="space-y-0 divide-y divide-gray-100">
+				<div class="space-y-0 divide-y divide-qc-border">
 					<div class="flex items-center justify-between px-3 py-2 text-xs">
-						<span class="text-gray-500">Run Query</span><span class="px-2 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[11px] text-gray-600">Ctrl+Enter</span>
+						<span class="text-qc-muted">Run Query</span>
+						<span class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle">Ctrl+Enter</span>
 					</div>
 					<div class="flex items-center justify-between px-3 py-2 text-xs">
-						<span class="text-gray-500">Save Query</span><span class="px-2 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[11px] text-gray-600">Ctrl+S</span>
+						<span class="text-qc-muted">Save Query</span>
+						<span class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle">Ctrl+S</span>
 					</div>
 					<div class="flex items-center justify-between px-3 py-2 text-xs">
-						<span class="text-gray-500">Format SQL</span><span class="px-2 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[11px] text-gray-600">Shift+Alt+F</span>
+						<span class="text-qc-muted">Format SQL</span>
+						<span class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle">Shift+Alt+F</span>
 					</div>
 					<div class="flex items-center justify-between px-3 py-2 text-xs">
-						<span class="text-gray-500">New Query Tab</span><span class="px-2 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[11px] text-gray-600">Ctrl+N</span>
+						<span class="text-qc-muted">New Query Tab</span>
+						<span class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle">Ctrl+N</span>
 					</div>
 					<div class="flex items-center justify-between px-3 py-2 text-xs">
-						<span class="text-gray-500">Close Tab</span><span class="px-2 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[11px] text-gray-600">Ctrl+X</span>
+						<span class="text-qc-muted">Close Tab</span>
+						<span class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle">Ctrl+X</span>
 					</div>
 					<div class="flex items-center justify-between px-3 py-2 text-xs">
-						<span class="text-gray-500">Search</span><span class="px-2 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[11px] text-gray-600">Ctrl+K</span>
+						<span class="text-qc-muted">Search</span>
+						<span class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle">Ctrl+K</span>
 					</div>
 				</div>
 			</div>
