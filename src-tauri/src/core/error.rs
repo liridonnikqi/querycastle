@@ -1,16 +1,4 @@
-#![allow(dead_code)]
 use thiserror::Error;
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub enum DbErrorKind {
-    Connection,
-    Query,
-    Timeout,
-    Auth,
-    Validation,
-    NotFound,
-    Internal,
-}
 
 #[derive(Debug, Error, Clone)]
 pub enum DbError {
@@ -78,7 +66,6 @@ impl From<DbError> for String {
     }
 }
 
-// Structured error for frontend when needed
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct StructuredDbError {
     pub kind: String,
@@ -111,7 +98,6 @@ pub fn sanitize_pg_error_to_db_error(err: tokio_postgres::Error) -> DbError {
         }
         let msg = lines.join("\n");
         let code = Some(db_err.code().code().to_string());
-        // Map auth vs connection vs query by code prefix
         let code_str = db_err.code().code();
         if code_str == "28P01" || code_str == "28000" || code_str == "28P00" {
             return DbError::Auth { message: msg };
@@ -133,7 +119,6 @@ pub fn sanitize_pg_error_to_db_error(err: tokio_postgres::Error) -> DbError {
             return DbError::Internal(format!("Database error\nCaused by: {}", causes.join("\nCaused by: ")));
         }
     }
-    // Heuristic timeout
     if base.to_lowercase().contains("timeout") {
         return DbError::Timeout { message: base };
     }

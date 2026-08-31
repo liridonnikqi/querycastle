@@ -38,6 +38,8 @@ pub struct ConnectionStatus {
     pub database: String,
     pub user: String,
     pub server_version: Option<String>,
+    #[serde(default)]
+    pub session_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -162,7 +164,7 @@ pub struct DatabaseExplorer {
     pub schemas: Vec<DatabaseSchema>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ObjectDefinitionParams {
     pub kind: String,

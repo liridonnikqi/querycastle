@@ -1,132 +1,121 @@
-use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
+use tokio_postgres::types::ToSql;
 
-use crate::adapters::traits::{DbAdapter, PostgresAdapter};
-use crate::core::{db, sql};
-use crate::core::error::{DbError, sanitize_pg_error_to_db_error};
+use crate::core::connection::{MAX_QUERY_ROWS, QUERY_TIMEOUT_MS};
+use crate::core::error::{sanitize_pg_error_to_db_error, DbError};
+use crate::core::sql;
 use crate::core::types::{
-    ApplyTableChangesParams, ApplyTableChangesResponse, ConnectionInput, ConnectionStatus,
-    DatabaseColumn, DatabaseExplorer, DatabaseForeignKey, DatabaseIndex, DatabaseRoutine,
-    DatabaseSchema, DatabaseSequence, DatabaseTable, DatabaseTrigger, DatabaseType,
-    ObjectDefinition, ObjectDefinitionParams, QueryResultPayload, TestConnectionResponse,
-    UpdatedRowCtid,
+    ApplyTableChangesParams, ApplyTableChangesResponse, DatabaseColumn, DatabaseExplorer,
+    DatabaseForeignKey, DatabaseIndex, DatabaseRoutine, DatabaseSchema, DatabaseSequence,
+    DatabaseTable, DatabaseTrigger, DatabaseType, ObjectDefinition, ObjectDefinitionParams,
+    QueryResultPayload, UpdatedRowCtid,
 };
 
-#[async_trait]
-impl DbAdapter for PostgresAdapter {
-    async fn test_connection(&self, connection: &ConnectionInput) -> Result<TestConnectionResponse, DbError> {
-        let client = match db::connect_client(connection).await {
-            Ok(client) => client,
-            Err(error) => {
-                return Ok(TestConnectionResponse {
-                    ok: false,
-                    message: error,
-                    server_version: None,
-                })
-            }
-        };
+fn pool_get_error(err: deadpool_postgres::PoolError) -> DbError {
+    DbError::connection(format!("Pool get failed: {err}"))
+}
 
-        let server_version = match db::get_server_version(&client).await {
-            Ok(version) => version,
-            Err(error) => {
-                return Ok(TestConnectionResponse {
-                    ok: false,
-                    message: error,
-                    server_version: None,
-                })
-            }
-        };
-
-        Ok(TestConnectionResponse {
-            ok: true,
-            message: "Connection successful".to_string(),
-            server_version,
-        })
-    }
-
-    async fn connect(&self, connection: &ConnectionInput) -> Result<ConnectionStatus, DbError> {
-        let client = db::connect_client(connection).await.map_err(DbError::internal)?;
-        let server_version = db::get_server_version(&client).await.map_err(DbError::internal)?;
-        client
-            .batch_execute(&format!("set statement_timeout = {}", db::QUERY_TIMEOUT_MS))
-            .await
-            .map_err(sanitize_pg_error_to_db_error)?;
-
-        Ok(ConnectionStatus {
-            connected: true,
-            database_type: DatabaseType::Postgres,
-            name: connection.name.clone(),
-            host: connection.host.clone(),
-            port: connection.port,
-            database: connection.database.clone(),
-            user: connection.user.clone(),
-            server_version,
-        })
-    }
-
-    async fn run_query(&self, connection: &ConnectionInput, sql: &str) -> Result<QueryResultPayload, DbError> {
-        let client = db::connect_client(connection).await.map_err(DbError::internal)?;
-        client
-            .batch_execute(&format!("set statement_timeout = {}", db::QUERY_TIMEOUT_MS))
-            .await
-            .map_err(sanitize_pg_error_to_db_error)?;
-
-        let started = std::time::Instant::now();
-        let messages = client.simple_query(sql).await.map_err(sanitize_pg_error_to_db_error)?;
-
-        let mut columns: Vec<String> = Vec::new();
-        let mut rows: Vec<HashMap<String, Value>> = Vec::new();
-        for message in messages {
-            if let tokio_postgres::SimpleQueryMessage::Row(row) = message {
-                if columns.is_empty() {
-                    columns = row
-                        .columns()
-                        .iter()
-                        .map(|column| column.name().to_string())
-                        .collect();
-                }
-
-                let mut mapped = HashMap::new();
-                for (index, column_name) in columns.iter().enumerate() {
-                    let value = row
-                        .get(index)
-                        .map(|entry| Value::String(entry.to_string()))
-                        .unwrap_or(Value::Null);
-                    mapped.insert(column_name.clone(), value);
-                }
-                rows.push(mapped);
+fn json_to_pg_param(value: &Value) -> Box<dyn ToSql + Sync + Send> {
+    match value {
+        Value::Null => Box::new(Option::<String>::None),
+        Value::Bool(v) => Box::new(*v),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Box::new(i)
+            } else if let Some(f) = n.as_f64() {
+                Box::new(f)
+            } else {
+                Box::new(n.to_string())
             }
         }
+        Value::String(s) => Box::new(s.clone()),
+        Value::Array(_) | Value::Object(_) => Box::new(value.to_string()),
+    }
+}
 
-        let row_count = rows.len();
-        let limited_rows = if row_count > db::MAX_QUERY_ROWS {
-            rows.into_iter().take(db::MAX_QUERY_ROWS).collect()
-        } else {
-            rows
-        };
+fn pg_param_refs(params: &[Box<dyn ToSql + Sync + Send>]) -> Vec<&(dyn ToSql + Sync)> {
+    params
+        .iter()
+        .map(|p| p.as_ref() as &(dyn ToSql + Sync))
+        .collect()
+}
 
-        Ok(QueryResultPayload {
-            columns,
-            rows: limited_rows,
-            row_count,
-            duration_ms: started.elapsed().as_millis(),
-        })
+async fn set_statement_timeout(client: &tokio_postgres::Client) -> Result<(), DbError> {
+    client
+        .batch_execute(&format!("set statement_timeout = {QUERY_TIMEOUT_MS}"))
+        .await
+        .map_err(sanitize_pg_error_to_db_error)
+}
+
+pub async fn server_version(pool: &deadpool_postgres::Pool) -> Result<Option<String>, DbError> {
+    let client = pool.get().await.map_err(pool_get_error)?;
+    let row = client
+        .query_one("select current_setting('server_version') as server_version", &[])
+        .await
+        .map_err(sanitize_pg_error_to_db_error)?;
+    let version: Option<String> = row.try_get("server_version").map_err(sanitize_pg_error_to_db_error)?;
+    Ok(version)
+}
+
+pub async fn run_query(pool: &deadpool_postgres::Pool, sql: &str) -> Result<QueryResultPayload, DbError> {
+    let client = pool.get().await.map_err(pool_get_error)?;
+    set_statement_timeout(&client).await?;
+
+    let started = std::time::Instant::now();
+    let messages = client.simple_query(sql).await.map_err(sanitize_pg_error_to_db_error)?;
+
+    let mut columns: Vec<String> = Vec::new();
+    let mut rows: Vec<HashMap<String, Value>> = Vec::new();
+    let mut row_count = 0usize;
+    for message in messages {
+        if let tokio_postgres::SimpleQueryMessage::Row(row) = message {
+            if columns.is_empty() {
+                columns = row
+                    .columns()
+                    .iter()
+                    .map(|column| column.name().to_string())
+                    .collect();
+            }
+
+            row_count += 1;
+            if rows.len() >= MAX_QUERY_ROWS {
+                continue;
+            }
+
+            let mut mapped = HashMap::new();
+            for (index, column_name) in columns.iter().enumerate() {
+                let value = row
+                    .get(index)
+                    .map(|entry| Value::String(entry.to_string()))
+                    .unwrap_or(Value::Null);
+                mapped.insert(column_name.clone(), value);
+            }
+            rows.push(mapped);
+        }
     }
 
-    async fn get_database_explorer(&self, connection: &ConnectionInput) -> Result<DatabaseExplorer, DbError> {
-        let client = db::connect_client(connection).await.map_err(DbError::internal)?;
+    Ok(QueryResultPayload {
+        columns,
+        rows,
+        row_count,
+        duration_ms: started.elapsed().as_millis(),
+    })
+}
 
-        let db_row = client
-            .query_one("select current_database() as current_database", &[])
-            .await
-            .map_err(sanitize_pg_error_to_db_error)?;
-        let current_database: String =
-            db_row.try_get("current_database").map_err(sanitize_pg_error_to_db_error)?;
+pub async fn get_database_explorer(pool: &deadpool_postgres::Pool) -> Result<DatabaseExplorer, DbError> {
+    let client = pool.get().await.map_err(pool_get_error)?;
 
-        let rows = client
-            .query(
-                "
+    let db_row = client
+        .query_one("select current_database() as current_database", &[])
+        .await
+        .map_err(sanitize_pg_error_to_db_error)?;
+    let current_database: String =
+        db_row.try_get("current_database").map_err(sanitize_pg_error_to_db_error)?;
+
+    let rows = client
+        .query(
+            "
             select
                 n.nspname as schema_name,
                 c.relname as table_name,
@@ -151,55 +140,55 @@ impl DbAdapter for PostgresAdapter {
                 and n.nspname not in ('pg_catalog', 'information_schema')
             order by n.nspname, c.relname, a.attnum
             ",
-                &[],
+            &[],
+        )
+        .await
+        .map_err(sanitize_pg_error_to_db_error)?;
+
+    let mut schema_map: HashMap<String, DatabaseSchema> = HashMap::new();
+    let mut table_map: HashMap<String, DatabaseTable> = HashMap::new();
+
+    for row in rows {
+        let schema_name: String = row.try_get("schema_name").map_err(sanitize_pg_error_to_db_error)?;
+        let table_name: String = row.try_get("table_name").map_err(sanitize_pg_error_to_db_error)?;
+        let relkind: String = row.try_get("relkind").map_err(sanitize_pg_error_to_db_error)?;
+        let column_name: Option<String> = row.try_get("column_name").map_err(sanitize_pg_error_to_db_error)?;
+        let data_type: Option<String> = row.try_get("data_type").map_err(sanitize_pg_error_to_db_error)?;
+        let not_null: Option<bool> = row.try_get("not_null").map_err(sanitize_pg_error_to_db_error)?;
+        let is_primary: Option<bool> = row.try_get("is_primary").map_err(sanitize_pg_error_to_db_error)?;
+
+        schema_map
+            .entry(schema_name.clone())
+            .or_insert_with(|| DatabaseSchema::new(schema_name.clone()));
+
+        let table_key = format!("{schema_name}.{table_name}");
+        table_map.entry(table_key.clone()).or_insert_with(|| {
+            DatabaseTable::new(
+                schema_name.clone(),
+                table_name.clone(),
+                if relkind == "v" || relkind == "m" {
+                    "view".to_string()
+                } else {
+                    "table".to_string()
+                },
             )
-            .await
-            .map_err(sanitize_pg_error_to_db_error)?;
+        });
 
-        let mut schema_map: HashMap<String, DatabaseSchema> = HashMap::new();
-        let mut table_map: HashMap<String, DatabaseTable> = HashMap::new();
-
-        for row in rows {
-            let schema_name: String = row.try_get("schema_name").map_err(sanitize_pg_error_to_db_error)?;
-            let table_name: String = row.try_get("table_name").map_err(sanitize_pg_error_to_db_error)?;
-            let relkind: String = row.try_get("relkind").map_err(sanitize_pg_error_to_db_error)?;
-            let column_name: Option<String> = row.try_get("column_name").map_err(sanitize_pg_error_to_db_error)?;
-            let data_type: Option<String> = row.try_get("data_type").map_err(sanitize_pg_error_to_db_error)?;
-            let not_null: Option<bool> = row.try_get("not_null").map_err(sanitize_pg_error_to_db_error)?;
-            let is_primary: Option<bool> = row.try_get("is_primary").map_err(sanitize_pg_error_to_db_error)?;
-
-            schema_map
-                .entry(schema_name.clone())
-                .or_insert_with(|| DatabaseSchema::new(schema_name.clone()));
-
-            let table_key = format!("{schema_name}.{table_name}");
-            table_map.entry(table_key.clone()).or_insert_with(|| {
-                DatabaseTable::new(
-                    schema_name.clone(),
-                    table_name.clone(),
-                    if relkind == "v" || relkind == "m" {
-                        "view".to_string()
-                    } else {
-                        "table".to_string()
-                    },
-                )
-            });
-
-            if let Some(column) = column_name {
-                if let Some(table) = table_map.get_mut(&table_key) {
-                    table.columns.push(DatabaseColumn {
-                        name: column,
-                        data_type: data_type.unwrap_or_else(|| "unknown".to_string()),
-                        not_null: not_null.unwrap_or(false),
-                        is_primary: is_primary.unwrap_or(false),
-                    });
-                }
+        if let Some(column) = column_name {
+            if let Some(table) = table_map.get_mut(&table_key) {
+                table.columns.push(DatabaseColumn {
+                    name: column,
+                    data_type: data_type.unwrap_or_else(|| "unknown".to_string()),
+                    not_null: not_null.unwrap_or(false),
+                    is_primary: is_primary.unwrap_or(false),
+                });
             }
         }
+    }
 
-        let fk_rows = client
-            .query(
-                "
+    let fk_rows = client
+        .query(
+            "
             select
                 tc.table_schema,
                 tc.table_name,
@@ -218,210 +207,221 @@ impl DbAdapter for PostgresAdapter {
                 and tc.table_schema not in ('pg_catalog', 'information_schema')
             order by tc.table_schema, tc.table_name, kcu.ordinal_position
             ",
-                &[],
-            )
-            .await
-            .map_err(sanitize_pg_error_to_db_error)?;
+            &[],
+        )
+        .await
+        .map_err(sanitize_pg_error_to_db_error)?;
 
-        for fk in fk_rows {
-            let table_schema: String = fk.try_get("table_schema").map_err(sanitize_pg_error_to_db_error)?;
-            let table_name: String = fk.try_get("table_name").map_err(sanitize_pg_error_to_db_error)?;
-            let table_key = format!("{table_schema}.{table_name}");
-            if let Some(table) = table_map.get_mut(&table_key) {
-                table.foreign_keys.push(DatabaseForeignKey {
-                    column: fk.try_get("column_name").map_err(sanitize_pg_error_to_db_error)?,
-                    referenced_schema: fk.try_get("foreign_table_schema").map_err(sanitize_pg_error_to_db_error)?,
-                    referenced_table: fk.try_get("foreign_table_name").map_err(sanitize_pg_error_to_db_error)?,
-                    referenced_column: fk.try_get("foreign_column_name").map_err(sanitize_pg_error_to_db_error)?,
-                });
-            }
+    for fk in fk_rows {
+        let table_schema: String = fk.try_get("table_schema").map_err(sanitize_pg_error_to_db_error)?;
+        let table_name: String = fk.try_get("table_name").map_err(sanitize_pg_error_to_db_error)?;
+        let table_key = format!("{table_schema}.{table_name}");
+        if let Some(table) = table_map.get_mut(&table_key) {
+            table.foreign_keys.push(DatabaseForeignKey {
+                column: fk.try_get("column_name").map_err(sanitize_pg_error_to_db_error)?,
+                referenced_schema: fk.try_get("foreign_table_schema").map_err(sanitize_pg_error_to_db_error)?,
+                referenced_table: fk.try_get("foreign_table_name").map_err(sanitize_pg_error_to_db_error)?,
+                referenced_column: fk.try_get("foreign_column_name").map_err(sanitize_pg_error_to_db_error)?,
+            });
         }
-
-        load_postgres_indexes(&client, &mut table_map).await?;
-        load_postgres_triggers(&client, &mut table_map).await?;
-        load_postgres_routines(&client, &mut schema_map).await?;
-        load_postgres_sequences(&client, &mut schema_map).await?;
-
-        for table in table_map.into_values() {
-            if let Some(schema) = schema_map.get_mut(&table.schema) {
-                schema.tables.push(table);
-            }
-        }
-
-        let mut schemas: Vec<DatabaseSchema> = schema_map.into_values().collect();
-        schemas.sort_by(|a, b| a.name.cmp(&b.name));
-        for schema in &mut schemas {
-            schema.tables.sort_by(|a, b| a.name.cmp(&b.name));
-            schema.routines.sort_by(|a, b| a.name.cmp(&b.name).then(a.identity_args.cmp(&b.identity_args)));
-            schema.sequences.sort_by(|a, b| a.name.cmp(&b.name));
-        }
-
-        Ok(DatabaseExplorer {
-            database: current_database,
-            schemas,
-        })
     }
 
-    async fn list_databases(&self, connection: &ConnectionInput) -> Result<Vec<String>, DbError> {
-        let client = db::connect_client(connection).await.map_err(DbError::internal)?;
+    load_postgres_indexes(&client, &mut table_map).await?;
+    load_postgres_triggers(&client, &mut table_map).await?;
+    load_postgres_routines(&client, &mut schema_map).await?;
+    load_postgres_sequences(&client, &mut schema_map).await?;
 
-        let rows = client
-            .query(
-                "
+    for table in table_map.into_values() {
+        if let Some(schema) = schema_map.get_mut(&table.schema) {
+            schema.tables.push(table);
+        }
+    }
+
+    let mut schemas: Vec<DatabaseSchema> = schema_map.into_values().collect();
+    schemas.sort_by(|a, b| a.name.cmp(&b.name));
+    for schema in &mut schemas {
+        schema.tables.sort_by(|a, b| a.name.cmp(&b.name));
+        schema.routines.sort_by(|a, b| a.name.cmp(&b.name).then(a.identity_args.cmp(&b.identity_args)));
+        schema.sequences.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+
+    Ok(DatabaseExplorer {
+        database: current_database,
+        schemas,
+    })
+}
+
+pub async fn list_databases(pool: &deadpool_postgres::Pool) -> Result<Vec<String>, DbError> {
+    let client = pool.get().await.map_err(pool_get_error)?;
+
+    let rows = client
+        .query(
+            "
             select datname
             from pg_database
             where datallowconn = true
                 and datistemplate = false
             order by datname
             ",
-                &[],
-            )
+            &[],
+        )
+        .await
+        .map_err(sanitize_pg_error_to_db_error)?;
+
+    let mut names = Vec::new();
+    for row in rows {
+        let name: String = row.try_get("datname").map_err(sanitize_pg_error_to_db_error)?;
+        names.push(name);
+    }
+    if names.is_empty() {
+        let db_row = client
+            .query_one("select current_database() as current_database", &[])
             .await
             .map_err(sanitize_pg_error_to_db_error)?;
+        let current: String = db_row.try_get("current_database").map_err(sanitize_pg_error_to_db_error)?;
+        Ok(vec![current])
+    } else {
+        Ok(names)
+    }
+}
 
-        let mut names = Vec::new();
-        for row in rows {
-            let name: String = row.try_get("datname").map_err(sanitize_pg_error_to_db_error)?;
-            names.push(name);
-        }
-        if names.is_empty() {
-            // Fallback to current db if no rows (e.g. restricted view) but query succeeded
-            Ok(vec![connection.database.clone()])
-        } else {
-            Ok(names)
-        }
+pub async fn apply_table_changes(
+    pool: &deadpool_postgres::Pool,
+    params: &ApplyTableChangesParams,
+) -> Result<ApplyTableChangesResponse, DbError> {
+    let schema = params.schema.trim();
+    let table = params.table.trim();
+    if schema.is_empty() || table.is_empty() {
+        return Err(DbError::validation("Schema and table are required"));
     }
 
-    async fn select_database(
-        &self,
-        connection: &ConnectionInput,
-        database: &str,
-    ) -> Result<(ConnectionInput, ConnectionStatus), DbError> {
-        let next_connection = crate::core::db::with_new_database(connection, database);
-        let status = self.connect(&next_connection).await?;
-        Ok((next_connection, status))
-    }
+    let mut client = pool.get().await.map_err(pool_get_error)?;
+    set_statement_timeout(&client).await?;
 
-    async fn apply_table_changes(
-        &self,
-        connection: &ConnectionInput,
-        params: &ApplyTableChangesParams,
-    ) -> Result<ApplyTableChangesResponse, DbError> {
-        let schema = params.schema.trim();
-        let table = params.table.trim();
-        if schema.is_empty() || table.is_empty() {
-            return Err(DbError::validation("Schema and table are required"));
+    let mut updated = 0usize;
+    let mut deleted = 0usize;
+    let mut inserted = 0usize;
+    let mut updated_rows: Vec<UpdatedRowCtid> = Vec::new();
+
+    let tx = client.transaction().await.map_err(sanitize_pg_error_to_db_error)?;
+    let safe_table = format!(
+        "{}.{}",
+        sql::quote_ident_for(DatabaseType::Postgres, schema),
+        sql::quote_ident_for(DatabaseType::Postgres, table)
+    );
+
+    for update in &params.changes.updates {
+        let entries: Vec<_> = update
+            .values
+            .iter()
+            .filter(|(key, _)| key.as_str() != "_querycastle_ctid")
+            .collect();
+        if entries.is_empty() {
+            continue;
         }
 
-        let mut client = db::connect_client(connection).await.map_err(DbError::internal)?;
-        client
-            .batch_execute(&format!("set statement_timeout = {}", db::QUERY_TIMEOUT_MS))
+        let set_clause = entries
+            .iter()
+            .enumerate()
+            .map(|(index, (column, _))| {
+                format!(
+                    "{} = ${}",
+                    sql::quote_ident_for(DatabaseType::Postgres, column),
+                    index + 1
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let ctid_param = entries.len() + 1;
+        let query = format!(
+            "update {safe_table} as t set {set_clause} where t.ctid = ${ctid_param}::tid returning t.ctid::text as _querycastle_ctid, to_jsonb(t)::text as _querycastle_row_json"
+        );
+
+        let mut bind_values: Vec<Box<dyn ToSql + Sync + Send>> =
+            entries.iter().map(|(_, value)| json_to_pg_param(value)).collect();
+        bind_values.push(Box::new(update.ctid.clone()));
+        let bind_refs = pg_param_refs(&bind_values);
+
+        let updated_row = tx
+            .query_opt(query.as_str(), bind_refs.as_slice())
             .await
             .map_err(sanitize_pg_error_to_db_error)?;
-
-        let mut updated = 0usize;
-        let mut deleted = 0usize;
-        let mut inserted = 0usize;
-        let mut updated_rows: Vec<UpdatedRowCtid> = Vec::new();
-
-        let tx = client.transaction().await.map_err(sanitize_pg_error_to_db_error)?;
-        let safe_table = format!("{}.{}", sql::quote_ident_for(DatabaseType::Postgres, schema), sql::quote_ident_for(DatabaseType::Postgres, table));
-
-        for update in &params.changes.updates {
-            let entries: Vec<_> = update
-                .values
-                .iter()
-                .filter(|(key, _)| key.as_str() != "_querycastle_ctid")
-                .collect();
-            if entries.is_empty() {
-                continue;
-            }
-
-            let set_clause = entries
-                .iter()
-                .map(|(column, value)| format!("{} = {}", sql::quote_ident_for(DatabaseType::Postgres, column), sql::value_to_sql_literal_for(DatabaseType::Postgres, value)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let query = format!(
-                "update {safe_table} as t set {set_clause} where t.ctid = '{}'::tid returning t.ctid::text as _querycastle_ctid, to_jsonb(t)::text as _querycastle_row_json",
-                sql::escape_sql_string(update.ctid.as_str())
-            );
-            let updated_row = tx.query_opt(query.as_str(), &[]).await.map_err(sanitize_pg_error_to_db_error)?;
-            let Some(updated_row) = updated_row else {
-                return Err(DbError::NotFound(format!(
-                    "Could not update row with ctid {}. It may have changed. Refresh and retry.",
-                    update.ctid
-                )));
-            };
-            let new_ctid: String = updated_row.try_get("_querycastle_ctid").map_err(sanitize_pg_error_to_db_error)?;
-            let row_json: String = updated_row.try_get("_querycastle_row_json").map_err(sanitize_pg_error_to_db_error)?;
-            let values: HashMap<String, Value> = serde_json::from_str(&row_json).map_err(|e| DbError::internal(e.to_string()))?;
-            updated_rows.push(UpdatedRowCtid {
-                old_ctid: update.ctid.clone(),
-                new_ctid,
-                values,
-            });
-            updated += 1;
-        }
-
-        for ctid in &params.changes.deletes {
-            let query = format!(
-                "delete from {safe_table} where ctid = '{}'::tid",
-                sql::escape_sql_string(ctid)
-            );
-            let affected = tx.execute(query.as_str(), &[]).await.map_err(sanitize_pg_error_to_db_error)?;
-            if affected == 0 {
-                return Err(DbError::NotFound(format!(
-                    "Could not delete row with ctid {}. It may have changed. Refresh and retry.",
-                    ctid
-                )));
-            }
-            deleted += 1;
-        }
-
-        for row in &params.changes.inserts {
-            let entries: Vec<_> = row
-                .iter()
-                .filter(|(key, _)| key.as_str() != "_querycastle_ctid")
-                .collect();
-            if entries.is_empty() {
-                continue;
-            }
-
-            let cols = entries
-                .iter()
-                .map(|(column, _)| sql::quote_ident_for(DatabaseType::Postgres, column))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let values = entries
-                .iter()
-                .map(|(_, value)| sql::value_to_sql_literal_for(DatabaseType::Postgres, value))
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            let query = format!("insert into {safe_table} ({cols}) values ({values})");
-            tx.execute(query.as_str(), &[]).await.map_err(sanitize_pg_error_to_db_error)?;
-            inserted += 1;
-        }
-
-        tx.commit().await.map_err(sanitize_pg_error_to_db_error)?;
-
-        Ok(ApplyTableChangesResponse {
-            ok: true,
-            updated,
-            deleted,
-            inserted,
-            updated_rows,
-        })
+        let Some(updated_row) = updated_row else {
+            return Err(DbError::NotFound(format!(
+                "Could not update row with ctid {}. It may have changed. Refresh and retry.",
+                update.ctid
+            )));
+        };
+        let new_ctid: String = updated_row.try_get("_querycastle_ctid").map_err(sanitize_pg_error_to_db_error)?;
+        let row_json: String = updated_row.try_get("_querycastle_row_json").map_err(sanitize_pg_error_to_db_error)?;
+        let values: HashMap<String, Value> = serde_json::from_str(&row_json).map_err(|e| DbError::internal(e.to_string()))?;
+        updated_rows.push(UpdatedRowCtid {
+            old_ctid: update.ctid.clone(),
+            new_ctid,
+            values,
+        });
+        updated += 1;
     }
 
-    async fn get_object_definition(
-        &self,
-        connection: &ConnectionInput,
-        params: &ObjectDefinitionParams,
-    ) -> Result<ObjectDefinition, DbError> {
-        postgres_object_definition(connection, params).await
+    for ctid in &params.changes.deletes {
+        let query = format!("delete from {safe_table} where ctid = $1::tid");
+        let affected = tx
+            .execute(query.as_str(), &[&ctid])
+            .await
+            .map_err(sanitize_pg_error_to_db_error)?;
+        if affected == 0 {
+            return Err(DbError::NotFound(format!(
+                "Could not delete row with ctid {ctid}. It may have changed. Refresh and retry."
+            )));
+        }
+        deleted += 1;
     }
+
+    for row in &params.changes.inserts {
+        let entries: Vec<_> = row
+            .iter()
+            .filter(|(key, _)| key.as_str() != "_querycastle_ctid")
+            .collect();
+        if entries.is_empty() {
+            continue;
+        }
+
+        let cols = entries
+            .iter()
+            .map(|(column, _)| sql::quote_ident_for(DatabaseType::Postgres, column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let placeholders = (1..=entries.len())
+            .map(|index| format!("${index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let query = format!("insert into {safe_table} ({cols}) values ({placeholders})");
+        let bind_values: Vec<Box<dyn ToSql + Sync + Send>> =
+            entries.iter().map(|(_, value)| json_to_pg_param(value)).collect();
+        let bind_refs = pg_param_refs(&bind_values);
+        tx.execute(query.as_str(), bind_refs.as_slice())
+            .await
+            .map_err(sanitize_pg_error_to_db_error)?;
+        inserted += 1;
+    }
+
+    tx.commit().await.map_err(sanitize_pg_error_to_db_error)?;
+
+    Ok(ApplyTableChangesResponse {
+        ok: true,
+        updated,
+        deleted,
+        inserted,
+        updated_rows,
+    })
+}
+
+pub async fn get_object_definition(
+    pool: &deadpool_postgres::Pool,
+    params: &ObjectDefinitionParams,
+) -> Result<ObjectDefinition, DbError> {
+    let client = pool.get().await.map_err(pool_get_error)?;
+    postgres_object_definition(&client, params).await
 }
 
 async fn load_postgres_indexes(
@@ -600,10 +600,9 @@ async fn load_postgres_sequences(
 }
 
 async fn postgres_object_definition(
-    connection: &ConnectionInput,
+    client: &tokio_postgres::Client,
     params: &ObjectDefinitionParams,
 ) -> Result<ObjectDefinition, DbError> {
-    let client = db::connect_client(connection).await.map_err(DbError::internal)?;
     let kind = params.kind.trim().to_ascii_lowercase();
     let schema = params.schema.trim();
     let name = params.name.trim();
@@ -613,7 +612,7 @@ async fn postgres_object_definition(
 
     let qualified = format!("{}.{}", sql::quote_ident(schema), sql::quote_ident(name));
     let sql_text = match kind.as_str() {
-        "function" | "procedure" => postgres_routine_definition(&client, params, schema, name).await?,
+        "function" | "procedure" => postgres_routine_definition(client, params, schema, name).await?,
         "sequence" => {
             let row = client
                 .query_opt(
@@ -708,10 +707,7 @@ async fn postgres_object_definition(
         return Err(DbError::validation("Could not load object definition"));
     }
 
-    let title = match kind.as_str() {
-        "function" | "procedure" => name.to_string(),
-        _ => name.to_string(),
-    };
+    let title = name.to_string();
 
     Ok(ObjectDefinition {
         title,

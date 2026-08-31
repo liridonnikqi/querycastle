@@ -1,4 +1,4 @@
-pub mod db;
+pub mod connection;
 pub mod error;
 pub mod pool;
 pub mod sql;
