@@ -1,6 +1,6 @@
 [package]
 name = "querycastle-tauri"
-version = "0.1.6"
+version = "0.1.7"
 description = "QueryCastle is a modern SQL client workspace built with Tauri + Svelte + Rust."
 edition = "2021"
 
