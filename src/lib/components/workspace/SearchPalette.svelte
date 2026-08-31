@@ -166,11 +166,11 @@
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
-			class="w-[640px] max-w-[95vw] bg-white rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.2)] border border-gray-200 overflow-hidden flex flex-col"
+			class="w-[640px] max-w-[95vw] bg-qc-elevated rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.35)] border border-qc-border overflow-hidden flex flex-col"
 			onclick={(e) => e.stopPropagation()}
 		>
-			<div class="flex items-center gap-3 px-4 h-[56px] border-b border-gray-100 shrink-0">
-				<Search size={18} class="text-gray-400 shrink-0" />
+			<div class="flex items-center gap-3 px-4 h-[56px] border-b border-qc-border-subtle shrink-0">
+				<Search size={18} class="text-qc-muted shrink-0" />
 				<input
 					bind:this={inputEl}
 					type="text"
@@ -178,7 +178,7 @@
 					oninput={handleInput}
 					onkeydown={handleKeydown}
 					placeholder="Search tables, views, functions..."
-					class="flex-1 h-full bg-transparent outline-none text-[15px] placeholder-gray-400 text-gray-900"
+					class="flex-1 h-full bg-transparent outline-none text-[15px] placeholder-qc-muted text-qc-fg"
 					autocomplete="off"
 					spellcheck={false}
 				/>
@@ -189,24 +189,24 @@
 							onSearchChange('');
 							inputEl?.focus();
 						}}
-						class="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center"
+						class="w-7 h-7 rounded-full bg-qc-hover hover:bg-qc-border text-qc-muted flex items-center justify-center"
 						aria-label="Clear"
 					>
 						<X size={14} />
 					</button>
 				{/if}
 				<div class="hidden sm:flex items-center gap-1 ml-2">
-					<kbd class="px-1.5 py-0.5 bg-gray-100 border border-gray-200 rounded text-[10px] font-medium text-gray-600">ESC</kbd>
+					<kbd class="px-1.5 py-0.5 bg-qc-hover border border-qc-border rounded text-[10px] font-medium text-qc-subtle">ESC</kbd>
 				</div>
 			</div>
 
 			<div class="max-h-[50vh] overflow-y-auto overscroll-contain p-2">
 				{#if !explorer}
-					<div class="px-3 py-8 text-center text-sm text-gray-500">Connect to a database to search.</div>
+					<div class="px-3 py-8 text-center text-sm text-qc-muted">Connect to a database to search.</div>
 				{:else if results.length === 0}
 					<div class="px-3 py-8 text-center">
-						<div class="text-sm text-gray-700">No results for "{internalQuery}"</div>
-						<div class="text-xs text-gray-500 mt-1">Try a different term</div>
+						<div class="text-sm text-qc-fg">No results for "{internalQuery}"</div>
+						<div class="text-xs text-qc-muted mt-1">Try a different term</div>
 					</div>
 				{:else}
 					<div class="space-y-1">
@@ -215,9 +215,9 @@
 								onclick={() => selectResult(r)}
 								onmouseenter={() => (selectedIndex = i)}
 								class={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left text-sm transition
-									${i === selectedIndex ? 'bg-[#1c1c1e] text-white' : 'text-gray-700 hover:bg-gray-50'}`}
+									${i === selectedIndex ? 'bg-qc-sidebar-active text-qc-fg' : 'text-qc-fg hover:bg-qc-hover'}`}
 							>
-								<div class={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 ${i === selectedIndex ? 'bg-white/15 text-white' : r.kind === 'schema' ? 'bg-amber-100 text-amber-600' : r.kind === 'table' && r.tableKind === 'view' ? 'bg-sky-100 text-sky-600' : r.kind === 'table' ? 'bg-emerald-100 text-emerald-600' : r.kind === 'routine' ? 'bg-violet-100 text-violet-600' : r.kind === 'sequence' ? 'bg-amber-100 text-amber-600' : r.kind === 'index' ? 'bg-slate-100 text-slate-600' : r.kind === 'trigger' ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-500'}`}>
+								<div class={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 ${i === selectedIndex ? 'bg-qc-hover text-qc-fg' : r.kind === 'schema' ? 'bg-amber-500/15 text-amber-400' : r.kind === 'table' && r.tableKind === 'view' ? 'bg-sky-500/15 text-sky-400' : r.kind === 'table' ? 'bg-emerald-500/15 text-emerald-400' : r.kind === 'routine' ? 'bg-violet-500/15 text-violet-400' : r.kind === 'sequence' ? 'bg-amber-500/15 text-amber-400' : r.kind === 'index' ? 'bg-qc-hover text-qc-subtle' : r.kind === 'trigger' ? 'bg-orange-500/15 text-orange-400' : 'bg-qc-hover text-qc-muted'}`}>
 									{#if r.kind === 'schema'}
 										<Table2 size={14} />
 									{:else if r.kind === 'table' && r.tableKind === 'view'}
@@ -245,41 +245,41 @@
 								<div class="flex-1 min-w-0">
 									{#if r.kind === 'schema'}
 										<div class="font-medium truncate">{r.schema}</div>
-										<div class={`text-xs truncate ${i === selectedIndex ? 'text-white/60' : 'text-gray-500'}`}>Schema • {explorer.schemas.find(s=>s.name===r.schema)?.tables.length ?? 0} tables</div>
+										<div class={`text-xs truncate ${i === selectedIndex ? 'text-qc-muted' : 'text-qc-muted'}`}>Schema • {explorer.schemas.find(s=>s.name===r.schema)?.tables.length ?? 0} tables</div>
 									{:else if r.kind === 'table'}
 										<div class="font-medium truncate">{r.table}</div>
-										<div class={`text-xs truncate ${i === selectedIndex ? 'text-white/60' : 'text-gray-500'}`}>{r.schema} • {r.tableKind === 'view' ? 'View' : 'Table'}</div>
+										<div class={`text-xs truncate text-qc-muted`}>{r.schema} • {r.tableKind === 'view' ? 'View' : 'Table'}</div>
 									{:else if r.kind === 'routine'}
 										<div class="font-medium truncate">{routineSignature(r.routine)}</div>
-										<div class={`text-xs truncate ${i === selectedIndex ? 'text-white/60' : 'text-gray-500'}`}>{r.routine.schema} • {r.routine.kind === 'procedure' ? 'Procedure' : 'Function'}</div>
+										<div class={`text-xs truncate text-qc-muted`}>{r.routine.schema} • {r.routine.kind === 'procedure' ? 'Procedure' : 'Function'}</div>
 									{:else if r.kind === 'sequence'}
 										<div class="font-medium truncate">{r.sequence.name}</div>
-										<div class={`text-xs truncate ${i === selectedIndex ? 'text-white/60' : 'text-gray-500'}`}>{r.sequence.schema} • Sequence</div>
+										<div class={`text-xs truncate text-qc-muted`}>{r.sequence.schema} • Sequence</div>
 									{:else if r.kind === 'index'}
 										<div class="font-medium truncate">{r.name}</div>
-										<div class={`text-xs truncate ${i === selectedIndex ? 'text-white/60' : 'text-gray-500'}`}>{r.schema}.{r.table} • Index</div>
+										<div class={`text-xs truncate text-qc-muted`}>{r.schema}.{r.table} • Index</div>
 									{:else if r.kind === 'trigger'}
 										<div class="font-medium truncate">{r.name}</div>
-										<div class={`text-xs truncate ${i === selectedIndex ? 'text-white/60' : 'text-gray-500'}`}>{r.schema}.{r.table} • Trigger</div>
+										<div class={`text-xs truncate text-qc-muted`}>{r.schema}.{r.table} • Trigger</div>
 									{:else}
 										<div class="font-medium truncate">{r.column}</div>
-										<div class={`text-xs truncate ${i === selectedIndex ? 'text-white/60' : 'text-gray-500'}`}>{r.schema}.{r.table} • Column</div>
+										<div class={`text-xs truncate text-qc-muted`}>{r.schema}.{r.table} • Column</div>
 									{/if}
 								</div>
-								<ChevronRight size={14} class={i === selectedIndex ? 'text-white/50' : 'text-gray-400'} />
+								<ChevronRight size={14} class="text-qc-muted" />
 							</button>
 						{/each}
 					</div>
 				{/if}
 			</div>
 
-			<div class="flex items-center justify-between px-3 py-2.5 border-t border-gray-100 bg-gray-50 text-[11px] text-gray-500">
+			<div class="flex items-center justify-between px-3 py-2.5 border-t border-qc-border-subtle bg-qc-panel text-[11px] text-qc-muted">
 				<div class="flex items-center gap-3">
-					<span class="hidden sm:inline-flex items-center gap-1"><kbd class="px-1 py-0.5 bg-white border border-gray-200 rounded text-[10px]">↑↓</kbd> Navigate</span>
-					<span class="inline-flex items-center gap-1"><kbd class="px-1 py-0.5 bg-white border border-gray-200 rounded text-[10px]">↵</kbd> Select</span>
-					<span class="hidden sm:inline-flex items-center gap-1"><kbd class="px-1 py-0.5 bg-white border border-gray-200 rounded text-[10px]">ESC</kbd> Close</span>
+					<span class="hidden sm:inline-flex items-center gap-1"><kbd class="px-1 py-0.5 bg-qc-elevated border border-qc-border rounded text-[10px]">↑↓</kbd> Navigate</span>
+					<span class="inline-flex items-center gap-1"><kbd class="px-1 py-0.5 bg-qc-elevated border border-qc-border rounded text-[10px]">↵</kbd> Select</span>
+					<span class="hidden sm:inline-flex items-center gap-1"><kbd class="px-1 py-0.5 bg-qc-elevated border border-qc-border rounded text-[10px]">ESC</kbd> Close</span>
 				</div>
-				<span class="text-gray-400">{results.length} results</span>
+				<span class="text-qc-muted">{results.length} results</span>
 			</div>
 		</div>
 	</div>

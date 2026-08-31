@@ -13,7 +13,7 @@
 	} from '@lucide/svelte';
 	import type { ConnectionStatus, DatabaseExplorer } from '$lib/rpc';
 	import type { TableAction } from '$lib/utils/workspace';
-	import {
+	import { theme } from '$lib/theme.svelte';	import {
 		HEADER_HEIGHT,
 		ROW_HEIGHT,
 		computeEdgeGeometry,
@@ -31,6 +31,7 @@
 		loadingExplorer,
 		onRefreshTables,
 		onTableAction,
+		embedded = false,
 	}: {
 		connectionStatus: ConnectionStatus;
 		explorer: DatabaseExplorer | null;
@@ -41,8 +42,8 @@
 			schema: string,
 			table: string,
 		) => void | Promise<void>;
+		embedded?: boolean;
 	} = $props();
-
 	const MIN_SCALE = 0.1;
 	const MAX_SCALE = 2.5;
 
@@ -102,6 +103,59 @@
 		return set;
 	});
 
+	const palette = $derived(
+		theme.value === 'dark'
+			? {
+					gridDot: '#22252b',
+					edge: '#6b7280',
+					edgeActive: '#3b82f6',
+					nodeFill: '#16181c',
+					nodeHeader: '#111316',
+					nodeStroke: '#333338',
+					nodeStrokeSelected: '#3b82f6',
+					headerLine: '#22252b',
+					title: '#fafafa',
+					schema: '#8a8a93',
+					colText: '#d4d4d8',
+					colTextPrimary: '#fafafa',
+					typeText: '#6b7280',
+					pkFill: '#422006',
+					pkStroke: '#92400e',
+					pkText: '#fbbf24',
+					fkFill: '#172554',
+					fkStroke: '#2563eb',
+					fkText: '#93c5fd',
+					tooltipBg: '#111316',
+					tooltipText: '#fafafa',
+					spinner: '#6b7280',
+					spinnerActive: '#d4d4d8',
+				}
+			: {
+					gridDot: '#e5e7eb',
+					edge: '#9ca3af',
+					edgeActive: '#3b82f6',
+					nodeFill: '#ffffff',
+					nodeHeader: '#f9fafb',
+					nodeStroke: '#d1d5db',
+					nodeStrokeSelected: '#3b82f6',
+					headerLine: '#e5e7eb',
+					title: '#111827',
+					schema: '#6b7280',
+					colText: '#374151',
+					colTextPrimary: '#111827',
+					typeText: '#9ca3af',
+					pkFill: '#fef3c7',
+					pkStroke: '#fcd34d',
+					pkText: '#92400e',
+					fkFill: '#dbeafe',
+					fkStroke: '#93c5fd',
+					fkText: '#1e40af',
+					tooltipBg: '#111827',
+					tooltipText: '#ffffff',
+					spinner: '#d1d5db',
+					spinnerActive: '#374151',
+				},
+	);
 	$effect(() => {
 		// Pass the fresh layout to fitToScreen explicitly: reading the `layout`
 		// state inside this effect would make the effect re-run on its own write.
@@ -346,21 +400,19 @@
 	});
 </script>
 
-<section class="flex-1 min-w-0 flex flex-col bg-gray-50">
+<section class={`flex-1 min-w-0 flex flex-col bg-qc-bg ${embedded ? '' : 'border-l border-qc-border'}`}>
 	<div
-		class="h-12 border-b border-gray-200 bg-white flex items-center justify-between px-3 gap-3 shrink-0"
+		class="h-10 border-b border-qc-border bg-qc-panel flex items-center justify-between px-3 gap-3 shrink-0"
 	>
 		<div class="flex items-center gap-2 min-w-0">
-			<Network size={15} class="text-gray-500 shrink-0" />
-			<span class="text-sm font-semibold text-gray-800 whitespace-nowrap"
-				>Schema diagram</span
-			>
+			<Network size={15} class="text-qc-muted shrink-0" />
+			<span class="text-sm font-semibold text-qc-fg whitespace-nowrap">Schema diagram</span>
 			{#if connectionStatus.connected}
 				<span
-					class="text-[11px] px-1.5 py-0.5 rounded-full bg-gray-100 border border-gray-200 text-gray-600 truncate"
+					class="text-[11px] px-1.5 py-0.5 rounded-full bg-qc-elevated border border-qc-border text-qc-subtle truncate"
 					>{connectionStatus.database}</span
 				>
-				<span class="text-[11px] text-gray-400 whitespace-nowrap">
+				<span class="text-[11px] text-qc-muted whitespace-nowrap">
 					{layout.nodes.length} tables · {layout.edges.length} relations
 				</span>
 			{/if}
@@ -368,17 +420,17 @@
 		{#if connectionStatus.connected && layout.nodes.length > 0}
 			<div class="flex items-center gap-1.5">
 				<div class="relative flex items-center w-56">
-					<Search size={14} class="w-4 h-4 absolute left-2.5 text-gray-400" />
+					<Search size={14} class="w-4 h-4 absolute left-2.5 text-qc-muted" />
 					<input
 						type="text"
 						placeholder="Search..."
 						bind:value={search}
-						class="w-full h-8 bg-white border border-gray-200 text-gray-900 text-sm rounded-md block pl-8 pr-8 py-1.5 placeholder-gray-400 focus:outline-none hover:border-gray-300 focus:border-gray-300 focus:ring-1 focus:ring-gray-200"
+						class="w-full h-8 bg-qc-bg border border-qc-border text-qc-fg text-sm rounded-md block pl-8 pr-8 py-1.5 placeholder:text-qc-muted focus:outline-none hover:border-qc-muted focus:border-qc-muted"
 					/>
 					{#if search}
 						<button
 							onclick={() => (search = '')}
-							class="absolute right-2 w-4 h-4 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center"
+							class="absolute right-2 w-4 h-4 rounded-full bg-qc-hover hover:bg-qc-elevated text-qc-muted flex items-center justify-center"
 							aria-label="Clear search"
 						>
 							<X size={10} />
@@ -388,7 +440,7 @@
 				<button
 					onclick={handleRelayout}
 					title="Re-layout"
-					class="w-8 h-8 rounded-lg border border-gray-200 bg-white flex items-center justify-center text-gray-500 hover:text-gray-900 hover:bg-gray-50"
+					class="w-8 h-8 rounded-md border border-qc-border bg-qc-panel flex items-center justify-center text-qc-muted hover:text-qc-fg hover:bg-qc-hover"
 				>
 					<LayoutGrid size={14} />
 				</button>
@@ -396,39 +448,37 @@
 					onclick={handleRefresh}
 					title="Refresh schema"
 					disabled={isRefreshing || loadingExplorer}
-					class="w-8 h-8 rounded-lg border border-gray-200 bg-white flex items-center justify-center text-gray-500 hover:text-gray-900 hover:bg-gray-50 disabled:opacity-50"
+					class="w-8 h-8 rounded-md border border-qc-border bg-qc-panel flex items-center justify-center text-qc-muted hover:text-qc-fg hover:bg-qc-hover disabled:opacity-50"
 				>
 					<RefreshCw size={14} class={isRefreshing || loadingExplorer ? 'animate-spin' : ''} />
 				</button>
 			</div>
 		{/if}
 	</div>
-
 	<div class="flex-1 relative overflow-hidden" bind:this={containerEl}>
 		{#if !connectionStatus.connected}
 			<div class="h-full flex flex-col items-center justify-center text-center p-6">
-				<Network size={22} class="text-gray-300 mb-2" />
-				<div class="text-sm text-gray-500">No active connection</div>
-				<div class="text-xs text-gray-400 mt-1">
+				<Network size={22} class="text-qc-muted mb-2" />
+				<div class="text-sm text-qc-muted">No active connection</div>
+				<div class="text-xs text-qc-muted mt-1">
 					Connect to a database to see its schema diagram
 				</div>
 			</div>
 		{:else if loadingExplorer && layout.nodes.length === 0}
 			<div class="h-full flex flex-col items-center justify-center text-center p-6">
 				<div
-					class="w-6 h-6 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin mb-3"
+					class="w-6 h-6 border-2 border-qc-border border-t-qc-subtle rounded-full animate-spin mb-3"
 				></div>
-				<div class="text-xs text-gray-500">Loading schema...</div>
+				<div class="text-xs text-qc-muted">Loading schema...</div>
 			</div>
 		{:else if layout.nodes.length === 0}
 			<div class="h-full flex flex-col items-center justify-center text-center p-6">
-				<Table2 size={22} class="text-gray-300 mb-2" />
-				<div class="text-sm text-gray-500">No tables found</div>
-				<div class="text-xs text-gray-400 mt-1">
+				<Table2 size={22} class="text-qc-muted mb-2" />
+				<div class="text-sm text-qc-muted">No tables found</div>
+				<div class="text-xs text-qc-muted mt-1">
 					This database has no tables to diagram yet
 				</div>
-			</div>
-		{:else}
+			</div>		{:else}
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<svg
 				bind:this={svgEl}
@@ -445,10 +495,9 @@
 						height="24"
 						patternUnits="userSpaceOnUse"
 					>
-						<circle cx="1.2" cy="1.2" r="1.2" fill="#e5e7eb" />
+						<circle cx="1.2" cy="1.2" r="1.2" fill={palette.gridDot} />
 					</pattern>
-				</defs>
-				<g
+				</defs>				<g
 					transform={`translate(${viewport.x}, ${viewport.y}) scale(${viewport.scale})`}
 				>
 					<rect
@@ -466,26 +515,23 @@
 								<path
 									d={geometry.path}
 									fill="none"
-									stroke={active ? '#3b82f6' : '#9ca3af'}
+									stroke={active ? palette.edgeActive : palette.edge}
 									stroke-width={active ? 2.2 : 1.4}
 								/>
 								{#if !edge.selfLoop}
-									<!-- crow's foot on the FK (many) side -->
 									<path
 										d={`M ${geometry.sourceAnchor.x + geometry.sourceDir * 13} ${geometry.sourceAnchor.y} L ${geometry.sourceAnchor.x} ${geometry.sourceAnchor.y - 6} M ${geometry.sourceAnchor.x + geometry.sourceDir * 13} ${geometry.sourceAnchor.y} L ${geometry.sourceAnchor.x} ${geometry.sourceAnchor.y} M ${geometry.sourceAnchor.x + geometry.sourceDir * 13} ${geometry.sourceAnchor.y} L ${geometry.sourceAnchor.x} ${geometry.sourceAnchor.y + 6}`}
-										stroke={active ? '#3b82f6' : '#9ca3af'}
+										stroke={active ? palette.edgeActive : palette.edge}
 										stroke-width={active ? 1.8 : 1.3}
 										fill="none"
 									/>
-									<!-- "one" tick + arrow on the referenced side -->
 									<path
 										d={`M ${geometry.targetAnchor.x - geometry.targetDir * 9} ${geometry.targetAnchor.y - 4.5} L ${geometry.targetAnchor.x} ${geometry.targetAnchor.y} L ${geometry.targetAnchor.x - geometry.targetDir * 9} ${geometry.targetAnchor.y + 4.5}`}
-										stroke={active ? '#3b82f6' : '#9ca3af'}
+										stroke={active ? palette.edgeActive : palette.edge}
 										stroke-width={active ? 1.8 : 1.3}
 										fill="none"
 									/>
-								{/if}
-								<path
+								{/if}								<path
 									d={geometry.path}
 									fill="none"
 									stroke="transparent"
@@ -510,27 +556,27 @@
 								width={node.width}
 								height={node.height}
 								rx={8}
-								fill="white"
-								stroke={selected ? '#3b82f6' : '#d1d5db'}
+								fill={palette.nodeFill}
+								stroke={selected ? palette.nodeStrokeSelected : palette.nodeStroke}
 								stroke-width={selected ? 1.8 : 1}
 							/>
 							<path
 								d={`M 0 8 a 8 8 0 0 1 8 -8 H ${node.width - 8} a 8 8 0 0 1 8 8 V ${HEADER_HEIGHT} H 0 Z`}
-								fill={selected ? '#eff6ff' : '#f9fafb'}
+								fill={selected ? palette.nodeHeader : palette.nodeHeader}
 							/>
 							<line
 								x1={0}
 								y1={HEADER_HEIGHT}
 								x2={node.width}
 								y2={HEADER_HEIGHT}
-								stroke="#e5e7eb"
+								stroke={palette.headerLine}
 							/>
 							<text
 								x={10}
 								y={19}
 								font-size="12"
 								font-weight="600"
-								fill="#111827"
+								fill={palette.title}
 							>{truncateNodeName(node.table)}</text>
 							{#if showSchemaBadges}
 								<text
@@ -538,10 +584,9 @@
 									y={19}
 									text-anchor="end"
 									font-size="9"
-									fill="#6b7280"
+									fill={palette.schema}
 								>{node.schema}</text>
-							{/if}
-							{#each node.columns as column, i}
+							{/if}							{#each node.columns as column, i}
 								{@const rowY = HEADER_HEIGHT + i * ROW_HEIGHT}
 								{@const badges = columnBadges(column)}
 								{@const nameX = 10 + badges.length * 23}
@@ -552,8 +597,8 @@
 										width={20}
 										height={12}
 										rx={3}
-										fill={badge === 'PK' ? '#fef3c7' : '#dbeafe'}
-										stroke={badge === 'PK' ? '#fcd34d' : '#93c5fd'}
+										fill={badge === 'PK' ? palette.pkFill : palette.fkFill}
+										stroke={badge === 'PK' ? palette.pkStroke : palette.fkStroke}
 										stroke-width={0.75}
 									/>
 									<text
@@ -562,14 +607,14 @@
 										text-anchor="middle"
 										font-size="8"
 										font-weight="700"
-										fill={badge === 'PK' ? '#92400e' : '#1e40af'}
+										fill={badge === 'PK' ? palette.pkText : palette.fkText}
 									>{badge}</text>
 								{/each}
 								<text
 									x={nameX}
 									y={rowY + 15}
 									font-size="11"
-									fill={column.isPrimary ? '#111827' : '#374151'}
+									fill={column.isPrimary ? palette.colTextPrimary : palette.colText}
 									font-weight={column.isPrimary ? 600 : 400}
 								>{truncateNodeName(column.name)}{column.notNull && !column.isPrimary ? ' *' : ''}</text>
 								<text
@@ -577,10 +622,9 @@
 									y={rowY + 15}
 									text-anchor="end"
 									font-size="10"
-									fill="#9ca3af"
+									fill={palette.typeText}
 									font-family="ui-monospace, monospace"
-								>{truncateTypeName(column.dataType)}</text>
-							{/each}
+								>{truncateTypeName(column.dataType)}</text>							{/each}
 						</g>
 					{/each}
 				</g>
@@ -589,40 +633,38 @@
 				<button
 					onclick={() => zoomBy(1.25)}
 					title="Zoom in"
-					class="w-7 h-7 flex items-center justify-center bg-white border border-gray-200 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-50"
+					class="w-7 h-7 flex items-center justify-center bg-qc-panel border border-qc-border rounded-md text-qc-muted hover:text-qc-fg hover:bg-qc-hover"
 				>
 					<Plus size={13} />
 				</button>
 				<button
 					onclick={() => zoomBy(1 / 1.25)}
 					title="Zoom out"
-					class="w-7 h-7 flex items-center justify-center bg-white border border-gray-200 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-50"
+					class="w-7 h-7 flex items-center justify-center bg-qc-panel border border-qc-border rounded-md text-qc-muted hover:text-qc-fg hover:bg-qc-hover"
 				>
 					<Minus size={13} />
 				</button>
 				<button
 					onclick={() => fitToScreen()}
 					title="Fit to screen"
-					class="w-7 h-7 flex items-center justify-center bg-white border border-gray-200 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-50"
+					class="w-7 h-7 flex items-center justify-center bg-qc-panel border border-qc-border rounded-md text-qc-muted hover:text-qc-fg hover:bg-qc-hover"
 				>
 					<Maximize2 size={13} />
-				</button>
-			</div>
+				</button>			</div>
 			{#if layout.edges.length === 0}
 				<div
-					class="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-white border border-gray-200 shadow-sm text-[11px] text-gray-500 pointer-events-none"
+					class="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-qc-panel border border-qc-border shadow-sm text-[11px] text-qc-muted pointer-events-none"
 				>
 					No foreign-key relationships found
 				</div>
 			{/if}
 			{#if tooltip}
 				<div
-					class="absolute pointer-events-none z-10 px-2 py-1 rounded-md bg-gray-900 text-white text-[11px] font-mono shadow-lg whitespace-nowrap"
-					style={`left: ${tooltip.x + 12}px; top: ${tooltip.y + 12}px;`}
+					class="absolute pointer-events-none z-10 px-2 py-1 rounded-md text-[11px] font-mono shadow-lg whitespace-nowrap border border-qc-border"
+					style={`left: ${tooltip.x + 12}px; top: ${tooltip.y + 12}px; background:${palette.tooltipBg}; color:${palette.tooltipText};`}
 				>
 					{tooltip.text}
 				</div>
-			{/if}
-		{/if}
+			{/if}		{/if}
 	</div>
 </section>

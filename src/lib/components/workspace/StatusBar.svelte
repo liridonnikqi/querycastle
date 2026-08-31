@@ -10,7 +10,7 @@
 
 	const REPO_URL = 'https://github.com/liridonnikqi/querycastle';
 	const tooltipClass =
-		'pointer-events-none absolute bottom-full right-0 mb-1.5 w-max max-w-[240px] rounded bg-[#1c1c1e] px-2 py-1 text-[10px] font-normal leading-snug text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 z-50';
+		'pointer-events-none absolute bottom-full right-0 mb-1.5 w-max max-w-[240px] rounded bg-qc-elevated border border-qc-border px-2 py-1 text-[10px] font-normal leading-snug text-qc-fg opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 z-50';
 
 	let version = $state('0.1.1');
 	let status = $state<
@@ -104,37 +104,29 @@
 </script>
 
 <footer
-	class="h-8 flex items-center justify-between px-3 bg-white text-gray-600 text-xs shrink-0 border-t border-gray-200 select-none"
+	class="h-8 flex items-center justify-between px-3 bg-qc-panel text-qc-muted text-xs shrink-0 border-t border-qc-border select-none"
 >
 	<div class="flex items-center gap-2 min-w-0">
-		<span class="text-gray-800 font-medium">QueryCastle</span>
-		<span class="text-gray-500">v{version}</span>
-		<span class="text-gray-300">|</span>
+		<span>v{version}</span>
 		{#if !isDesktop}
-			<span class="text-gray-500">Updates available in desktop app</span>
-		{:else if status === 'idle'}
-			<span class="text-gray-500">Up to date</span>
+			<span>Updates available in desktop app</span>
 		{:else if status === 'checking'}
-			<span class="inline-flex items-center gap-1 text-gray-500">
-				<Loader2 size={10} class="animate-spin" /> Checking for updates...
+			<span class="inline-flex items-center gap-1">
+				<Loader2 size={10} class="animate-spin" /> Checking…
 			</span>
 		{:else if status === 'available'}
-			<span class="text-emerald-600 font-medium" title={updateBody}>v{updateVersion} available</span>
+			<span class="text-qc-fg font-medium" title={updateBody}>v{updateVersion} available</span>
 		{:else if status === 'downloading'}
-			<span class="inline-flex items-center gap-1 text-gray-700">
+			<span class="inline-flex items-center gap-1 text-qc-subtle">
 				<Loader2 size={10} class="animate-spin" />
 				Downloading{#if total} {Math.round((downloaded / total) * 100)}%{/if}
 			</span>
 		{:else if status === 'ready'}
-			<span class="text-emerald-600 inline-flex items-center gap-1">
+			<span class="text-qc-fg inline-flex items-center gap-1">
 				<Check size={10} /> Restart to apply update
 			</span>
-		{:else if status === 'uptodate'}
-			<span class="text-emerald-600 inline-flex items-center gap-1">
-				<Check size={10} /> Up to date
-			</span>
 		{:else if status === 'error'}
-			<span class="text-red-600 inline-flex items-center gap-1" title={errorMsg}>
+			<span class="text-qc-danger inline-flex items-center gap-1" title={errorMsg}>
 				<AlertCircle size={10} /> Update failed
 			</span>
 		{/if}
@@ -145,7 +137,7 @@
 			{#if status === 'idle' || status === 'uptodate' || status === 'error'}
 				<button
 					onclick={handleCheck}
-					class="group relative h-5 w-5 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700 inline-flex items-center justify-center"
+					class="group relative h-5 w-5 rounded hover:bg-qc-hover text-qc-muted hover:text-qc-fg inline-flex items-center justify-center"
 					aria-label="Check for updates"
 				>
 					<RefreshCw size={14} />
@@ -156,13 +148,13 @@
 			{:else if status === 'available'}
 				<button
 					onclick={handleInstall}
-					class="h-5 px-2.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white inline-flex items-center gap-1 text-[11px] font-medium"
+					class="h-5 px-2.5 rounded bg-qc-primary hover:bg-qc-primary-hover text-qc-primary-fg inline-flex items-center gap-1 text-[11px] font-medium"
 				>
 					<Download size={10} /> Update to v{updateVersion}
 				</button>
 				<button
 					onclick={dismiss}
-					class="h-5 w-5 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700 inline-flex items-center justify-center"
+					class="h-5 w-5 rounded hover:bg-qc-hover text-qc-muted hover:text-qc-fg inline-flex items-center justify-center"
 					aria-label="Dismiss"
 				>
 					×
@@ -191,16 +183,16 @@
 							await relaunch();
 						} catch {}
 					}}
-					class="h-5 px-2.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-medium"
+					class="h-5 px-2.5 rounded bg-qc-primary hover:bg-qc-primary-hover text-qc-primary-fg text-[11px] font-medium"
 				>
 					Restart now
 				</button>
 			{/if}
-			<span class="w-px h-3 bg-gray-200" aria-hidden="true"></span>
+			<span class="w-px h-3 bg-qc-border" aria-hidden="true"></span>
 		{/if}
 		<button
 			onclick={openRepo}
-			class="group relative h-5 w-5 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700 inline-flex items-center justify-center"
+			class="group relative h-5 w-5 rounded hover:bg-qc-hover text-qc-muted hover:text-qc-fg inline-flex items-center justify-center"
 			aria-label="Open the QueryCastle GitHub repository"
 		>
 			<GithubIcon size={14} />
