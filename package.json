@@ -4,7 +4,7 @@
 	"version": "0.1.6",
 	"type": "module",
 	"scripts": {
-		"dev": "tauri dev",
+		"dev": "tauri dev --features mcp --config src-tauri/tauri.debug.conf.json",
 		"dev:frontend": "vite dev --port 5173 --strictPort",
 		"build": "vite build",
 		"check": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit",

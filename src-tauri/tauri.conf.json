@@ -21,11 +21,12 @@
         "minHeight": 700,
         "resizable": true,
         "decorations": false,
-        "devtools": true
+        "devtools": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "capabilities": ["main-capability"]
     }
   },
   "bundle": {
