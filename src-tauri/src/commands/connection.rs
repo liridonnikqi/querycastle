@@ -67,7 +67,11 @@ pub async fn connect(
 
 #[tauri::command]
 pub async fn disconnect(state: State<'_, AppState>) -> Result<HashMap<String, bool>, StructuredDbError> {
-    disconnect_active_session(&state).await;
+    let mut guard = state.inner.write().await;
+    let n = guard.sessions.len();
+    guard.sessions.clear();
+    guard.active_id = None;
+    info!("Disconnected all sessions ({n})");
     Ok(HashMap::from([(String::from("ok"), true)]))
 }
 
@@ -112,15 +116,4 @@ pub async fn disconnect_session(
         }
     }
     Ok(disconnected_status())
-}
-
-async fn disconnect_active_session(state: &State<'_, AppState>) {
-    let mut guard = state.inner.write().await;
-    let Some(id) = guard.active_id.clone() else {
-        guard.sessions.clear();
-        return;
-    };
-    guard.sessions.remove(&id);
-    info!("Disconnecting session {id}");
-    guard.active_id = guard.sessions.keys().next().cloned();
 }

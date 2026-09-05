@@ -1,7 +1,7 @@
 {
 	"app": {
 		"security": {
-			"csp": null,
+			"csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:5173; style-src 'self' 'unsafe-inline' http://localhost:5173; img-src 'self' data: blob: asset: http://localhost:5173; font-src 'self' data: http://localhost:5173; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost http://localhost:5173 ws://localhost:5173 http://127.0.0.1:5173 ws://127.0.0.1:5173; worker-src 'self' blob:",
 			"capabilities": [
 				"main-capability",
 				{

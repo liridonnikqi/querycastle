@@ -132,7 +132,7 @@ pub async fn run_query(pool: &deadpool_postgres::Pool, sql: &str) -> Result<Quer
 
             row_count += 1;
             if rows.len() >= MAX_QUERY_ROWS {
-                continue;
+                break;
             }
 
             let mut mapped = HashMap::new();
@@ -181,7 +181,13 @@ pub async fn get_database_explorer(pool: &deadpool_postgres::Pool) -> Result<Dat
                     where i.indrelid = c.oid
                         and i.indisprimary
                         and a.attnum = any (i.indkey)
-                ) as is_primary
+                ) as is_primary,
+                exists (
+                    select 1
+                    from pg_catalog.pg_attrdef d
+                    where d.adrelid = c.oid
+                        and d.adnum = a.attnum
+                ) as has_default
             from pg_catalog.pg_class c
             join pg_catalog.pg_namespace n on n.oid = c.relnamespace
             left join pg_catalog.pg_attribute a
@@ -208,6 +214,7 @@ pub async fn get_database_explorer(pool: &deadpool_postgres::Pool) -> Result<Dat
         let data_type: Option<String> = row.try_get("data_type").map_err(sanitize_pg_error_to_db_error)?;
         let not_null: Option<bool> = row.try_get("not_null").map_err(sanitize_pg_error_to_db_error)?;
         let is_primary: Option<bool> = row.try_get("is_primary").map_err(sanitize_pg_error_to_db_error)?;
+        let has_default: Option<bool> = row.try_get("has_default").map_err(sanitize_pg_error_to_db_error)?;
 
         schema_map
             .entry(schema_name.clone())
@@ -233,6 +240,7 @@ pub async fn get_database_explorer(pool: &deadpool_postgres::Pool) -> Result<Dat
                     data_type: data_type.unwrap_or_else(|| "unknown".to_string()),
                     not_null: not_null.unwrap_or(false),
                     is_primary: is_primary.unwrap_or(false),
+                    has_default: has_default.unwrap_or(false),
                 });
             }
         }

@@ -383,11 +383,21 @@
 				tooltip = null;
 			}
 		};
-		// Retry the initial fit if the container had no size on first layout
+		// Retry the initial fit if the container had no size on first layout.
+		// Deferred via rAF so measuring inside the observer callback does not
+		// feed back into the same observer tick ("ResizeObserver loop
+		// completed with undelivered notifications").
+		let fitQueued = false;
 		const resizeObserver = new ResizeObserver(() => {
-			if (!hasFitted && el.clientWidth > 0 && el.clientHeight > 0) {
-				fitToScreen();
-			}
+			if (hasFitted || fitQueued) return;
+			if (el.clientWidth === 0 || el.clientHeight === 0) return;
+			fitQueued = true;
+			requestAnimationFrame(() => {
+				fitQueued = false;
+				if (!hasFitted && el.clientWidth > 0 && el.clientHeight > 0) {
+					fitToScreen();
+				}
+			});
 		});
 		el.addEventListener('wheel', onWheel, { passive: false });
 		window.addEventListener('keydown', onKeyDown);

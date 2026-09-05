@@ -49,6 +49,7 @@
 	} from '$lib/utils/grid-editors';
 	import { quoteSqlIdentifier } from '$lib/utils/sql';
 	import { buildTableSelect } from '$lib/utils/table-select';
+	import { copyTextToClipboard } from '$lib/utils/clipboard';
 	import type { RelationHop } from '$lib/utils/workspace';
 	import RelationTrail from '$lib/components/query/RelationTrail.svelte';
 	import ColumnTypeIcon from '$lib/components/query/ColumnTypeIcon.svelte';
@@ -175,6 +176,7 @@
 	} | null>(null);
 	let rangeDragging = $state(false);
 	let rangeAnchor = $state<{ r: number; c: number } | null>(null);
+	let rangeCapture: { el: HTMLElement; pointerId: number } | null = null;
 	let gridScrollEl = $state<HTMLDivElement | null>(null);
 	let gridViewportH = $state(0);
 	let gridViewportW = $state(0);
@@ -855,21 +857,52 @@
 		rangeAnchor = { r: rowIndex, c: colIndex };
 		cellRange = { r0: rowIndex, r1: rowIndex, c0: colIndex, c1: colIndex };
 		rangeDragging = true;
-		(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+		// NOTE: pointer capture is intentionally NOT taken here. Capturing on
+		// plain mousedown steals focus from cell editors opened by the same
+		// click (e.g. double-click to edit). Capture starts in
+		// extendCellRange once an actual drag is underway.
 	}
 
-	function extendCellRange(rowIndex: number, colIndex: number) {
+	function extendCellRange(rowIndex: number, colIndex: number, event?: PointerEvent) {
 		if (!rangeDragging || !rangeAnchor) return;
-		cellRange = {
+		const next = {
 			r0: Math.min(rangeAnchor.r, rowIndex),
 			r1: Math.max(rangeAnchor.r, rowIndex),
 			c0: Math.min(rangeAnchor.c, colIndex),
 			c1: Math.max(rangeAnchor.c, colIndex),
 		};
+		const grew =
+			next.r0 !== cellRange?.r0 ||
+			next.r1 !== cellRange?.r1 ||
+			next.c0 !== cellRange?.c0 ||
+			next.c1 !== cellRange?.c1;
+		cellRange = next;
+		if (grew && event) {
+			const target = event.currentTarget as HTMLElement | null;
+			try {
+				target?.setPointerCapture?.(event.pointerId);
+				if (target) rangeCapture = { el: target, pointerId: event.pointerId };
+			} catch {
+				// Capture is best-effort; range tracking works without it.
+			}
+		}
 	}
 
 	function endCellRange() {
 		rangeDragging = false;
+		if (rangeCapture) {
+			try {
+				rangeCapture.el.releasePointerCapture?.(rangeCapture.pointerId);
+			} catch {
+				// Capture already released; nothing to do.
+			}
+			rangeCapture = null;
+		}
+	}
+
+	async function copyGridText(text: string) {
+		const ok = await copyTextToClipboard(text);
+		if (!ok) toast.error('Copy failed. The document is not focused.');
 	}
 
 	function copyCellRange() {
@@ -885,7 +918,7 @@
 					.join('\t');
 			}),
 		];
-		void navigator.clipboard.writeText(lines.join('\n'));
+		void copyGridText(lines.join('\n'));
 	}
 
 	function copySelectedRows() {
@@ -902,7 +935,7 @@
 					.join('\t');
 			}),
 		];
-		void navigator.clipboard.writeText(lines.join('\n'));
+		void copyGridText(lines.join('\n'));
 	}
 
 	function updateRangeOverlay() {
@@ -1318,6 +1351,16 @@
 
 	$effect(() => {
 		const onKey = (event: KeyboardEvent) => {
+			if (event.key === 'Escape') {
+				// GridCellEditor stops keydown propagation while focused, so
+				// this only runs when focus is elsewhere: dismiss open menus
+				// and commit any orphaned cell edit (same as blur).
+				if (rowContextMenu) rowContextMenu = null;
+				relatedSubmenuOpen = false;
+				if (showSortMenu) showSortMenu = false;
+				if (editingCell) commitEdit();
+				return;
+			}
 			if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'c')
 				return;
 			const target = event.target as HTMLElement | null;
@@ -1952,7 +1995,8 @@
 											data-c={colIndex}
 											onpointerdown={(event) =>
 												beginCellRange(rowIndex, colIndex, event)}
-											onpointerenter={() => extendCellRange(rowIndex, colIndex)}
+											onpointerenter={(event) =>
+												extendCellRange(rowIndex, colIndex, event)}
 											onclick={(event) =>
 												handleCellClick(event, rowId, column, currentValue)}
 											title={isPendingEdit
@@ -2069,7 +2113,7 @@
 			}}
 		/>
 		<PendingChangesPane
-			open={pendingPanelOpen}
+			open={pendingPanelOpen && (changeCount > 0 || syncingChanges)}
 			{changeCount}
 			cards={pendingCards}
 			sqlPreview={pendingSqlPreview}
@@ -2101,29 +2145,29 @@
 			}}
 		></button>
 		<div
-			class="fixed z-50 min-w-[240px] bg-qc-elevated rounded-md border border-qc-border shadow-[0_8px_24px_rgba(0,0,0,0.28)] py-1"
+			class="ctx-menu fixed z-50"
 			style={`left:${rowContextMenu?.x ?? 0}px;top:${rowContextMenu?.y ?? 0}px;`}
 		>
 			<button
 				type="button"
 				onclick={() => inspectRow(rowContextMenu?.rowId ?? '')}
-				class="w-full px-3 py-1.5 text-left text-sm text-qc-fg hover:bg-qc-hover inline-flex items-center gap-2"
+				class="ctx-item"
 			>
-				<PanelRight size={14} class="shrink-0 text-qc-muted" />
+				<PanelRight size={12} class="shrink-0 text-qc-muted" />
 				Inspect row
 			</button>
-			<div class="my-1 border-t border-qc-border"></div>
+			<div class="ctx-separator"></div>
 			{#each outgoing as item}
 				<button
 					type="button"
 					disabled={hasPendingChanges}
 					onclick={() => startOutgoingFollow(item.fk, item.value)}
-					class="w-full px-3 py-1.5 text-left text-sm text-qc-fg hover:bg-qc-hover disabled:opacity-50 inline-flex items-center gap-2"
+					class="ctx-item"
 					title={hasPendingChanges
 						? 'Save or discard grid edits first'
 						: undefined}
 				>
-					<ArrowUpRight size={14} class="shrink-0 text-qc-cell" />
+					<ArrowUpRight size={12} class="shrink-0 text-qc-cell" />
 					<span class="truncate"
 						>Open {item.fk.referencedTable} where {item.fk.referencedColumn} =
 						{formatFollowValue(item.value)}</span
@@ -2134,23 +2178,23 @@
 				<div class="relative">
 					<button
 						type="button"
-						class="w-full px-3 py-1.5 text-left text-sm text-qc-fg hover:bg-qc-hover inline-flex items-center justify-between gap-2"
+						class="ctx-item justify-between"
 						onmouseenter={() => (relatedSubmenuOpen = true)}
 						onclick={() => (relatedSubmenuOpen = !relatedSubmenuOpen)}
 					>
 						Related rows
-						<ChevronRight size={14} class="text-qc-muted" />
+						<ChevronRight size={12} class="text-qc-muted" />
 					</button>
 					{#if relatedSubmenuOpen}
 						<div
-							class="absolute left-full top-0 ml-0.5 min-w-[220px] max-h-72 overflow-auto bg-qc-elevated rounded-md border border-qc-border shadow-[0_8px_24px_rgba(0,0,0,0.28)] py-1"
+							class="ctx-menu absolute left-full top-0 ml-0.5 max-h-72 overflow-auto"
 						>
 							{#each incoming as rel}
 								<button
 									type="button"
 									disabled={hasPendingChanges}
 									onclick={() => startIncomingFollow(rel, rel.value)}
-									class="w-full px-3 py-1.5 text-left text-sm text-qc-fg hover:bg-qc-hover disabled:opacity-50 truncate"
+									class="ctx-item"
 									title={hasPendingChanges
 										? 'Save or discard grid edits first'
 										: undefined}
@@ -2167,7 +2211,7 @@
 						type="button"
 						disabled={hasPendingChanges}
 						onclick={() => startIncomingFollow(rel, rel.value)}
-						class="w-full px-3 py-1.5 text-left text-sm text-qc-fg hover:bg-qc-hover disabled:opacity-50 truncate"
+						class="ctx-item"
 						title={hasPendingChanges
 							? 'Save or discard grid edits first'
 							: undefined}
@@ -2177,15 +2221,15 @@
 				{/each}
 			{/if}
 			{#if editable && (outgoing.length > 0 || incoming.length > 0)}
-				<div class="my-1 border-t border-qc-border"></div>
+				<div class="ctx-separator"></div>
 			{/if}
 			{#if editable}
 				<button
 					onclick={() =>
 						rowContextMenu && queueDeleteRows([rowContextMenu.rowId])}
-					class="w-full px-3 py-1.5 text-left text-sm text-qc-danger hover:bg-qc-danger/10 inline-flex items-center gap-2"
+					class="ctx-item ctx-item-danger"
 				>
-					<Trash2 size={14} />
+					<Trash2 size={12} />
 					Delete Row
 				</button>
 			{/if}

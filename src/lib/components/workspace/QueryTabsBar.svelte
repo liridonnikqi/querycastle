@@ -183,15 +183,15 @@
 {#if tabContextMenu}
 	<button class="fixed inset-0 z-40" aria-label="Close tab menu" onclick={onCloseContextMenu}></button>
 	<div
-		class="fixed z-50 min-w-[180px] bg-qc-elevated rounded-md border border-qc-border shadow-[0_8px_24px_rgba(0,0,0,0.24)] py-1"
+		class="ctx-menu fixed z-50"
 		style={`left:${tabContextMenu.x}px;top:${tabContextMenu.y}px;`}
 	>
-		<button onclick={onCloseAllTabs} class="w-full px-3 py-1.5 text-left text-[12px] text-qc-fg hover:bg-qc-hover">
+		<button onclick={onCloseAllTabs} class="ctx-item">
 			Close all
 		</button>
 		<button
 			onclick={() => onCloseAllTabsBut(tabContextMenu?.tabId ?? '')}
-			class="w-full px-3 py-1.5 text-left text-[12px] text-qc-fg hover:bg-qc-hover"
+			class="ctx-item"
 		>
 			Close all but this
 		</button>

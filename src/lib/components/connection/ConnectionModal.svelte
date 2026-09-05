@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { X,  FolderOpen, Database } from "@lucide/svelte";
+    import { X, FolderOpen } from "@lucide/svelte";
     import { open } from "@tauri-apps/plugin-dialog";
     import type { ConnectionInput } from "$lib/rpc";
     import DatabaseIcon from "$lib/components/ui/DatabaseIcon.svelte";
@@ -43,6 +43,12 @@
         onConnectionStringChange(generateConnectionString(nextForm));
     }
 
+    function updateFields(patch: Partial<ConnectionInput>) {
+        const nextForm = { ...connectionForm, ...patch };
+        onConnectionFormChange(nextForm);
+        onConnectionStringChange(generateConnectionString(nextForm));
+    }
+
     function defaultNameForType(databaseType: ConnectionInput["databaseType"]) {
         if (databaseType === "mysql") return "local_mysql";
         if (databaseType === "sqlite") return "local_sqlite";
@@ -69,6 +75,7 @@
             database: nextDatabase,
             host: nextType === "sqlite" ? "" : connectionForm.host || "localhost",
             ssl: nextType === "sqlite" ? false : connectionForm.ssl,
+            sslInsecure: nextType === "sqlite" ? false : connectionForm.sslInsecure,
         };
 
         onConnectionFormChange(nextForm);
@@ -152,8 +159,30 @@
         return "postgres://postgres:password@localhost:5432/postgres";
     });
 
+    type EngineOption = {
+        value: ConnectionInput["databaseType"] | "redis" | "mongodb" | "duckdb" | "mssql";
+        label: string;
+        detail: string;
+        disabled: boolean;
+    };
+
+    const engineOptions: EngineOption[] = [
+        { value: "postgres", label: "PostgreSQL", detail: "Relational", disabled: false },
+        { value: "mysql", label: "MySQL", detail: "Relational", disabled: false },
+        { value: "sqlite", label: "SQLite", detail: "Local file", disabled: false },
+        { value: "redis", label: "Redis", detail: "In-memory", disabled: true },
+        { value: "mongodb", label: "MongoDB", detail: "Document", disabled: true },
+        { value: "duckdb", label: "DuckDB", detail: "Analytical", disabled: true },
+        { value: "mssql", label: "SQL Server", detail: "Relational", disabled: true },
+    ];
+
+    function isSupportedEngine(value: EngineOption["value"]): value is ConnectionInput["databaseType"] {
+        return value === "postgres" || value === "mysql" || value === "sqlite";
+    }
+
     let step = $state(1);
     let wasVisible = $state(false);
+    let nameInput: HTMLInputElement | null = $state(null);
 
     $effect(() => {
         if (visible && !wasVisible) {
@@ -169,6 +198,7 @@
                     password: "",
                     database: "postgres",
                     ssl: false,
+                    sslInsecure: false,
                 };
                 onConnectionFormChange(freshForm);
                 onConnectionStringChange(generateConnectionString(freshForm));
@@ -176,33 +206,64 @@
         }
         wasVisible = visible;
     });
+
+    // Focus the name field whenever the details step is shown.
+    $effect(() => {
+        if (visible && step === 2) {
+            const node = nameInput;
+            if (node) queueMicrotask(() => node.focus());
+        }
+    });
+
+    function handleBackdropClick(event: MouseEvent) {
+        // Close only when the backdrop itself is clicked, not the panel.
+        if (event.target === event.currentTarget) onClose();
+    }
+
+    function handleWindowKeydown(event: KeyboardEvent) {
+        if (!visible) return;
+        if (event.key === "Escape") onClose();
+    }
 </script>
 
+<svelte:window onkeydown={handleWindowKeydown} />
+
 {#if visible}
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[2px] p-4">
-        <div class="w-full max-w-[620px] overflow-hidden rounded-xl border border-qc-border bg-qc-elevated shadow-[0_24px_60px_rgba(0,0,0,0.35)]">
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions: backdrop click mirrors Cancel; Escape is handled globally above -->
+    <div
+        role="presentation"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[2px] p-4 cursor-default"
+        onclick={handleBackdropClick}
+    >
+        <div
+            class="w-full max-w-[560px] overflow-hidden rounded-lg border border-qc-border bg-qc-elevated shadow-[0_24px_60px_rgba(0,0,0,0.35)]"
+            role="dialog"
+            aria-modal="true"
+            aria-label={editing ? `Edit ${engineLabel} connection` : `New ${engineLabel} connection`}
+        >
             <div class="border-b border-qc-border bg-qc-elevated px-4 py-3 text-qc-fg">
-                <div class="flex items-start justify-between gap-3">
-                    <div>
-                        <h3 class="inline-flex items-center gap-2.5 text-[14px] font-semibold text-qc-fg">
-                            <span class="inline-flex h-7 w-7 items-center justify-center rounded-sm bg-qc-hover text-qc-subtle">
-                                <DatabaseIcon type={connectionForm.databaseType} size={18} />
-                            </span>
-                            {editing
-                                ? `Edit ${engineLabel} Connection`
-                                : `New ${engineLabel} Connection`}
-                        </h3>
-                        <div class="mt-2.5 flex items-center gap-2 text-[11px] text-qc-muted">
-                            <span class={step === 1 ? "font-semibold text-qc-fg" : ""}>1. Database</span>
-                            <span class="text-qc-border">/</span>
-                            <span class={step === 2 ? "font-semibold text-qc-fg" : ""}>2. Details</span>
+                <div class="flex items-center justify-between gap-3">
+                    <div class="flex min-w-0 items-center gap-2.5">
+                        <span class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-qc-hover text-qc-subtle">
+                            <DatabaseIcon type={connectionForm.databaseType} size={18} />
+                        </span>
+                        <div class="min-w-0">
+                            <h3 class="truncate text-[13px] font-semibold text-qc-fg">
+                                {editing
+                                    ? `Edit ${engineLabel} Connection`
+                                    : `New ${engineLabel} Connection`}
+                            </h3>
+                            <div class="mt-1 flex items-center gap-1 text-[11px]">
+                                <span class={`rounded-full px-2 py-0.5 ${step === 1 ? "bg-qc-hover font-medium text-qc-fg" : "text-qc-muted"}`}>1. Database</span>
+                                <span class={`rounded-full px-2 py-0.5 ${step === 2 ? "bg-qc-hover font-medium text-qc-fg" : "text-qc-muted"}`}>2. Details</span>
+                            </div>
                         </div>
                     </div>
                     <button
                         aria-label="Close modal"
                         title="Close"
                         onclick={onClose}
-                        class="flex h-7 w-7 items-center justify-center rounded-sm text-qc-muted hover:bg-qc-hover hover:text-qc-fg"
+                        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-qc-muted hover:bg-qc-hover hover:text-qc-fg"
                     >
                         <X size={16} />
                     </button>
@@ -217,20 +278,16 @@
                         <span class="text-[11px] text-qc-muted">Choose an engine</span>
                     </div>
                     <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        {#each [
-                            { value: "postgres", label: "PostgreSQL", detail: "Relational", disabled: false },
-                            { value: "mysql", label: "MySQL", detail: "Relational", disabled: false },
-                            { value: "sqlite", label: "SQLite", detail: "Local file", disabled: false },
-                            { value: "redis", label: "Redis", detail: "In-memory", disabled: true },
-                            { value: "mongodb", label: "MongoDB", detail: "Document", disabled: true },
-                            { value: "duckdb", label: "DuckDB", detail: "Analytical", disabled: true },
-                            { value: "mssql", label: "SQL Server", detail: "Relational", disabled: true },
-                        ] as database}
+                        {#each engineOptions as database (database.value)}
                             <button
                                 type="button"
                                 disabled={database.disabled}
-                                onclick={() => changeDatabaseType(database.value as any)}
-                                class={`flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-md border px-2.5 py-2.5 text-center transition-colors ${
+                                title={database.disabled ? `${database.label} support is coming soon` : database.label}
+                                onclick={() => {
+                                    if (!isSupportedEngine(database.value)) return;
+                                    changeDatabaseType(database.value);
+                                }}
+                                class={`relative flex min-w-0 flex-col items-center justify-center gap-1 rounded-md border px-2 py-2 text-center transition-colors ${
                                     database.disabled
                                         ? "border-qc-border-subtle bg-qc-panel text-qc-muted opacity-50 cursor-not-allowed"
                                         : connectionForm.databaseType === database.value
@@ -238,14 +295,11 @@
                                           : "border-qc-border bg-qc-panel text-qc-subtle hover:border-qc-muted hover:bg-qc-hover"
                                 }`}
                             >
-                                <span class={`inline-flex h-9 w-9 items-center justify-center rounded-md ${database.disabled ? "bg-qc-hover" : "bg-qc-elevated"}`}>
-                                    {#if database.value === "postgres" || database.value === "mysql" || database.value === "sqlite"}
-                                        <DatabaseIcon type={database.value as any} size={22} />
-                                    {:else if database.value === "redis" || database.value === "mongodb" || database.value === "duckdb" || database.value === "mssql"}
-                                        <DatabaseIcon type={database.value as any} size={22} />
-                                    {:else}
-                                        <Database size={21} strokeWidth={1.7} class="text-qc-muted" />
-                                    {/if}
+                                {#if database.disabled}
+                                    <span class="absolute right-1.5 top-1.5 rounded-full bg-qc-hover px-1.5 py-px text-[9px] font-medium text-qc-muted">Soon</span>
+                                {/if}
+                                <span class={`inline-flex h-8 w-8 items-center justify-center rounded-md ${database.disabled ? "bg-qc-hover" : "bg-qc-elevated"}`}>
+                                    <DatabaseIcon type={database.value} size={20} />
                                 </span>
                                 <span class="min-w-0">
                                     <span class="block truncate text-[12px] font-semibold">{database.label}</span>
@@ -269,6 +323,7 @@
                     <label class="sm:col-span-2 flex flex-col gap-1 text-qc-subtle">
                         <span class="text-[10px] font-semibold uppercase tracking-wider text-qc-muted">Connection Name</span>
                         <input
+                            bind:this={nameInput}
                             value={connectionForm.name}
                             oninput={(e) =>
                                 updateField("name", (e.currentTarget as HTMLInputElement).value)}
@@ -349,6 +404,34 @@
                                 class="ui-input h-8 px-3"
                             />
                         </label>
+                        <div class="sm:col-span-2 flex flex-col gap-2">
+                            <label class="flex items-center gap-2 text-[12px] text-qc-subtle">
+                                <input
+                                    type="checkbox"
+                                    class="qc-check"
+                                    checked={connectionForm.ssl}
+                                    onchange={(e) => {
+                                        const checked = e.currentTarget.checked;
+                                        updateFields({
+                                            ssl: checked,
+                                            sslInsecure: checked ? connectionForm.sslInsecure : false,
+                                        });
+                                    }}
+                                />
+                                Use SSL
+                            </label>
+                            <label class="flex items-center gap-2 text-[12px] text-qc-subtle">
+                                <input
+                                    type="checkbox"
+                                    class="qc-check"
+                                    checked={connectionForm.sslInsecure ?? false}
+                                    disabled={!connectionForm.ssl}
+                                    onchange={(e) =>
+                                        updateField("sslInsecure", e.currentTarget.checked)}
+                                />
+                                Allow insecure TLS (self-signed)
+                            </label>
+                        </div>
                     {/if}
                 </div>
 

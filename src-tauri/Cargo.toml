@@ -37,6 +37,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
+keyring = { version = "3.6", default-features = false, features = ["windows-native", "apple-native", "sync-secret-service"] }
 
 [features]
 mcp = ["dep:tauri-plugin-mcp-bridge"]

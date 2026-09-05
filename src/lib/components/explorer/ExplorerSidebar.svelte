@@ -3,7 +3,6 @@
 		Braces,
 		Check,
 		ChevronDown,
-		ChevronRight,
 		Copy,
 		Eye,
 		Hash,
@@ -28,6 +27,8 @@
 		ObjectDefinitionParams,
 	} from '$lib/rpc';
 	import type { QueryHistoryItem, SavedQueryItem } from '$lib/types';
+	import { copyTextToClipboard } from '$lib/utils/clipboard';
+	import { toast } from '$lib/stores/toast.svelte';
 	import { dialectCapabilities } from '$lib/utils/dialect';
 	import type { SchemaAction, TableAction } from '$lib/utils/workspace';
 	import ExplorerGroup from '$lib/components/explorer/ExplorerGroup.svelte';
@@ -141,8 +142,8 @@
 		kind: string,
 	) {
 		event.preventDefault();
-		const menuWidth = 210;
-		const menuHeight = 290;
+		const menuWidth = 170;
+		const menuHeight = 250;
 		const margin = 8;
 		const maxX = window.innerWidth - menuWidth - margin;
 		const maxY = window.innerHeight - menuHeight - margin;
@@ -160,8 +161,8 @@
 
 	function openSchemaContextMenu(event: MouseEvent, schema: string) {
 		event.preventDefault();
-		const menuWidth = 210;
-		const menuHeight = 140;
+		const menuWidth = 170;
+		const menuHeight = 120;
 		const margin = 8;
 		const maxX = window.innerWidth - menuWidth - margin;
 		const maxY = window.innerHeight - menuHeight - margin;
@@ -240,8 +241,8 @@
 	) {
 		event.preventDefault();
 		event.stopPropagation();
-		const menuWidth = 210;
-		const menuHeight = 140;
+		const menuWidth = 170;
+		const menuHeight = 110;
 		const margin = 8;
 		const maxX = window.innerWidth - menuWidth - margin;
 		const maxY = window.innerHeight - menuHeight - margin;
@@ -378,7 +379,22 @@
 		diagramRail = true;
 		onOpenDiagram?.();
 	}
+
+	function handleWindowKeydown(event: KeyboardEvent) {
+		if (event.key !== 'Escape') return;
+		if (contextMenu) contextMenu = null;
+		if (schemaContextMenu) schemaContextMenu = null;
+		if (objectContextMenu) objectContextMenu = null;
+	}
+
+	async function copySidebarText(text: string) {
+		const ok = await copyTextToClipboard(text);
+		if (ok) toast.success('Copied to clipboard');
+		else toast.error('Copy failed. The document is not focused.');
+	}
 </script>
+
+<svelte:window onkeydown={handleWindowKeydown} />
 
 <aside class="flex h-full shrink-0">
 	<nav
@@ -804,17 +820,17 @@
 				onclick={() => (contextMenu = null)}
 			></button>
 			<div
-				class="fixed z-[75] min-w-[210px] bg-qc-panel rounded-lg shadow-[0_8px_30px_rgb(0,0,0,0.28)] border border-qc-border py-1.5 text-sm"
+				class="ctx-menu fixed z-[75]"
 				style={`left:${contextMenu.x}px;top:${contextMenu.y}px;`}
 			>
 				<button
 					onclick={() => runMenuAction('view_data')}
-					class="w-full text-left px-3 py-1.5 text-qc-fg hover:bg-qc-hover"
+					class="ctx-item"
 					>View Data</button
 				>
 				<button
 					onclick={() => runMenuAction('view_structure')}
-					class="w-full text-left px-3 py-1.5 text-qc-fg hover:bg-qc-hover"
+					class="ctx-item"
 					>View Structure</button
 				>
 				{#if contextMenu.kind === 'view'}
@@ -829,38 +845,38 @@
 							});
 							contextMenu = null;
 						}}
-						class="w-full text-left px-3 py-1.5 text-qc-fg hover:bg-qc-hover"
+						class="ctx-item"
 						>View Definition</button
 					>
 				{:else}
 					<button
 						onclick={() => runMenuAction('sql_create')}
-						class="w-full text-left px-3 py-1.5 text-qc-fg hover:bg-qc-hover"
+						class="ctx-item"
 						>SQL: Create</button
 					>
 				{/if}
-				<div class="h-px bg-qc-border my-1 mx-2"></div>
+				<div class="ctx-separator"></div>
 				<button
 					onclick={() => runMenuAction('rename')}
-					class="w-full flex items-center gap-2 text-left px-3 py-1.5 text-qc-fg hover:bg-qc-hover"
-					><SquarePen size={14} />Rename</button
+					class="ctx-item"
+					><SquarePen size={12} />Rename</button
 				>
 				{#if contextMenu.kind !== 'view'}
 					<button
 						onclick={() => runMenuAction('duplicate')}
-						class="w-full flex items-center gap-2 text-left px-3 py-1.5 text-qc-fg hover:bg-qc-hover"
-						><Copy size={14} />Duplicate</button
+						class="ctx-item"
+						><Copy size={12} />Duplicate</button
 					>
 				{/if}
 				<button
 					onclick={() => runMenuAction('copy_name')}
-					class="w-full text-left px-3 py-1.5 text-qc-fg hover:bg-qc-hover"
+					class="ctx-item"
 					>Copy Name</button
 				>
 				<button
 					onclick={() => runMenuAction('drop')}
-					class="w-full flex items-center gap-2 text-left px-3 py-1.5 text-qc-danger hover:bg-qc-danger/10"
-					><Trash2 size={14} />{contextMenu.kind === 'view'
+					class="ctx-item ctx-item-danger"
+					><Trash2 size={12} />{contextMenu.kind === 'view'
 						? 'Drop View'
 						: 'Delete Cascade'}</button
 				>
@@ -874,7 +890,7 @@
 				onclick={() => (objectContextMenu = null)}
 			></button>
 			<div
-				class="fixed z-[75] min-w-[210px] bg-qc-panel rounded-lg shadow-[0_8px_30px_rgb(0,0,0,0.28)] border border-qc-border py-1.5 text-sm"
+				class="ctx-menu fixed z-[75]"
 				style={`left:${objectContextMenu.x}px;top:${objectContextMenu.y}px;`}
 			>
 				{#if objectContextMenu.canViewData}
@@ -887,7 +903,7 @@
 								);
 							objectContextMenu = null;
 						}}
-						class="w-full text-left px-3 py-1.5 text-qc-fg hover:bg-qc-hover"
+						class="ctx-item"
 						>View Data</button
 					>
 				{/if}
@@ -904,20 +920,19 @@
 						});
 						objectContextMenu = null;
 					}}
-					class="w-full text-left px-3 py-1.5 text-qc-fg hover:bg-qc-hover"
+					class="ctx-item"
 					>View Definition</button
 				>
 				<button
-					onclick={async () => {
+					onclick={() => {
 						if (!objectContextMenu) return;
-						await navigator.clipboard.writeText(
-							objectContextMenu.identityArgs
-								? `${objectContextMenu.schema}.${objectContextMenu.name}(${objectContextMenu.identityArgs})`
-								: `${objectContextMenu.schema}.${objectContextMenu.name}`,
-						);
+						const text = objectContextMenu.identityArgs
+							? `${objectContextMenu.schema}.${objectContextMenu.name}(${objectContextMenu.identityArgs})`
+							: `${objectContextMenu.schema}.${objectContextMenu.name}`;
 						objectContextMenu = null;
+						void copySidebarText(text);
 					}}
-					class="w-full text-left px-3 py-1.5 text-qc-fg hover:bg-qc-hover"
+					class="ctx-item"
 					>Copy Name</button
 				>
 			</div>
@@ -930,23 +945,23 @@
 				onclick={() => (schemaContextMenu = null)}
 			></button>
 			<div
-				class="fixed z-[75] min-w-[210px] bg-qc-panel rounded-lg shadow-[0_8px_30px_rgb(0,0,0,0.28)] border border-qc-border py-1.5 text-sm"
+				class="ctx-menu fixed z-[75]"
 				style={`left:${schemaContextMenu.x}px;top:${schemaContextMenu.y}px;`}
 			>
 				<button
 					onclick={() => runSchemaMenuAction('copy_name')}
-					class="w-full text-left px-3 py-1.5 text-qc-fg hover:bg-qc-hover"
+					class="ctx-item"
 					>Copy Name</button
 				>
 				<button
 					onclick={() => runSchemaMenuAction('copy_quoted_name')}
-					class="w-full text-left px-3 py-1.5 text-qc-fg hover:bg-qc-hover"
+					class="ctx-item"
 					>Copy Quoted Name</button
 				>
-				<div class="h-px bg-qc-border my-1 mx-2"></div>
+				<div class="ctx-separator"></div>
 				<button
 					onclick={() => runSchemaMenuAction('sql_list_tables')}
-					class="w-full text-left px-3 py-1.5 text-qc-fg hover:bg-qc-hover"
+					class="ctx-item"
 					>SQL: List Tables</button
 				>
 			</div>

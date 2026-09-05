@@ -110,6 +110,11 @@ pub(crate) fn normalize_connection_input(input: ConnectionInput) -> Result<Conne
             } else {
                 ssl_from_url.unwrap_or(input.ssl)
             },
+            ssl_insecure: if database_type == DatabaseType::Sqlite {
+                false
+            } else {
+                input.ssl_insecure
+            },
             use_connection_string: Some(true),
             connection_string: Some(raw),
         });
@@ -158,6 +163,11 @@ pub(crate) fn normalize_connection_input(input: ConnectionInput) -> Result<Conne
             input.database
         },
         ssl: if database_type == DatabaseType::Sqlite { false } else { input.ssl },
+        ssl_insecure: if database_type == DatabaseType::Sqlite {
+            false
+        } else {
+            input.ssl_insecure
+        },
         use_connection_string: Some(false),
         connection_string: Some(String::new()),
     })
@@ -195,5 +205,43 @@ pub(crate) fn with_new_database(connection: &ConnectionInput, new_database: &str
     ConnectionInput {
         database: new_db,
         ..connection.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample() -> ConnectionInput {
+        ConnectionInput {
+            database_type: DatabaseType::Postgres,
+            name: "n".into(),
+            host: "localhost".into(),
+            port: 5432,
+            user: "postgres".into(),
+            password: "secret".into(),
+            database: "postgres".into(),
+            ssl: true,
+            ssl_insecure: true,
+            use_connection_string: Some(false),
+            connection_string: Some(String::new()),
+        }
+    }
+
+    #[test]
+    fn preserves_ssl_insecure() {
+        let out = normalize_connection_input(sample()).unwrap();
+        assert!(out.ssl);
+        assert!(out.ssl_insecure);
+    }
+
+    #[test]
+    fn sqlite_forces_ssl_off() {
+        let mut input = sample();
+        input.database_type = DatabaseType::Sqlite;
+        input.database = "C:/tmp/x.db".into();
+        let out = normalize_connection_input(input).unwrap();
+        assert!(!out.ssl);
+        assert!(!out.ssl_insecure);
     }
 }

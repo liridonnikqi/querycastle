@@ -12,6 +12,8 @@
 		MoreVertical,
 		Plus,
 		Search,
+		SquarePen,
+		Trash2,
 	} from '@lucide/svelte';
 	import { open } from '@tauri-apps/plugin-dialog';
 	import { getVersion } from '@tauri-apps/api/app';
@@ -207,6 +209,15 @@
 		onConnect(connection);
 	}
 
+	function handleDeleteConnection(connection: ConnectionInput) {
+		activeMenuName = null;
+		const ok = confirm(
+			`Delete connection "${connection.name}"?\nThis only removes it from QueryCastle. Your database is not affected.`,
+		);
+		if (!ok) return;
+		onDelete(connection.name);
+	}
+
 	function submit() {
 		recentNames = rememberRecentConnection(form.name);
 		onSaveAndConnect(connectionPayload());
@@ -246,7 +257,14 @@
 			// ignore
 		}
 	}
+
+	function handleWindowKeydown(event: KeyboardEvent) {
+		if (event.key !== 'Escape') return;
+		if (activeMenuName) activeMenuName = null;
+	}
 </script>
+
+<svelte:window onkeydown={handleWindowKeydown} />
 
 <div class="h-full w-full flex overflow-hidden bg-qc-hub text-qc-fg">
 	<aside
@@ -388,8 +406,9 @@
 								{:else}
 									{#each filteredConnections as connection, i (connection.name)}
 										{@const isBusy = connectingName === connection.name}
+										{@const menuOpen = activeMenuName === connection.name}
 										<div
-											class="relative animate-in fade-in slide-in-from-bottom-1 duration-200"
+											class={`relative animate-in fade-in slide-in-from-bottom-1 duration-200 ${menuOpen ? 'z-30' : ''}`}
 											style="animation-delay: {i * 18}ms; animation-fill-mode: both"
 										>
 											<button
@@ -436,35 +455,35 @@
 											>
 												<MoreVertical size={15} />
 											</button>
-											{#if activeMenuName === connection.name}
+											{#if menuOpen}
 												<button
 													type="button"
-													class="fixed inset-0 z-40"
+													class="fixed inset-0 z-40 cursor-default"
 													aria-label="Close menu"
 													onclick={() => (activeMenuName = null)}
 												></button>
 												<div
-													class="absolute right-3 top-12 z-50 min-w-[112px] rounded-md border border-qc-border bg-qc-elevated py-1 shadow-[0_8px_24px_rgba(0,0,0,0.28)] origin-top-right"
+													class="ctx-menu absolute right-3 top-12 z-50 origin-top-right"
 													transition:scale={{ start: 0.96, duration: 140, easing: cubicOut }}
 												>
 													<button
 														type="button"
-														class="w-full px-3 py-1.5 text-left text-xs text-qc-fg hover:bg-qc-hover"
+														class="ctx-item"
 														onclick={() => {
 															activeMenuName = null;
 															onEdit(connection);
 														}}
 													>
+														<SquarePen size={12} class="text-qc-muted" />
 														Edit
 													</button>
+													<div class="ctx-separator"></div>
 													<button
 														type="button"
-														class="w-full px-3 py-1.5 text-left text-xs text-qc-danger hover:bg-qc-hover"
-														onclick={() => {
-															activeMenuName = null;
-															onDelete(connection.name);
-														}}
+														class="ctx-item ctx-item-danger"
+														onclick={() => handleDeleteConnection(connection)}
 													>
+														<Trash2 size={12} />
 														Delete
 													</button>
 												</div>
@@ -647,10 +666,26 @@
 										type="checkbox"
 										class="qc-check"
 										checked={form.ssl}
-										onchange={(event) =>
-											updateField('ssl', event.currentTarget.checked)}
+										onchange={(event) => {
+											const checked = event.currentTarget.checked;
+											updateField('ssl', checked);
+											if (!checked) updateField('sslInsecure', false);
+										}}
 									/>
 									Use SSL
+								</label>
+								<label
+									class="flex items-center gap-2 text-[12px] text-qc-subtle"
+								>
+									<input
+										type="checkbox"
+										class="qc-check"
+										checked={form.sslInsecure ?? false}
+										disabled={!form.ssl}
+										onchange={(event) =>
+											updateField('sslInsecure', event.currentTarget.checked)}
+									/>
+									Allow insecure TLS (self-signed)
 								</label>
 							{/if}
 

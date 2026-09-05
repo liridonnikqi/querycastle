@@ -100,7 +100,7 @@
 				: ''}
 			onConnect={(connection) => void workspace.connectSaved(connection)}
 			onEdit={(connection) => workspace.startEditConnection(connection)}
-			onDelete={(name) => workspace.removeSavedConnection(name)}
+			onDelete={(name) => void workspace.removeSavedConnection(name)}
 			onSaveAndConnect={(payload) => {
 				workspace.applyConnectionToForm(payload);
 				workspace.editingConnectionName = null;

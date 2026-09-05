@@ -3,7 +3,7 @@ use mysql_async::{Row as MySqlRow, TxOpts, Value as MySqlValue};
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::core::connection::MAX_QUERY_ROWS;
+use crate::core::connection::{MAX_QUERY_ROWS, QUERY_TIMEOUT_MS};
 use crate::core::error::{sanitize_mysql_error_to_db_error, DbError};
 use crate::core::sql;
 use crate::core::types::{
@@ -86,39 +86,52 @@ pub async fn server_version(pool: &mysql_async::Pool) -> Result<Option<String>, 
 
 pub async fn run_query(pool: &mysql_async::Pool, sql: &str) -> Result<QueryResultPayload, DbError> {
     let mut conn = pool.get_conn().await.map_err(pool_get_error)?;
+    let _ = conn
+        .query_drop(format!("SET SESSION max_execution_time = {QUERY_TIMEOUT_MS}"))
+        .await;
+
     let started = std::time::Instant::now();
-    let mut result = conn.query_iter(sql).await.map_err(sanitize_mysql_error_to_db_error)?;
+    let fut = async {
+        let mut result = conn.query_iter(sql).await.map_err(sanitize_mysql_error_to_db_error)?;
 
-    let mut columns: Vec<String> = Vec::new();
-    let mut mapped_rows: Vec<HashMap<String, Value>> = Vec::new();
-    let mut row_count = 0usize;
+        let mut columns: Vec<String> = Vec::new();
+        let mut mapped_rows: Vec<HashMap<String, Value>> = Vec::new();
+        let mut row_count = 0usize;
 
-    while let Some(row) = result.next().await.map_err(sanitize_mysql_error_to_db_error)? {
-        if columns.is_empty() {
-            columns = row
-                .columns_ref()
-                .iter()
-                .map(|column| column.name_str().to_string())
-                .collect();
+        while let Some(row) = result.next().await.map_err(sanitize_mysql_error_to_db_error)? {
+            if columns.is_empty() {
+                columns = row
+                    .columns_ref()
+                    .iter()
+                    .map(|column| column.name_str().to_string())
+                    .collect();
+            }
+            row_count += 1;
+            if mapped_rows.len() >= MAX_QUERY_ROWS {
+                break;
+            }
+            let mut mapped = HashMap::new();
+            for (index, column_name) in columns.iter().enumerate() {
+                let value = row.as_ref(index).map(mysql_value_to_json).unwrap_or(Value::Null);
+                mapped.insert(column_name.clone(), value);
+            }
+            mapped_rows.push(mapped);
         }
-        row_count += 1;
-        if mapped_rows.len() >= MAX_QUERY_ROWS {
-            continue;
-        }
-        let mut mapped = HashMap::new();
-        for (index, column_name) in columns.iter().enumerate() {
-            let value = row.as_ref(index).map(mysql_value_to_json).unwrap_or(Value::Null);
-            mapped.insert(column_name.clone(), value);
-        }
-        mapped_rows.push(mapped);
+
+        Ok(QueryResultPayload {
+            columns,
+            rows: mapped_rows,
+            row_count,
+            duration_ms: started.elapsed().as_millis(),
+        })
+    };
+
+    match tokio::time::timeout(std::time::Duration::from_millis(QUERY_TIMEOUT_MS), fut).await {
+        Ok(result) => result,
+        Err(_) => Err(DbError::Timeout {
+            message: format!("Query exceeded {QUERY_TIMEOUT_MS}ms"),
+        }),
     }
-
-    Ok(QueryResultPayload {
-        columns,
-        rows: mapped_rows,
-        row_count,
-        duration_ms: started.elapsed().as_millis(),
-    })
 }
 
 pub async fn get_database_explorer(pool: &mysql_async::Pool) -> Result<DatabaseExplorer, DbError> {
@@ -137,6 +150,8 @@ pub async fn get_database_explorer(pool: &mysql_async::Pool) -> Result<DatabaseE
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
+        Option<String>,
     )> = conn
         .query(
             r#"
@@ -147,7 +162,9 @@ pub async fn get_database_explorer(pool: &mysql_async::Pool) -> Result<DatabaseE
                 c.column_name as column_name,
                 c.column_type as data_type,
                 c.is_nullable as is_nullable,
-                c.column_key as column_key
+                c.column_key as column_key,
+                c.column_default as column_default,
+                c.extra as extra
             from information_schema.tables t
             left join information_schema.columns c
                 on c.table_schema = t.table_schema
@@ -163,7 +180,7 @@ pub async fn get_database_explorer(pool: &mysql_async::Pool) -> Result<DatabaseE
     let mut schema_map: HashMap<String, DatabaseSchema> = HashMap::new();
     let mut table_map: HashMap<String, DatabaseTable> = HashMap::new();
 
-    for (schema_name, table_name, table_type, column_name, data_type, is_nullable, column_key) in table_rows {
+    for (schema_name, table_name, table_type, column_name, data_type, is_nullable, column_key, column_default, extra) in table_rows {
         schema_map
             .entry(schema_name.clone())
             .or_insert_with(|| DatabaseSchema::new(schema_name.clone()));
@@ -183,6 +200,16 @@ pub async fn get_database_explorer(pool: &mysql_async::Pool) -> Result<DatabaseE
 
         if let Some(column_name) = column_name {
             if let Some(table) = table_map.get_mut(&table_key) {
+                let has_default = column_default
+                    .map(|value| !value.is_empty())
+                    .unwrap_or(false)
+                    || extra
+                        .map(|value| {
+                            let lower = value.to_ascii_lowercase();
+                            lower.contains("auto_increment")
+                                || lower.contains("default_generated")
+                        })
+                        .unwrap_or(false);
                 table.columns.push(DatabaseColumn {
                     name: column_name,
                     data_type: data_type.unwrap_or_else(|| "unknown".to_string()),
@@ -192,6 +219,7 @@ pub async fn get_database_explorer(pool: &mysql_async::Pool) -> Result<DatabaseE
                     is_primary: column_key
                         .map(|value| value.eq_ignore_ascii_case("PRI"))
                         .unwrap_or(false),
+                    has_default,
                 });
             }
         }

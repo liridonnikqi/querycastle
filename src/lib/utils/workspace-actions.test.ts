@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { shopExplorer } from '$lib/utils/relation-fixtures';
-import { buildTableActionPlan } from '$lib/utils/workspace-actions';
+import { buildRenameTableSql, buildTableActionPlan } from '$lib/utils/workspace-actions';
 
 const explorer = shopExplorer();
 
@@ -50,5 +50,54 @@ describe('buildTableActionPlan', () => {
 		expect(plan.kind).toBe('run_query');
 		if (plan.kind !== 'run_query') return;
 		expect(plan.query).toBe('drop view "public"."empty_view" cascade;');
+	});
+
+	it('quotes the duplicate-table suffix inside the identifier', () => {
+		const plan = buildTableActionPlan({
+			action: 'duplicate',
+			databaseType: 'postgres',
+			explorer,
+			schema: 'my schema',
+			table: 'my table',
+		});
+		expect(plan.kind).toBe('run_query');
+		if (plan.kind !== 'run_query') return;
+		expect(plan.query).toBe(
+			'create table "my schema"."my table_copy" as select * from "my schema"."my table";',
+		);
+	});
+
+	it('quotes duplicate tables with backticks for mysql', () => {
+		const plan = buildTableActionPlan({
+			action: 'duplicate',
+			databaseType: 'mysql',
+			explorer,
+			schema: 'shop',
+			table: 'orders',
+		});
+		expect(plan.kind).toBe('run_query');
+		if (plan.kind !== 'run_query') return;
+		expect(plan.query).toBe(
+			'create table `shop`.`orders_copy` as select * from `shop`.`orders`;',
+		);
+	});
+
+	it('quotes rename identifiers per dialect', () => {
+		expect(
+			buildRenameTableSql({
+				databaseType: 'postgres',
+				schema: 'public',
+				table: 'users',
+				nextName: 'members',
+			}),
+		).toBe('alter table "public"."users" rename to "members";');
+		expect(
+			buildRenameTableSql({
+				databaseType: 'mysql',
+				schema: 'shop',
+				table: 'orders',
+				nextName: 'orders_v2',
+			}),
+		).toBe('alter table `shop`.`orders` rename to `orders_v2`;');
 	});
 });

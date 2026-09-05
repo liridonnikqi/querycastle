@@ -23,6 +23,8 @@ pub struct ConnectionInput {
     pub password: String,
     pub database: String,
     pub ssl: bool,
+    #[serde(default)]
+    pub ssl_insecure: bool,
     pub use_connection_string: Option<bool>,
     pub connection_string: Option<String>,
 }
@@ -84,6 +86,8 @@ pub struct DatabaseColumn {
     pub data_type: String,
     pub not_null: bool,
     pub is_primary: bool,
+    #[serde(default)]
+    pub has_default: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -183,6 +187,21 @@ pub struct ObjectDefinitionParams {
 pub struct ObjectDefinition {
     pub title: String,
     pub sql: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ssl_insecure_defaults_false() {
+        let json = r#"{
+            "name":"n","host":"h","port":1,"user":"u","password":"p","database":"d","ssl":true
+        }"#;
+        let input: ConnectionInput = serde_json::from_str(json).unwrap();
+        assert!(!input.ssl_insecure);
+        assert!(input.ssl);
+    }
 }
 
 impl DatabaseSchema {

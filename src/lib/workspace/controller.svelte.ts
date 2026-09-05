@@ -10,7 +10,13 @@ import type {
 import { rpc } from '$lib/rpc-client';
 import type { QueryHistoryItem, SavedQueryItem } from '$lib/types';
 import { dialectCapabilities, engineDisplayName } from '$lib/utils/dialect';
-import { normalizeConnectionInput } from '$lib/utils/connection';
+import {
+	injectConnectionPassword,
+	migrateSavedConnectionSecrets,
+	normalizeConnectionInput,
+	passwordFromConnection,
+	stripConnectionSecrets,
+} from '$lib/utils/connection';
 import { tryBuildEditableQuery } from '$lib/utils/editable-query';
 import {
 	removeSession,
@@ -54,6 +60,7 @@ import {
 	SAVED_CONNECTIONS_KEY,
 	clampResultsHeight,
 	createDefaultTab,
+	createEmptyResult,
 	deriveFavoriteTitle,
 	nowLabel,
 	type RelationHop,
@@ -62,6 +69,7 @@ import {
 	type TabContextMenu,
 	type WorkspaceTab,
 } from '$lib/utils/workspace';
+import { copyTextToClipboard } from '$lib/utils/clipboard';
 import {
 	buildCreateDatabaseSql,
 	buildRenameTableSql,
@@ -128,6 +136,7 @@ export class Workspace {
 	connectionForm = $state<ConnectionInput>(normalizeConnectionInput({}));
 	selectedSavedQueryId = $state('');
 	selectedHistoryIndex = $state(0);
+	private queryEpoch = 0;
 
 	readonly activeTab = $derived(
 		this.tabs.find((tab) => tab.id === this.activeTabId) ?? null,
@@ -350,21 +359,60 @@ export class Workspace {
 		this.tabContextMenu = { x: event.clientX, y: event.clientY, tabId };
 	}
 
-	upsertSavedConnection(connection: ConnectionInput) {
+	private bumpQueryEpoch() {
+		this.queryEpoch += 1;
+		this.isRunningQuery = false;
+	}
+
+	private async withResolvedPassword(input: ConnectionInput): Promise<ConnectionInput> {
+		if (input.password) return injectConnectionPassword(input, input.password);
+		const names = [this.editingConnectionName, input.name]
+			.filter((name): name is string => Boolean(name && name.trim()))
+			.filter((name, index, all) => all.indexOf(name) === index);
+		for (const name of names) {
+			try {
+				const stored = await rpc.request.secretGet(name);
+				if (stored) return injectConnectionPassword(input, stored);
+			} catch {
+				// Keychain misses are non-fatal; the user can still type a password.
+			}
+		}
+		return input;
+	}
+
+	async upsertSavedConnection(connection: ConnectionInput) {
+		const password = passwordFromConnection(connection);
+		if (password && connection.name.trim()) {
+			try {
+				await rpc.request.secretSet(connection.name, password);
+			} catch (error) {
+				toast.error(
+					`Could not save password to the OS keychain: ${errorMessage(error)}`,
+				);
+			}
+		}
+		const stripped = stripConnectionSecrets(connection);
 		const index = this.savedConnections.findIndex(
-			(item) => item.name === connection.name,
+			(item) => item.name === stripped.name,
 		);
-		if (index === -1) this.savedConnections = [connection, ...this.savedConnections];
+		if (index === -1) this.savedConnections = [stripped, ...this.savedConnections];
 		else {
-			this.savedConnections[index] = connection;
+			this.savedConnections[index] = stripped;
 			this.savedConnections = [...this.savedConnections];
 		}
 		persistJsonValue(SAVED_CONNECTIONS_KEY, this.savedConnections);
 	}
 
-	removeSavedConnection(name: string) {
+	async removeSavedConnection(name: string) {
+		const existed = this.savedConnections.some((item) => item.name === name);
 		this.savedConnections = this.savedConnections.filter((item) => item.name !== name);
 		persistJsonValue(SAVED_CONNECTIONS_KEY, this.savedConnections);
+		try {
+			await rpc.request.secretDelete(name);
+		} catch {
+			// Missing keychain entries should not block deleting the saved connection.
+		}
+		if (existed) toast.success(`Deleted connection "${name}"`);
 	}
 
 	saveActiveQuery() {
@@ -464,6 +512,7 @@ export class Workspace {
 		this.connectionStringInput = '';
 		try {
 			this.connectionStatus = await rpc.request.connect(payload);
+			this.bumpQueryEpoch();
 			await this.loadDatabases();
 			await this.loadExplorer({ clearBeforeLoad: true });
 			this.showConnectionModal = false;
@@ -648,8 +697,9 @@ export class Workspace {
 		this.isTestingConnection = true;
 		this.testConnectionMessage = '';
 		try {
-			const engine = this.buildConnectionPayload().databaseType;
-			const response = await rpc.request.testConnection(this.buildConnectionPayload());
+			const payload = await this.withResolvedPassword(this.buildConnectionPayload());
+			const engine = payload.databaseType;
+			const response = await rpc.request.testConnection(payload);
 			this.testConnectionOk = response.ok;
 			this.testConnectionMessage = response.ok
 				? `Connected successfully${response.serverVersion ? ` (${engineDisplayName(engine)} ${response.serverVersion})` : ''}`
@@ -678,6 +728,7 @@ export class Workspace {
 			this.globalError = errorMessage(error);
 			return;
 		}
+		this.bumpQueryEpoch();
 		const next = this.openSessions.find((item) => item.id === id);
 		if (next) this.restoreSession(next);
 	}
@@ -698,6 +749,7 @@ export class Workspace {
 		if (id !== this.activeSessionId && id !== sessionIdOf(this.connectionStatus)) {
 			return;
 		}
+		this.bumpQueryEpoch();
 		if (nextStatus.connected) {
 			const nextId = sessionIdOf(nextStatus);
 			const stored = this.openSessions.find((item) => item.id === nextId);
@@ -718,7 +770,7 @@ export class Workspace {
 		this.isConnecting = true;
 		this.testConnectionMessage = '';
 		try {
-			const payload = this.buildConnectionPayload();
+			const payload = await this.withResolvedPassword(this.buildConnectionPayload());
 			if (
 				saveConnection &&
 				!this.editingConnectionName &&
@@ -731,16 +783,17 @@ export class Workspace {
 			}
 			this.stashActiveSession();
 			this.connectionStatus = await rpc.request.connect(payload);
+			this.bumpQueryEpoch();
 			const id = sessionIdOf(this.connectionStatus) || crypto.randomUUID();
 			this.connectionStatus = { ...this.connectionStatus, sessionId: id };
 			if (saveConnection) {
+				await this.upsertSavedConnection(payload);
 				if (
 					this.editingConnectionName &&
 					this.editingConnectionName !== payload.name
 				) {
-					this.removeSavedConnection(this.editingConnectionName);
+					await this.removeSavedConnection(this.editingConnectionName);
 				}
-				this.upsertSavedConnection(payload);
 			}
 			this.showConnectionModal = false;
 			this.editingConnectionName = null;
@@ -773,15 +826,15 @@ export class Workspace {
 	}
 
 	async handleDisconnect() {
-		const id = sessionIdOf(this.connectionStatus) || this.activeSessionId;
-		if (id) {
-			await this.closeOpenSession(id);
-			return;
+		this.bumpQueryEpoch();
+		try {
+			await rpc.request.disconnect();
+		} catch (error) {
+			this.globalError = errorMessage(error);
 		}
-		await rpc.request.disconnect();
-		this.connectionStatus = disconnectedStatus();
 		this.openSessions = [];
 		this.activeSessionId = '';
+		this.connectionStatus = disconnectedStatus();
 		this.resetWorkspaceToEmpty();
 		this.editingConnectionName = null;
 	}
@@ -796,6 +849,8 @@ export class Workspace {
 		},
 	) {
 		this.isRunningQuery = true;
+		const epoch = this.queryEpoch;
+		const sessionId = this.activeSessionId;
 		const targetTabId = options?.targetTabId ?? this.activeTabId;
 		try {
 			const sql = quoteCatalogIdentifiersInSql(
@@ -804,6 +859,7 @@ export class Workspace {
 				collectExplorerIdentifiers(this.explorer),
 			);
 			const queryResult = await rpc.request.runQuery({ sql });
+			if (epoch !== this.queryEpoch || sessionId !== this.activeSessionId) return;
 			this.queryDurationMs = queryResult.durationMs;
 			this.globalError = '';
 			this.tabs = this.tabs.map((tab) =>
@@ -841,11 +897,21 @@ export class Workspace {
 				else toast.success('Table truncated');
 			}
 		} catch (error) {
+			if (epoch !== this.queryEpoch || sessionId !== this.activeSessionId) return;
 			const message = errorMessage(error);
 			this.globalError = message;
-			this.tabs = this.tabs.map((tab) =>
-				tab.id === targetTabId ? { ...tab, sqlError: message } : tab,
-			);
+			this.tabs = this.tabs.map((tab) => {
+				if (tab.id !== targetTabId) return tab;
+				// A failed ad-hoc query must not keep showing the previous
+				// successful result underneath the new error. Data tabs keep
+				// their last good browse so the grid stays usable.
+				const clearStaleResult = tab.kind === 'query';
+				return {
+					...tab,
+					sqlError: message,
+					...(clearStaleResult ? { result: createEmptyResult() } : {}),
+				};
+			});
 			if (options?.pushToHistory !== false) {
 				this.pushHistory({
 					time: nowLabel(),
@@ -857,7 +923,9 @@ export class Workspace {
 				});
 			}
 		} finally {
-			this.isRunningQuery = false;
+			if (epoch === this.queryEpoch && sessionId === this.activeSessionId) {
+				this.isRunningQuery = false;
+			}
 		}
 	}
 
@@ -910,7 +978,9 @@ export class Workspace {
 			table,
 		});
 		if (plan.kind === 'copy_name') {
-			await navigator.clipboard.writeText(plan.text);
+			const ok = await copyTextToClipboard(plan.text);
+			if (ok) toast.success('Copied to clipboard');
+			else toast.error('Copy failed. The document is not focused.');
 			return;
 		}
 		if (plan.kind === 'error') {
@@ -961,7 +1031,9 @@ export class Workspace {
 			schema,
 		});
 		if (plan.kind === 'copy') {
-			await navigator.clipboard.writeText(plan.text);
+			const ok = await copyTextToClipboard(plan.text);
+			if (ok) toast.success('Copied to clipboard');
+			else toast.error('Copy failed. The document is not focused.');
 			return;
 		}
 		const tabId = this.addDataTab(plan.title, plan.query, null);
@@ -982,6 +1054,7 @@ export class Workspace {
 		}
 		this.showRenameModal = false;
 		const sql = buildRenameTableSql({
+			databaseType: this.connectionStatus.databaseType,
 			schema: this.renameTarget.schema,
 			table: this.renameTarget.table,
 			nextName,
@@ -1178,6 +1251,7 @@ export class Workspace {
 			key: SAVED_CONNECTIONS_KEY,
 			normalize: normalizeConnectionInput,
 		});
+		void this.migratePlaintextSecrets();
 		const restoredTabs = loadQueryTabsFromStorage(QUERY_TABS_KEY);
 		if (restoredTabs.length > 0) {
 			this.tabs = restoredTabs;
@@ -1225,5 +1299,15 @@ export class Workspace {
 			this.persistTabsNow();
 			this.stopResultsResize();
 		};
+	}
+
+	private async migratePlaintextSecrets() {
+		const { connections, changed } = await migrateSavedConnectionSecrets({
+			connections: this.savedConnections,
+			secretSet: (name, password) => rpc.request.secretSet(name, password),
+		});
+		if (!changed) return;
+		this.savedConnections = connections;
+		persistJsonValue(SAVED_CONNECTIONS_KEY, connections);
 	}
 }

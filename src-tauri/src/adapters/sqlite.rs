@@ -3,7 +3,7 @@ use rusqlite::{params_from_iter, Connection};
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::core::connection::MAX_QUERY_ROWS;
+use crate::core::connection::{MAX_QUERY_ROWS, QUERY_TIMEOUT_MS};
 use crate::core::error::{sanitize_sqlite_error_to_db_error, DbError};
 use crate::core::sql;
 use crate::core::types::{
@@ -91,7 +91,7 @@ pub async fn server_version(pool: &SqlitePool) -> Result<Option<String>, DbError
 
 pub async fn run_query(pool: &SqlitePool, sql: &str) -> Result<QueryResultPayload, DbError> {
     let sql = sql.to_string();
-    with_pool(pool, move |pool| {
+    let fut = with_pool(pool, move |pool| {
         let conn = pool.get().map_err(pool_get_error)?;
         let started = std::time::Instant::now();
 
@@ -116,18 +116,19 @@ pub async fn run_query(pool: &SqlitePool, sql: &str) -> Result<QueryResultPayloa
         let mut result_rows = stmt.query([]).map_err(sanitize_sqlite_error_to_db_error)?;
 
         while let Some(row) = result_rows.next().map_err(sanitize_sqlite_error_to_db_error)? {
-            row_count += 1;
-            if rows.len() < MAX_QUERY_ROWS {
-                let mut mapped = HashMap::new();
-                for (index, column_name) in columns.iter().enumerate() {
-                    let value = row
-                        .get_ref(index)
-                        .map(sqlite_value_to_json)
-                        .unwrap_or(Value::Null);
-                    mapped.insert(column_name.clone(), value);
-                }
-                rows.push(mapped);
+            if rows.len() >= MAX_QUERY_ROWS {
+                break;
             }
+            row_count += 1;
+            let mut mapped = HashMap::new();
+            for (index, column_name) in columns.iter().enumerate() {
+                let value = row
+                    .get_ref(index)
+                    .map(sqlite_value_to_json)
+                    .unwrap_or(Value::Null);
+                mapped.insert(column_name.clone(), value);
+            }
+            rows.push(mapped);
         }
 
         Ok(QueryResultPayload {
@@ -136,8 +137,14 @@ pub async fn run_query(pool: &SqlitePool, sql: &str) -> Result<QueryResultPayloa
             row_count,
             duration_ms: started.elapsed().as_millis(),
         })
-    })
-    .await
+    });
+
+    match tokio::time::timeout(std::time::Duration::from_millis(QUERY_TIMEOUT_MS), fut).await {
+        Ok(result) => result,
+        Err(_) => Err(DbError::Timeout {
+            message: format!("Query exceeded {QUERY_TIMEOUT_MS}ms"),
+        }),
+    }
 }
 
 pub async fn get_database_explorer(pool: &SqlitePool) -> Result<DatabaseExplorer, DbError> {
@@ -186,6 +193,7 @@ fn get_sqlite_database_explorer(conn: &Connection) -> Result<DatabaseExplorer, D
                     data_type: row.get::<_, String>(2).unwrap_or_else(|_| "TEXT".to_string()),
                     not_null: row.get::<_, i64>(3).unwrap_or(0) != 0,
                     is_primary: row.get::<_, i64>(5).unwrap_or(0) != 0,
+                    has_default: row.get::<_, Option<String>>(4)?.is_some(),
                 })
             })
             .map_err(sanitize_sqlite_error_to_db_error)?;

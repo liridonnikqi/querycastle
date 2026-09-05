@@ -151,7 +151,91 @@ export function normalizeConnectionInput(
 		password: input.password ?? '',
 		database: input.database ?? defaultDatabase,
 		ssl: databaseType === 'sqlite' ? false : (input.ssl ?? false),
+		sslInsecure: databaseType === 'sqlite' ? false : (input.sslInsecure ?? false),
 		useConnectionString: input.useConnectionString ?? false,
 		connectionString: input.connectionString ?? '',
 	};
+}
+
+function setConnectionStringPassword(raw: string, password: string): string {
+	try {
+		const url = new URL(raw);
+		url.password = password;
+		return url.toString();
+	} catch {
+		return raw;
+	}
+}
+
+function stripConnectionStringPassword(raw: string): string {
+	try {
+		const url = new URL(raw);
+		if (!url.password) return raw;
+		url.password = '';
+		return url.toString();
+	} catch {
+		return raw;
+	}
+}
+
+export function passwordFromConnection(connection: ConnectionInput): string {
+	if (connection.password) return connection.password;
+	const raw = connection.connectionString?.trim() ?? '';
+	if (!raw) return '';
+	try {
+		return new URL(raw).password || '';
+	} catch {
+		return '';
+	}
+}
+
+export function stripConnectionSecrets(connection: ConnectionInput): ConnectionInput {
+	return {
+		...connection,
+		password: '',
+		connectionString: connection.connectionString
+			? stripConnectionStringPassword(connection.connectionString)
+			: connection.connectionString,
+	};
+}
+
+export function injectConnectionPassword(
+	connection: ConnectionInput,
+	password: string,
+): ConnectionInput {
+	const next: ConnectionInput = { ...connection, password };
+	if (next.useConnectionString && next.connectionString?.trim()) {
+		next.connectionString = setConnectionStringPassword(next.connectionString, password);
+	}
+	return next;
+}
+
+export async function migrateSavedConnectionSecrets(params: {
+	connections: ConnectionInput[];
+	secretSet: (name: string, password: string) => Promise<void>;
+}): Promise<{ connections: ConnectionInput[]; changed: boolean }> {
+	let changed = false;
+	const next: ConnectionInput[] = [];
+	for (const connection of params.connections) {
+		const password = passwordFromConnection(connection);
+		const stripped = stripConnectionSecrets(connection);
+		const needsStrip =
+			stripped.password !== connection.password ||
+			stripped.connectionString !== connection.connectionString;
+		if (password && connection.name.trim()) {
+			try {
+				await params.secretSet(connection.name, password);
+				next.push(stripped);
+				changed = true;
+			} catch {
+				next.push(connection);
+			}
+		} else if (needsStrip) {
+			next.push(stripped);
+			changed = true;
+		} else {
+			next.push(stripped);
+		}
+	}
+	return { connections: next, changed };
 }

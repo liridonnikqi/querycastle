@@ -24,7 +24,7 @@ fn create_postgres_pool(connection: &ConnectionInput) -> Result<deadpool_postgre
             let raw = raw.trim();
             if !raw.is_empty() && (raw.starts_with("postgres://") || raw.starts_with("postgresql://")) {
                 if let Ok(cfg) = raw.parse::<tokio_postgres::Config>() {
-                    return build_postgres_pool(cfg, connection.ssl);
+                    return build_postgres_pool(cfg, connection.ssl, connection.ssl_insecure);
                 }
             }
         }
@@ -39,13 +39,20 @@ fn create_postgres_pool(connection: &ConnectionInput) -> Result<deadpool_postgre
     cfg.connect_timeout(Duration::from_secs(5));
     cfg.application_name("querycastle");
 
-    build_postgres_pool(cfg, connection.ssl)
+    build_postgres_pool(cfg, connection.ssl, connection.ssl_insecure)
 }
 
-fn build_postgres_pool(cfg: tokio_postgres::Config, ssl: bool) -> Result<deadpool_postgres::Pool, DbError> {
+fn build_postgres_pool(
+    cfg: tokio_postgres::Config,
+    ssl: bool,
+    ssl_insecure: bool,
+) -> Result<deadpool_postgres::Pool, DbError> {
     if ssl {
         let mut builder = native_tls::TlsConnector::builder();
-        builder.danger_accept_invalid_certs(true);
+        if ssl_insecure {
+            builder.danger_accept_invalid_certs(true);
+            builder.danger_accept_invalid_hostnames(true);
+        }
         let connector = builder.build().map_err(|e| DbError::connection(format!("Failed to build TLS connector: {e}")))?;
         let tls = postgres_native_tls::MakeTlsConnector::new(connector);
         let mgr_config = deadpool_postgres::ManagerConfig { recycling_method: deadpool_postgres::RecyclingMethod::Fast };
@@ -65,14 +72,13 @@ fn build_postgres_pool(cfg: tokio_postgres::Config, ssl: bool) -> Result<deadpoo
 }
 
 fn create_mysql_pool(connection: &ConnectionInput) -> Result<mysql_async::Pool, DbError> {
-    let opts = if connection.use_connection_string.unwrap_or(false)
+    let base = if connection.use_connection_string.unwrap_or(false)
         && connection.connection_string.as_deref().unwrap_or_default().trim().starts_with("mysql://")
     {
         mysql_async::Opts::from_url(connection.connection_string.as_deref().unwrap_or_default())
             .map_err(|e| DbError::validation(format!("Invalid MySQL connection string: {e}")))?
     } else {
-        let mut builder = mysql_async::OptsBuilder::default();
-        builder = builder
+        let builder = mysql_async::OptsBuilder::default()
             .ip_or_hostname(connection.host.clone())
             .tcp_port(connection.port)
             .user(Some(connection.user.clone()))
@@ -80,6 +86,19 @@ fn create_mysql_pool(connection: &ConnectionInput) -> Result<mysql_async::Pool, 
             .db_name(Some(connection.database.clone()));
         mysql_async::Opts::from(builder)
     };
+
+    let opts = if connection.ssl {
+        let mut ssl_opts = mysql_async::SslOpts::default();
+        if connection.ssl_insecure {
+            ssl_opts = ssl_opts
+                .with_danger_accept_invalid_certs(true)
+                .with_danger_skip_domain_validation(true);
+        }
+        mysql_async::Opts::from(mysql_async::OptsBuilder::from_opts(base).ssl_opts(Some(ssl_opts)))
+    } else {
+        base
+    };
+
     Ok(mysql_async::Pool::new(opts))
 }
 

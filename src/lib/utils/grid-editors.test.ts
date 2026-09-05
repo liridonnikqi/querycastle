@@ -84,8 +84,8 @@ describe('grid editors', () => {
 	});
 
 	it('formats boolean cells for people, not SQL', () => {
-		expect(displayCellText(true, { name: 'active', kind: 'boolean', notNull: true, isPrimary: false, isAuto: false, fk: null, dataType: 'boolean' })).toBe('True');
-		expect(displayCellText(null, { name: 'active', kind: 'boolean', notNull: false, isPrimary: false, isAuto: false, fk: null, dataType: 'boolean' })).toBe('');
+		expect(displayCellText(true, { name: 'active', kind: 'boolean', notNull: true, isPrimary: false, isAuto: false, hasDefault: false, fk: null, dataType: 'boolean' })).toBe('True');
+		expect(displayCellText(null, { name: 'active', kind: 'boolean', notNull: false, isPrimary: false, isAuto: false, hasDefault: false, fk: null, dataType: 'boolean' })).toBe('');
 	});
 
 	it('shows raw foreign key ids in the grid', () => {
@@ -96,6 +96,7 @@ describe('grid editors', () => {
 				notNull: false,
 				isPrimary: false,
 				isAuto: false,
+				hasDefault: false,
 				fk: {
 					column: 'uploaderId',
 					referencedSchema: 'public',
@@ -115,6 +116,7 @@ describe('grid editors', () => {
 				notNull: true,
 				isPrimary: false,
 				isAuto: false,
+				hasDefault: false,
 				fk: null,
 				dataType: 'boolean',
 			}, true),
@@ -126,9 +128,52 @@ describe('grid editors', () => {
 				notNull: true,
 				isPrimary: false,
 				isAuto: false,
+				hasDefault: false,
 				fk: null,
 				dataType: 'integer',
 			}, 0),
 		).toBe(12);
+	});
+
+	it('does not require defaulted columns on insert', () => {
+		const columns = gridColumnsForTable(
+			{
+				database: 'shop',
+				schemas: [
+					{
+						name: 'public',
+						tables: [
+							{
+								schema: 'public',
+								name: 'events',
+								kind: 'table',
+								columns: [
+									{ name: 'id', dataType: 'bigint', notNull: true, isPrimary: true },
+									{ name: 'email', dataType: 'text', notNull: true, isPrimary: false },
+									{
+										name: 'created_at',
+										dataType: 'timestamptz',
+										notNull: true,
+										isPrimary: false,
+										hasDefault: true,
+									},
+								],
+								foreignKeys: [],
+							},
+						],
+					},
+				],
+			},
+			{ schema: 'public', table: 'events' },
+			['id', 'email', 'created_at'],
+			() => null,
+		);
+		expect(columns.find((item) => item.name === 'created_at')?.hasDefault).toBe(true);
+		expect(missingRequiredColumns({ id: '', email: 'a@b.c', created_at: '' }, columns)).toEqual(
+			[],
+		);
+		expect(
+			valuesForInsert({ id: '', email: 'a@b.c', created_at: '' }, columns, () => null),
+		).toEqual({ email: 'a@b.c' });
 	});
 });

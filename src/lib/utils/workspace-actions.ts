@@ -72,9 +72,13 @@ export function buildTableActionPlan(params: {
 		if (viewingView) {
 			return { kind: 'error', message: `Cannot duplicate view ${schema}.${table}.` };
 		}
+		// Quote the suffixed name as a whole: appending _copy outside the
+		// quotes produced invalid SQL for names needing quoting
+		// (e.g. "my table"_copy).
+		const copyTable = quoteSqlIdentifier(databaseType, `${table}_copy`);
 		return {
 			kind: 'run_query',
-			query: `create table ${safeSchema}.${safeTable}_copy as select * from ${safeSchema}.${safeTable};`,
+			query: `create table ${safeSchema}.${copyTable} as select * from ${safeSchema}.${safeTable};`,
 			title: `${table} [duplicate]`,
 			context: null,
 		};
@@ -155,11 +159,13 @@ export function buildSchemaActionPlan(params: {
 }
 
 export function buildRenameTableSql(params: {
+	databaseType: DatabaseType;
 	schema: string;
 	table: string;
 	nextName: string;
 }): string {
-	return `alter table ${quoteIdent(params.schema)}.${quoteIdent(params.table)} rename to ${quoteIdent(params.nextName)};`;
+	const quote = (name: string) => quoteSqlIdentifier(params.databaseType, name);
+	return `alter table ${quote(params.schema)}.${quote(params.table)} rename to ${quote(params.nextName)};`;
 }
 
 export function buildCreateDatabaseSql(name: string, encoding: string): string {

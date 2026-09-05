@@ -9,6 +9,7 @@ export type ConnectionInput = {
   password: string;
   database: string;
   ssl: boolean;
+  sslInsecure?: boolean;
   useConnectionString?: boolean;
   connectionString?: string;
 };
@@ -51,6 +52,7 @@ export type DatabaseColumn = {
   dataType: string;
   notNull: boolean;
   isPrimary: boolean;
+  hasDefault?: boolean;
 };
 
 export type DatabaseForeignKey = {
