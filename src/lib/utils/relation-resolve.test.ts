@@ -24,7 +24,7 @@ describe('resolveOutgoingRelations', () => {
 
 	it('returns empty for missing explorer, hidden row id, and views without FKs', () => {
 		expect(resolveOutgoingRelations(null, ordersCtx, 'customer_id')).toEqual([]);
-		expect(resolveOutgoingRelations(explorer, ordersCtx, '_querycastle_ctid')).toEqual([]);
+		expect(resolveOutgoingRelations(explorer, ordersCtx, '_querycastle_row_id')).toEqual([]);
 		expect(
 			resolveOutgoingRelations(
 				explorer,

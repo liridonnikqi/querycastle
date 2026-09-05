@@ -8,10 +8,6 @@ export { HIDDEN_ROW_ID_COLUMN };
 const TITLE_VALUE_MAX = 24;
 const FOLLOW_ROW_LIMIT = 100;
 
-export function quoteIdent(databaseType: DatabaseType, name: string): string {
-	return quoteSqlIdentifier(databaseType, name);
-}
-
 export function quoteLiteral(databaseType: DatabaseType, value: unknown): string {
 	if (value === null || value === undefined) return 'NULL';
 	if (typeof value === 'boolean') {
@@ -151,7 +147,7 @@ export function buildFilteredTableSql(params: {
 	if (!isFollowableValue(params.value)) return null;
 
 	const { databaseType, explorer, schema, table, whereColumn, value } = params;
-	const quotedWhere = quoteIdent(databaseType, whereColumn);
+	const quotedWhere = quoteSqlIdentifier(databaseType, whereColumn);
 	const literal = quoteLiteral(databaseType, value);
 	const orderColumn = firstOrderColumn(explorer, schema, table) ?? whereColumn;
 	const alias = mysqlRowAlias(databaseType, explorer, schema, table);

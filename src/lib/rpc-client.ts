@@ -30,41 +30,42 @@ async function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promis
 }
 
 export const rpc = {
-  request: {
-    testConnection: (params: ConnectionInput) =>
-      invokeCmd<{ ok: boolean; message: string; serverVersion: string | null }>("test_connection", {
-        params,
-      }),
-    connect: (params: ConnectionInput) => invokeCmd<ConnectionStatus>("connect", { params }),
-    disconnect: () => invokeCmd<{ ok: boolean }>("disconnect"),
-    switchSession: (sessionId: string) =>
-      invokeCmd<ConnectionStatus>("switch_session", { params: { sessionId } }),
-    disconnectSession: (sessionId: string) =>
-      invokeCmd<ConnectionStatus>("disconnect_session", { params: { sessionId } }),
-    secretSet: (connectionName: string, password: string) =>
-      invokeCmd<void>("secret_set", { params: { connectionName, password } }),
-    secretGet: (connectionName: string) =>
-      invokeCmd<string | null>("secret_get", { params: { connectionName } }),
-    secretDelete: (connectionName: string) =>
-      invokeCmd<void>("secret_delete", { params: { connectionName } }),
-    connectionStatus: () => invokeCmd<ConnectionStatus>("connection_status"),
-    runQuery: (params: { sql: string; sessionId?: string }) =>
-      invokeCmd<QueryResultPayload>("run_query", { params }),
-    getDatabaseExplorer: () => invokeCmd<DatabaseExplorer>("get_database_explorer"),
-    listDatabases: () => invokeCmd<string[]>("list_databases"),
-    selectDatabase: (params: { database: string }) =>
-      invokeCmd<ConnectionStatus>("select_database", { params }),
-    applyTableChanges: (params: {
-      schema: string;
-      table: string;
-      changes: TableChangesPayload;
-    }) =>
-      invokeCmd<ApplyTableChangesResult>("apply_table_changes", {
-        params,
-      }),
-    getLaunchSqlFile: () => invokeCmd<LaunchSqlFilePayload | null>("get_launch_sql_file"),
-    getLaunchSqliteFile: () => invokeCmd<LaunchSqliteFilePayload | null>("get_launch_sqlite_file"),
-    getObjectDefinition: (params: ObjectDefinitionParams) =>
-      invokeCmd<ObjectDefinition>("get_object_definition", { params }),
-  },
+  testConnection: (params: ConnectionInput) =>
+    invokeCmd<{ ok: boolean; message: string; serverVersion: string | null }>("test_connection", {
+      params,
+    }),
+  connect: (params: ConnectionInput) => invokeCmd<ConnectionStatus>("connect", { params }),
+  disconnect: () => invokeCmd<void>("disconnect"),
+  switchSession: (sessionId: string) =>
+    invokeCmd<ConnectionStatus>("switch_session", { params: { sessionId } }),
+  disconnectSession: (sessionId: string) =>
+    invokeCmd<ConnectionStatus>("disconnect_session", { params: { sessionId } }),
+  secretSet: (connectionName: string, password: string) =>
+    invokeCmd<void>("secret_set", { params: { connectionName, password } }),
+  secretGet: (connectionName: string) =>
+    invokeCmd<string | null>("secret_get", { params: { connectionName } }),
+  secretDelete: (connectionName: string) =>
+    invokeCmd<void>("secret_delete", { params: { connectionName } }),
+  connectionStatus: () => invokeCmd<ConnectionStatus>("connection_status"),
+  runQuery: (params: { sql: string; sessionId: string }) =>
+    invokeCmd<QueryResultPayload>("run_query", { params }),
+  getDatabaseExplorer: (sessionId: string) =>
+    invokeCmd<DatabaseExplorer>("get_database_explorer", { params: { sessionId } }),
+  listDatabases: (sessionId: string) =>
+    invokeCmd<string[]>("list_databases", { params: { sessionId } }),
+  selectDatabase: (params: { sessionId: string; database: string }) =>
+    invokeCmd<ConnectionStatus>("select_database", { params }),
+  applyTableChanges: (params: {
+    sessionId: string;
+    schema: string;
+    table: string;
+    changes: TableChangesPayload;
+  }) =>
+    invokeCmd<ApplyTableChangesResult>("apply_table_changes", {
+      params,
+    }),
+  getLaunchSqlFile: () => invokeCmd<LaunchSqlFilePayload | null>("get_launch_sql_file"),
+  getLaunchSqliteFile: () => invokeCmd<LaunchSqliteFilePayload | null>("get_launch_sqlite_file"),
+  getObjectDefinition: (params: ObjectDefinitionParams & { sessionId: string }) =>
+    invokeCmd<ObjectDefinition>("get_object_definition", { params }),
 };

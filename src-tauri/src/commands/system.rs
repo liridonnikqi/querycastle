@@ -3,6 +3,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 
+use crate::core::error::{DbError, StructuredDbError};
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LaunchSqlFilePayload {
@@ -36,7 +38,7 @@ static LAUNCH_SQL_CONSUMED: AtomicBool = AtomicBool::new(false);
 static LAUNCH_SQLITE_CONSUMED: AtomicBool = AtomicBool::new(false);
 
 #[tauri::command]
-pub fn get_launch_sql_file() -> Result<Option<LaunchSqlFilePayload>, String> {
+pub fn get_launch_sql_file() -> Result<Option<LaunchSqlFilePayload>, StructuredDbError> {
     if LAUNCH_SQL_CONSUMED.swap(true, Ordering::SeqCst) {
         return Ok(None);
     }
@@ -45,8 +47,12 @@ pub fn get_launch_sql_file() -> Result<Option<LaunchSqlFilePayload>, String> {
         return Ok(None);
     };
 
-    let content = std::fs::read_to_string(&path)
-        .map_err(|error| format!("Failed to read SQL file '{}': {error}", path.to_string_lossy()))?;
+    let content = std::fs::read_to_string(&path).map_err(|error| {
+        DbError::internal(format!(
+            "Failed to read SQL file '{}': {error}",
+            path.to_string_lossy()
+        ))
+    })?;
 
     Ok(Some(LaunchSqlFilePayload {
         path: path.to_string_lossy().to_string(),
@@ -55,7 +61,7 @@ pub fn get_launch_sql_file() -> Result<Option<LaunchSqlFilePayload>, String> {
 }
 
 #[tauri::command]
-pub fn get_launch_sqlite_file() -> Result<Option<LaunchSqliteFilePayload>, String> {
+pub fn get_launch_sqlite_file() -> Result<Option<LaunchSqliteFilePayload>, StructuredDbError> {
     if LAUNCH_SQLITE_CONSUMED.swap(true, Ordering::SeqCst) {
         return Ok(None);
     }

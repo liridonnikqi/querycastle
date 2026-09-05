@@ -37,9 +37,12 @@
 	onRefreshDatabases={() => workspace.loadDatabases()}
 	onRefreshTables={() => workspace.loadExplorer()}
 	onCreateDatabase={(params) => workspace.handleCreateDatabase(params)}
-	onTableAction={(action, schema, table) => void workspace.handleTableAction(action, schema, table)}
-	onSchemaAction={(action, schema) => void workspace.handleSchemaAction(action, schema)}
-	onOpenObjectDefinition={(params) => void workspace.openObjectDefinition(params)}
+	onTableAction={(action, schema, table) =>
+		void workspace.handleTableAction(action, schema, table)}
+	onSchemaAction={(action, schema) =>
+		void workspace.handleSchemaAction(action, schema)}
+	onOpenObjectDefinition={(params) =>
+		void workspace.openObjectDefinition(params)}
 	onViewSequence={(schema, name) => void workspace.viewSequence(schema, name)}
 	activeTable={activeTab?.resultContext ?? null}
 	savedQueries={workspace.favoritesForConnection}
@@ -57,7 +60,8 @@
 		activeTabId={workspace.activeTabId}
 		tabContextMenu={workspace.tabContextMenu}
 		onSelectTab={(tabId) => workspace.selectTab(tabId)}
-		onOpenContextMenu={(event, tabId) => workspace.openTabContextMenu(event, tabId)}
+		onOpenContextMenu={(event, tabId) =>
+			workspace.openTabContextMenu(event, tabId)}
 		onCloseTab={(tabId) => workspace.closeTab(tabId)}
 		onAddTab={() => workspace.addQueryTab()}
 		onCloseContextMenu={() => (workspace.tabContextMenu = null)}
@@ -89,10 +93,15 @@
 					onpointerdown={(event) => workspace.startResultsResize(event)}
 					class="h-1.5 bg-qc-panel hover:bg-qc-cell/40 cursor-row-resize transition-colors shrink-0 z-20 relative flex items-center justify-center"
 				>
-					<div class="w-8 h-0.5 bg-qc-muted/50 rounded-full pointer-events-none"></div>
+					<div
+						class="w-8 h-0.5 bg-qc-muted/50 rounded-full pointer-events-none"
+					></div>
 				</button>
 
-				<div style={`height:${workspace.resultsPaneHeight}px;`} class="flex flex-col bg-qc-bg shrink-0 min-h-0">
+				<div
+					style={`height:${workspace.resultsPaneHeight}px;`}
+					class="flex flex-col bg-qc-bg shrink-0 min-h-0"
+				>
 					<ResultsPane
 						result={activeTab.result}
 						sqlError={activeTab.sqlError || workspace.globalError}
@@ -103,6 +112,7 @@
 						loading={workspace.isRunningQuery}
 						refreshSql={activeTab.lastRunSql}
 						resultKey={`${activeTab.id}:${activeTab.lastRunSql}:${activeTab.result.durationMs}:${activeTab.result.rowCount}`}
+						runQuery={(sql) => workspace.runSessionQuery(sql)}
 						onRunSql={(query) =>
 							workspace.executeQuery(query, {
 								pushToHistory: false,
@@ -112,8 +122,10 @@
 						onApplyTableChanges={(context, changes) =>
 							workspace.applyTableChanges(context, changes)}
 						onFollowRelation={(hop) => workspace.followRelation(hop)}
-						onActivateRelationTrail={(index) => workspace.activateRelationTrail(index)}
-						durationMs={activeTab.result.durationMs || workspace.queryDurationMs}
+						onActivateRelationTrail={(index) =>
+							workspace.activateRelationTrail(index)}
+						durationMs={activeTab.result.durationMs ||
+							workspace.queryDurationMs}
 					/>
 				</div>
 			{/if}
@@ -142,6 +154,7 @@
 				loading={workspace.isRunningQuery}
 				refreshSql={activeTab.lastRunSql}
 				resultKey={`${activeTab.id}:${activeTab.lastRunSql}:${activeTab.result.durationMs}:${activeTab.result.rowCount}`}
+				runQuery={(sql) => workspace.runSessionQuery(sql)}
 				onRunSql={(query) =>
 					workspace.executeQuery(query, {
 						pushToHistory: false,
@@ -151,7 +164,8 @@
 				onApplyTableChanges={(context, changes) =>
 					workspace.applyTableChanges(context, changes)}
 				onFollowRelation={(hop) => workspace.followRelation(hop)}
-				onActivateRelationTrail={(index) => workspace.activateRelationTrail(index)}
+				onActivateRelationTrail={(index) =>
+					workspace.activateRelationTrail(index)}
 				durationMs={activeTab.result.durationMs || workspace.queryDurationMs}
 			/>
 		</div>
@@ -160,32 +174,52 @@
 			<div class="w-full max-w-sm">
 				<div class="text-center mb-6">
 					<div class="text-sm font-medium text-qc-fg">Quick Shortcuts</div>
-					<div class="text-xs text-qc-muted mt-1">No tabs open — try a shortcut</div>
+					<div class="text-xs text-qc-muted mt-1">
+						No tabs open, use these shortcuts to get started
+					</div>
 				</div>
 				<div class="space-y-0 divide-y divide-qc-border">
 					<div class="flex items-center justify-between px-3 py-2 text-xs">
 						<span class="text-qc-muted">Run Query</span>
-						<span class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle">Ctrl+Enter</span>
+						<span
+							class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle"
+							>Ctrl+Enter</span
+						>
 					</div>
 					<div class="flex items-center justify-between px-3 py-2 text-xs">
 						<span class="text-qc-muted">Save Query</span>
-						<span class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle">Ctrl+S</span>
+						<span
+							class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle"
+							>Ctrl+S</span
+						>
 					</div>
 					<div class="flex items-center justify-between px-3 py-2 text-xs">
 						<span class="text-qc-muted">Format SQL</span>
-						<span class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle">Shift+Alt+F</span>
+						<span
+							class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle"
+							>Shift+Alt+F</span
+						>
 					</div>
 					<div class="flex items-center justify-between px-3 py-2 text-xs">
 						<span class="text-qc-muted">New Query Tab</span>
-						<span class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle">Ctrl+N</span>
+						<span
+							class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle"
+							>Ctrl+N</span
+						>
 					</div>
 					<div class="flex items-center justify-between px-3 py-2 text-xs">
 						<span class="text-qc-muted">Close Tab</span>
-						<span class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle">Ctrl+X</span>
+						<span
+							class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle"
+							>Ctrl+X</span
+						>
 					</div>
 					<div class="flex items-center justify-between px-3 py-2 text-xs">
 						<span class="text-qc-muted">Search</span>
-						<span class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle">Ctrl+K</span>
+						<span
+							class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle"
+							>Ctrl+K</span
+						>
 					</div>
 				</div>
 			</div>

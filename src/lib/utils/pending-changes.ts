@@ -1,9 +1,10 @@
 import { diffChars } from 'diff';
 import type { DatabaseType } from '$lib/rpc';
+import { HIDDEN_ROW_ID_COLUMN } from '$lib/utils/dialect';
 import { quoteLiteral } from '$lib/utils/relation-sql';
 import { quoteSqlIdentifier } from '$lib/utils/sql';
 
-export type PendingUpdate = { ctid: string; values: Record<string, unknown> };
+export type PendingUpdate = { rowId: string; values: Record<string, unknown> };
 export type PendingInsert = { id: string; values: Record<string, unknown> };
 
 export type PendingChangeCard = {
@@ -67,7 +68,7 @@ export function pendingChangeCount(params: {
 }): number {
 	let fields = 0;
 	for (const values of params.updates.values()) {
-		fields += Object.keys(values).filter((key) => key !== '_querycastle_ctid').length;
+		fields += Object.keys(values).filter((key) => key !== HIDDEN_ROW_ID_COLUMN).length;
 	}
 	return fields + params.inserts.length + params.deletes.size;
 }
@@ -85,18 +86,18 @@ export function buildPendingChangeCards(params: {
 	const tableRef = `${params.schema}.${params.table}`;
 	const rowNumber = new Map<string, number>();
 	params.rows.forEach((row, index) => {
-		const id = String(row['_querycastle_ctid'] ?? '');
+		const id = String(row[HIDDEN_ROW_ID_COLUMN] ?? '');
 		if (id) rowNumber.set(id, index + 1);
 	});
 
-	for (const [ctid, values] of params.updates) {
-		const row = params.rows.find((item) => String(item['_querycastle_ctid'] ?? '') === ctid);
-		const n = rowNumber.get(ctid);
+	for (const [rowId, values] of params.updates) {
+		const row = params.rows.find((item) => String(item[HIDDEN_ROW_ID_COLUMN] ?? '') === rowId);
+		const n = rowNumber.get(rowId);
 		const rowLabel = n != null ? `row ${n}` : 'row';
 		for (const [column, next] of Object.entries(values)) {
-			if (column === '_querycastle_ctid') continue;
+			if (column === HIDDEN_ROW_ID_COLUMN) continue;
 			cards.push({
-				id: `u:${ctid}:${column}`,
+				id: `u:${rowId}:${column}`,
 				kind: 'update',
 				badge: 'U',
 				title: `${tableRef} > ${rowLabel} > ${column}`,
@@ -122,21 +123,21 @@ export function buildPendingChangeCards(params: {
 		});
 	});
 
-	for (const ctid of params.deletes) {
+	for (const rowId of params.deletes) {
 		const snapshot =
-			params.deletedSnapshots?.get(ctid) ??
-			params.rows.find((item) => String(item['_querycastle_ctid'] ?? '') === ctid);
-		const n = rowNumber.get(ctid);
+			params.deletedSnapshots?.get(rowId) ??
+			params.rows.find((item) => String(item[HIDDEN_ROW_ID_COLUMN] ?? '') === rowId);
+		const n = rowNumber.get(rowId);
 		const rowLabel = n != null ? `row ${n}` : 'row';
 		const summary = snapshot
 			? Object.entries(snapshot)
-					.filter(([key]) => key !== '_querycastle_ctid')
+					.filter(([key]) => key !== HIDDEN_ROW_ID_COLUMN)
 					.slice(0, 3)
 					.map(([column, value]) => `${column}=${formatDiffValue(value)}`)
 					.join(', ')
 			: 'Row deleted';
 		cards.push({
-			id: `d:${ctid}`,
+			id: `d:${rowId}`,
 			kind: 'delete',
 			badge: 'D',
 			title: `${tableRef} > ${rowLabel}`,
@@ -157,7 +158,7 @@ function setClause(
 	values: Record<string, unknown>,
 ): string {
 	return Object.entries(values)
-		.filter(([column]) => column !== '_querycastle_ctid')
+		.filter(([column]) => column !== HIDDEN_ROW_ID_COLUMN)
 		.map(
 			([column, value]) =>
 				`${quoteSqlIdentifier(databaseType, column)} = ${quoteLiteral(databaseType, value)}`,
@@ -165,11 +166,11 @@ function setClause(
 		.join(', ');
 }
 
-function rowByCtid(
+function rowById(
 	rows: Array<Record<string, unknown>> | undefined,
-	ctid: string,
+	rowId: string,
 ): Record<string, unknown> | undefined {
-	return rows?.find((row) => String(row['_querycastle_ctid'] ?? '') === ctid);
+	return rows?.find((row) => String(row[HIDDEN_ROW_ID_COLUMN] ?? '') === rowId);
 }
 
 function whereLiteral(databaseType: DatabaseType, value: unknown): string {
@@ -194,7 +195,7 @@ function pkColumnsForRow(
 export function rowWhereSql(
 	databaseType: DatabaseType,
 	row: Record<string, unknown> | undefined,
-	ctid: string,
+	rowId: string,
 	pkColumns?: string[],
 ): string {
 	const keys = pkColumnsForRow(pkColumns, row);
@@ -213,7 +214,7 @@ export function rowWhereSql(
 		if (complete && parts.length > 0) return parts.join(' and ');
 	}
 
-	const loc = quoteLiteral(databaseType, ctid);
+	const loc = quoteLiteral(databaseType, rowId);
 	if (databaseType === 'postgres') return `ctid = ${loc}::tid`;
 	if (databaseType === 'sqlite') return `rowid = ${loc}`;
 	return `/* row */ ${loc}`;
@@ -223,7 +224,7 @@ export function buildRowInspectSql(params: {
 	databaseType: DatabaseType;
 	schema: string;
 	table: string;
-	ctid: string;
+	rowId: string;
 	row?: Record<string, unknown>;
 	pkColumns?: string[];
 }): string {
@@ -231,7 +232,7 @@ export function buildRowInspectSql(params: {
 	const where = rowWhereSql(
 		params.databaseType,
 		params.row,
-		params.ctid,
+		params.rowId,
 		params.pkColumns,
 	);
 	return `select * from ${tableRef} where ${where};`;
@@ -241,7 +242,7 @@ export function buildPendingSqlPreview(params: {
 	databaseType: DatabaseType;
 	schema: string;
 	table: string;
-	updates: Array<{ ctid: string; values: Record<string, unknown> }>;
+	updates: Array<{ rowId: string; values: Record<string, unknown> }>;
 	deletes: string[];
 	inserts: Array<Record<string, unknown>>;
 	rows?: Array<Record<string, unknown>>;
@@ -254,30 +255,30 @@ export function buildPendingSqlPreview(params: {
 	for (const update of params.updates) {
 		const sets = setClause(params.databaseType, update.values);
 		if (!sets) continue;
-		const row = rowByCtid(params.rows, update.ctid);
+		const row = rowById(params.rows, update.rowId);
 		const where = rowWhereSql(
 			params.databaseType,
 			row,
-			update.ctid,
+			update.rowId,
 			params.pkColumns,
 		);
 		statements.push(`update ${tableRef} set ${sets} where ${where};`);
 	}
 
-	for (const ctid of params.deletes) {
+	for (const rowId of params.deletes) {
 		const row =
-			params.deletedSnapshots?.get(ctid) ?? rowByCtid(params.rows, ctid);
+			params.deletedSnapshots?.get(rowId) ?? rowById(params.rows, rowId);
 		const where = rowWhereSql(
 			params.databaseType,
 			row,
-			ctid,
+			rowId,
 			params.pkColumns,
 		);
 		statements.push(`delete from ${tableRef} where ${where};`);
 	}
 
 	for (const row of params.inserts) {
-		const entries = Object.entries(row).filter(([column]) => column !== '_querycastle_ctid');
+		const entries = Object.entries(row).filter(([column]) => column !== HIDDEN_ROW_ID_COLUMN);
 		if (entries.length === 0) continue;
 		const cols = entries
 			.map(([column]) => quoteSqlIdentifier(params.databaseType, column))

@@ -3,13 +3,13 @@ use rusqlite::{params_from_iter, Connection};
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::core::connection::{MAX_QUERY_ROWS, QUERY_TIMEOUT_MS};
-use crate::core::error::{sanitize_sqlite_error_to_db_error, DbError};
+use crate::core::error::DbError;
+use crate::core::limits::{apply_select_row_cap, MAX_QUERY_ROWS, QUERY_TIMEOUT_MS};
 use crate::core::sql;
 use crate::core::types::{
     ApplyTableChangesParams, ApplyTableChangesResponse, DatabaseColumn, DatabaseExplorer,
     DatabaseForeignKey, DatabaseIndex, DatabaseSchema, DatabaseTable, DatabaseTrigger,
-    ObjectDefinition, ObjectDefinitionParams, QueryResultPayload, UpdatedRowCtid,
+    ObjectDefinition, ObjectDefinitionParams, QueryResultPayload, UpdatedRow,
 };
 
 type SqlitePool = r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>;
@@ -51,75 +51,65 @@ fn json_to_sqlite_value(value: &Value) -> rusqlite::types::Value {
     }
 }
 
-fn pool_get_error(err: r2d2::Error) -> DbError {
-    DbError::connection(format!("SQLite pool get failed: {err}"))
-}
-
-fn spawn_join_error(err: tokio::task::JoinError) -> DbError {
-    DbError::internal(format!("SQLite task failed: {err}"))
-}
-
 async fn with_pool<T, F>(pool: &SqlitePool, f: F) -> Result<T, DbError>
 where
     T: Send + 'static,
     F: FnOnce(&SqlitePool) -> Result<T, DbError> + Send + 'static,
 {
     let pool = pool.clone();
-    tokio::task::spawn_blocking(move || f(&pool))
-        .await
-        .map_err(spawn_join_error)?
+    tokio::task::spawn_blocking(move || f(&pool)).await?
 }
 
 fn sqlite_main_database(conn: &Connection) -> Result<String, DbError> {
-    conn.query_row("PRAGMA database_list", [], |row| {
+    Ok(conn.query_row("PRAGMA database_list", [], |row| {
         let name: String = row.get(1)?;
         let file: String = row.get(2)?;
         Ok(if file.is_empty() { name } else { file })
-    })
-    .map_err(sanitize_sqlite_error_to_db_error)
+    })?)
 }
 
 pub async fn server_version(pool: &SqlitePool) -> Result<Option<String>, DbError> {
     with_pool(pool, |pool| {
-        let conn = pool.get().map_err(pool_get_error)?;
-        conn.query_row("select sqlite_version()", [], |row| row.get::<_, String>(0))
-            .map(Some)
-            .map_err(sanitize_sqlite_error_to_db_error)
+        let conn = pool.get()?;
+        Ok(conn
+            .query_row("select sqlite_version()", [], |row| row.get::<_, String>(0))
+            .map(Some)?)
     })
     .await
 }
 
 pub async fn run_query(pool: &SqlitePool, sql: &str) -> Result<QueryResultPayload, DbError> {
-    let sql = sql.to_string();
+    let sql = apply_select_row_cap(sql).into_owned();
     let fut = with_pool(pool, move |pool| {
-        let conn = pool.get().map_err(pool_get_error)?;
+        let conn = pool.get()?;
         let started = std::time::Instant::now();
 
-        let mut stmt = conn.prepare(&sql).map_err(sanitize_sqlite_error_to_db_error)?;
+        let mut stmt = conn.prepare(&sql)?;
         let column_count = stmt.column_count();
 
         if column_count == 0 {
             drop(stmt);
-            let affected = conn.execute(&sql, []).map_err(sanitize_sqlite_error_to_db_error)?;
+            let affected = conn.execute(&sql, [])?;
             return Ok(QueryResultPayload {
                 columns: Vec::new(),
                 rows: Vec::new(),
                 row_count: affected,
                 duration_ms: started.elapsed().as_millis(),
+                truncated: false,
             });
         }
 
         let columns: Vec<String> = stmt.column_names().iter().map(|name| (*name).to_string()).collect();
 
-        let mut row_count = 0usize;
         let mut rows: Vec<HashMap<String, Value>> = Vec::new();
-        let mut result_rows = stmt.query([]).map_err(sanitize_sqlite_error_to_db_error)?;
+        let mut truncated = false;
+        let mut result_rows = stmt.query([])?;
 
-        while let Some(row) = result_rows.next().map_err(sanitize_sqlite_error_to_db_error)? {
+        while let Some(row) = result_rows.next()? {
             if rows.len() >= MAX_QUERY_ROWS {
+                truncated = true;
                 break;
             }
-            row_count += 1;
             let mut mapped = HashMap::new();
             for (index, column_name) in columns.iter().enumerate() {
                 let value = row
@@ -131,11 +121,13 @@ pub async fn run_query(pool: &SqlitePool, sql: &str) -> Result<QueryResultPayloa
             rows.push(mapped);
         }
 
+        let row_count = rows.len();
         Ok(QueryResultPayload {
             columns,
             rows,
             row_count,
             duration_ms: started.elapsed().as_millis(),
+            truncated,
         })
     });
 
@@ -149,7 +141,7 @@ pub async fn run_query(pool: &SqlitePool, sql: &str) -> Result<QueryResultPayloa
 
 pub async fn get_database_explorer(pool: &SqlitePool) -> Result<DatabaseExplorer, DbError> {
     with_pool(pool, |pool| {
-        let conn = pool.get().map_err(pool_get_error)?;
+        let conn = pool.get()?;
         get_sqlite_database_explorer(&conn)
     })
     .await
@@ -168,24 +160,24 @@ fn get_sqlite_database_explorer(conn: &Connection) -> Result<DatabaseExplorer, D
             order by name
             ",
         )
-        .map_err(sanitize_sqlite_error_to_db_error)?;
+        ?;
 
     let table_rows = table_stmt
         .query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
-        .map_err(sanitize_sqlite_error_to_db_error)?;
+        ?;
 
     let mut tables: Vec<DatabaseTable> = Vec::new();
 
     for entry in table_rows {
-        let (table_name, table_type) = entry.map_err(sanitize_sqlite_error_to_db_error)?;
+        let (table_name, table_type) = entry?;
 
         let pragma_name = sql::escape_single_quotes_pragma(&table_name);
         let columns_sql = format!("PRAGMA table_info('{pragma_name}')");
         let mut columns_stmt = conn
             .prepare(&columns_sql)
-            .map_err(sanitize_sqlite_error_to_db_error)?;
+            ?;
         let column_rows = columns_stmt
             .query_map([], |row| {
                 Ok(DatabaseColumn {
@@ -196,17 +188,17 @@ fn get_sqlite_database_explorer(conn: &Connection) -> Result<DatabaseExplorer, D
                     has_default: row.get::<_, Option<String>>(4)?.is_some(),
                 })
             })
-            .map_err(sanitize_sqlite_error_to_db_error)?;
+            ?;
 
         let mut columns: Vec<DatabaseColumn> = Vec::new();
         for column in column_rows {
-            columns.push(column.map_err(sanitize_sqlite_error_to_db_error)?);
+            columns.push(column?);
         }
 
         let fk_sql = format!("PRAGMA foreign_key_list('{pragma_name}')");
         let mut fk_stmt = conn
             .prepare(&fk_sql)
-            .map_err(sanitize_sqlite_error_to_db_error)?;
+            ?;
         let fk_rows = fk_stmt
             .query_map([], |row| {
                 Ok(DatabaseForeignKey {
@@ -216,11 +208,11 @@ fn get_sqlite_database_explorer(conn: &Connection) -> Result<DatabaseExplorer, D
                     referenced_column: row.get::<_, String>(4)?,
                 })
             })
-            .map_err(sanitize_sqlite_error_to_db_error)?;
+            ?;
 
         let mut foreign_keys: Vec<DatabaseForeignKey> = Vec::new();
         for fk in fk_rows {
-            foreign_keys.push(fk.map_err(sanitize_sqlite_error_to_db_error)?);
+            foreign_keys.push(fk?);
         }
 
         let indexes = load_sqlite_indexes(conn, &table_name)?;
@@ -257,7 +249,7 @@ fn load_sqlite_indexes(conn: &Connection, table_name: &str) -> Result<Vec<Databa
     let sql_text = format!("PRAGMA index_list('{pragma_name}')");
     let mut stmt = conn
         .prepare(&sql_text)
-        .map_err(sanitize_sqlite_error_to_db_error)?;
+        ?;
     let rows = stmt
         .query_map([], |row| {
             Ok((
@@ -266,11 +258,11 @@ fn load_sqlite_indexes(conn: &Connection, table_name: &str) -> Result<Vec<Databa
                 row.get::<_, String>(3).unwrap_or_default(),
             ))
         })
-        .map_err(sanitize_sqlite_error_to_db_error)?;
+        ?;
 
     let mut indexes = Vec::new();
     for entry in rows {
-        let (name, unique, origin) = entry.map_err(sanitize_sqlite_error_to_db_error)?;
+        let (name, unique, origin) = entry?;
         let columns = sqlite_index_columns(conn, &name)?;
         let definition = sqlite_master_sql(conn, "index", &name)?;
         indexes.push(DatabaseIndex {
@@ -289,13 +281,13 @@ fn sqlite_index_columns(conn: &Connection, index_name: &str) -> Result<String, D
     let sql_text = format!("PRAGMA index_info('{pragma_name}')");
     let mut stmt = conn
         .prepare(&sql_text)
-        .map_err(sanitize_sqlite_error_to_db_error)?;
+        ?;
     let rows = stmt
         .query_map([], |row| row.get::<_, Option<String>>(2))
-        .map_err(sanitize_sqlite_error_to_db_error)?;
+        ?;
     let mut columns = Vec::new();
     for entry in rows {
-        if let Some(name) = entry.map_err(sanitize_sqlite_error_to_db_error)? {
+        if let Some(name) = entry? {
             columns.push(name);
         }
     }
@@ -312,15 +304,15 @@ fn load_sqlite_triggers(conn: &Connection, table_name: &str) -> Result<Vec<Datab
             order by name
             ",
         )
-        .map_err(sanitize_sqlite_error_to_db_error)?;
+        ?;
     let rows = stmt
         .query_map([table_name], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
         })
-        .map_err(sanitize_sqlite_error_to_db_error)?;
+        ?;
     let mut triggers = Vec::new();
     for entry in rows {
-        let (name, definition) = entry.map_err(sanitize_sqlite_error_to_db_error)?;
+        let (name, definition) = entry?;
         triggers.push(DatabaseTrigger { name, definition });
     }
     Ok(triggers)
@@ -336,7 +328,7 @@ fn sqlite_master_sql(conn: &Connection, kind: &str, name: &str) -> Result<Option
         if matches!(error, rusqlite::Error::QueryReturnedNoRows) {
             Ok(None)
         } else {
-            Err(sanitize_sqlite_error_to_db_error(error))
+            Err(error.into())
         }
     })
 }
@@ -347,7 +339,7 @@ pub async fn get_object_definition(
 ) -> Result<ObjectDefinition, DbError> {
     let params = params.clone();
     with_pool(pool, move |pool| {
-        let conn = pool.get().map_err(pool_get_error)?;
+        let conn = pool.get()?;
         get_sqlite_object_definition(&conn, &params)
     })
     .await
@@ -383,7 +375,7 @@ fn get_sqlite_object_definition(
 
 pub async fn list_databases(pool: &SqlitePool) -> Result<Vec<String>, DbError> {
     with_pool(pool, |pool| {
-        let conn = pool.get().map_err(pool_get_error)?;
+        let conn = pool.get()?;
         Ok(vec![sqlite_main_database(&conn)?])
     })
     .await
@@ -407,10 +399,10 @@ fn apply_sqlite_table_changes(
         return Err(DbError::validation("Schema and table are required"));
     }
 
-    let mut conn = pool.get().map_err(pool_get_error)?;
+    let mut conn = pool.get()?;
     let tx = conn
         .transaction()
-        .map_err(sanitize_sqlite_error_to_db_error)?;
+        ?;
 
     let safe_table = format!("{}.{}", sql::quote_ident(schema), sql::quote_ident(table));
 
@@ -432,24 +424,24 @@ fn apply_sqlite_table_changes(
     let mut updated = 0usize;
     let mut deleted = 0usize;
     let mut inserted = 0usize;
-    let mut updated_rows: Vec<UpdatedRowCtid> = Vec::new();
+    let mut updated_rows: Vec<UpdatedRow> = Vec::new();
 
     for update in &params.changes.updates {
-        let rowid = update.ctid.trim().parse::<i64>().map_err(|_| {
+        let rowid = update.row_id.trim().parse::<i64>().map_err(|_| {
             if is_without_rowid {
                 DbError::validation(format!(
                     "Table '{}' uses WITHOUT ROWID and requires primary-key editing; rowid {} is invalid. Use SQL directly.",
-                    table, update.ctid
+                    table, update.row_id
                 ))
             } else {
-                DbError::validation(format!("Invalid SQLite row id: {}", update.ctid))
+                DbError::validation(format!("Invalid SQLite row id: {}", update.row_id))
             }
         })?;
 
         let entries: Vec<_> = update
             .values
             .iter()
-            .filter(|(key, _)| key.as_str() != "_querycastle_ctid")
+            .filter(|(key, _)| key.as_str() != sql::HIDDEN_ROW_ID_COLUMN)
             .collect();
         if entries.is_empty() {
             continue;
@@ -468,18 +460,18 @@ fn apply_sqlite_table_changes(
         sql_params.push(rusqlite::types::Value::Integer(rowid));
         let affected = tx
             .execute(update_sql.as_str(), params_from_iter(sql_params))
-            .map_err(sanitize_sqlite_error_to_db_error)?;
+            ?;
         if affected == 0 {
             return Err(DbError::NotFound(format!(
                 "Could not update row with id {}. It may have changed. Refresh and retry.",
-                update.ctid
+                update.row_id
             )));
         }
 
         let select_sql = format!("select * from {safe_table} where rowid = ?1 limit 1");
         let mut stmt = tx
             .prepare(select_sql.as_str())
-            .map_err(sanitize_sqlite_error_to_db_error)?;
+            ?;
         let row_values = stmt
             .query_row([rowid], |row| {
                 let mut mapped = HashMap::new();
@@ -489,34 +481,32 @@ fn apply_sqlite_table_changes(
                 }
                 Ok::<HashMap<String, Value>, rusqlite::Error>(mapped)
             })
-            .map_err(sanitize_sqlite_error_to_db_error)?;
+            ?;
 
-        updated_rows.push(UpdatedRowCtid {
-            old_ctid: update.ctid.clone(),
-            new_ctid: rowid.to_string(),
+        updated_rows.push(UpdatedRow {
+            old_row_id: update.row_id.clone(),
+            new_row_id: rowid.to_string(),
             values: row_values,
         });
         updated += 1;
     }
 
-    for ctid in &params.changes.deletes {
-        let rowid = ctid.trim().parse::<i64>().map_err(|_| {
+    for row_id in &params.changes.deletes {
+        let rowid = row_id.trim().parse::<i64>().map_err(|_| {
             if is_without_rowid {
                 DbError::validation(format!(
-                    "Table '{}' uses WITHOUT ROWID and requires primary-key editing; rowid {ctid} is invalid. Use SQL directly.",
+                    "Table '{}' uses WITHOUT ROWID and requires primary-key editing; rowid {row_id} is invalid. Use SQL directly.",
                     table
                 ))
             } else {
-                DbError::validation(format!("Invalid SQLite row id: {ctid}"))
+                DbError::validation(format!("Invalid SQLite row id: {row_id}"))
             }
         })?;
         let delete_sql = format!("delete from {safe_table} where rowid = ?1");
-        let affected = tx
-            .execute(delete_sql.as_str(), [rowid])
-            .map_err(sanitize_sqlite_error_to_db_error)?;
+        let affected = tx.execute(delete_sql.as_str(), [rowid])?;
         if affected == 0 {
             return Err(DbError::NotFound(format!(
-                "Could not delete row with id {ctid}. It may have changed. Refresh and retry."
+                "Could not delete row with id {row_id}. It may have changed. Refresh and retry."
             )));
         }
         deleted += 1;
@@ -525,7 +515,7 @@ fn apply_sqlite_table_changes(
     for row in &params.changes.inserts {
         let entries: Vec<_> = row
             .iter()
-            .filter(|(key, _)| key.as_str() != "_querycastle_ctid")
+            .filter(|(key, _)| key.as_str() != sql::HIDDEN_ROW_ID_COLUMN)
             .collect();
         if entries.is_empty() {
             continue;
@@ -544,11 +534,11 @@ fn apply_sqlite_table_changes(
             entries.iter().map(|(_, value)| json_to_sqlite_value(value)).collect();
         let insert_sql = format!("insert into {safe_table} ({cols}) values ({placeholders})");
         tx.execute(insert_sql.as_str(), params_from_iter(sql_params))
-            .map_err(sanitize_sqlite_error_to_db_error)?;
+            ?;
         inserted += 1;
     }
 
-    tx.commit().map_err(sanitize_sqlite_error_to_db_error)?;
+    tx.commit()?;
 
     Ok(ApplyTableChangesResponse {
         ok: true,

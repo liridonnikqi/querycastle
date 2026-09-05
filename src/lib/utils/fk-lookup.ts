@@ -1,6 +1,6 @@
 import type { DatabaseExplorer, DatabaseForeignKey, DatabaseType, QueryResultPayload } from '$lib/rpc';
 import { formatFkOptionLabel, pickFkLabelColumns } from '$lib/utils/grid-editors';
-import { findExplorerTable } from '$lib/utils/relation-resolve';
+import { findExplorerTable } from '$lib/utils/schema-objects';
 import { quoteLiteral } from '$lib/utils/relation-sql';
 import { quoteSqlIdentifier } from '$lib/utils/sql';
 

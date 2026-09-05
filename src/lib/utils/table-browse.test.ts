@@ -14,7 +14,7 @@ describe('table browse sql', () => {
 	it('extracts a follow-the-row where clause', () => {
 		expect(
 			extractWhereClause(
-				'select ctid::text as _querycastle_ctid, * from "public"."users" where "id" = 9 order by "id" asc nulls last limit 100;',
+				'select ctid::text as _querycastle_row_id, * from "public"."users" where "id" = 9 order by "id" asc nulls last limit 100;',
 			),
 		).toBe('"id" = 9');
 	});
@@ -33,7 +33,7 @@ describe('table browse sql', () => {
 				offset: 50,
 			}),
 		).toBe(
-			`select ctid::text as _querycastle_ctid, * from "public"."users" where "id" = 9 and cast("email" as text) ilike '%ada%' order by "email" desc nulls last limit 50 offset 50;`,
+			`select ctid::text as _querycastle_row_id, * from "public"."users" where "id" = 9 and cast("email" as text) ilike '%ada%' order by "email" desc nulls last limit 50 offset 50;`,
 		);
 	});
 

@@ -1,8 +1,6 @@
 import type { DatabaseColumn, DatabaseExplorer, DatabaseForeignKey, DatabaseTable } from '$lib/rpc';
-import {
-	findExplorerTable,
-	resolveOutgoingRelations,
-} from '$lib/utils/relation-resolve';
+import { resolveOutgoingRelations } from '$lib/utils/relation-resolve';
+import { findExplorerTable } from '$lib/utils/schema-objects';
 
 export type GridColumnKind = 'boolean' | 'number' | 'date' | 'datetime' | 'text' | 'fk';
 

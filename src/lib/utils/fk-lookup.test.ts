@@ -33,6 +33,7 @@ describe('fk lookup', () => {
 					],
 					rowCount: 2,
 					durationMs: 1,
+					truncated: false,
 				},
 				'id',
 				['email'],

@@ -25,8 +25,10 @@ pub struct ConnectionInput {
     pub ssl: bool,
     #[serde(default)]
     pub ssl_insecure: bool,
-    pub use_connection_string: Option<bool>,
-    pub connection_string: Option<String>,
+    #[serde(default)]
+    pub use_connection_string: bool,
+    #[serde(default)]
+    pub connection_string: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -51,6 +53,7 @@ pub struct QueryResultPayload {
     pub rows: Vec<HashMap<String, Value>>,
     pub row_count: usize,
     pub duration_ms: u128,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -68,14 +71,14 @@ pub struct ApplyTableChangesResponse {
     pub updated: usize,
     pub deleted: usize,
     pub inserted: usize,
-    pub updated_rows: Vec<UpdatedRowCtid>,
+    pub updated_rows: Vec<UpdatedRow>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UpdatedRowCtid {
-    pub old_ctid: String,
-    pub new_ctid: String,
+pub struct UpdatedRow {
+    pub old_row_id: String,
+    pub new_row_id: String,
     pub values: HashMap<String, Value>,
 }
 
@@ -171,6 +174,7 @@ pub struct DatabaseExplorer {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ObjectDefinitionParams {
+    pub session_id: String,
     pub kind: String,
     pub schema: String,
     pub name: String,
@@ -187,21 +191,6 @@ pub struct ObjectDefinitionParams {
 pub struct ObjectDefinition {
     pub title: String,
     pub sql: String,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ssl_insecure_defaults_false() {
-        let json = r#"{
-            "name":"n","host":"h","port":1,"user":"u","password":"p","database":"d","ssl":true
-        }"#;
-        let input: ConnectionInput = serde_json::from_str(json).unwrap();
-        assert!(!input.ssl_insecure);
-        assert!(input.ssl);
-    }
 }
 
 impl DatabaseSchema {
@@ -231,21 +220,28 @@ impl DatabaseTable {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SessionIdParams {
+    pub session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct QueryParams {
     pub sql: String,
-    #[serde(default)]
-    pub session_id: Option<String>,
+    pub session_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SelectDatabaseParams {
+    pub session_id: String,
     pub database: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyTableChangesParams {
+    pub session_id: String,
     pub schema: String,
     pub table: String,
     pub changes: TableChangesPayload,
@@ -262,6 +258,21 @@ pub struct TableChangesPayload {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TableUpdatePayload {
-    pub ctid: String,
+    pub row_id: String,
     pub values: HashMap<String, Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ssl_insecure_defaults_false() {
+        let json = r#"{
+            "name":"n","host":"h","port":1,"user":"u","password":"p","database":"d","ssl":true
+        }"#;
+        let input: ConnectionInput = serde_json::from_str(json).unwrap();
+        assert!(!input.ssl_insecure);
+        assert!(input.ssl);
+    }
 }

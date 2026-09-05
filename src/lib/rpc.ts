@@ -31,10 +31,11 @@ export type QueryResultPayload = {
   rows: Array<Record<string, unknown>>;
   rowCount: number;
   durationMs: number;
+  truncated: boolean;
 };
 
 export type TableChangesPayload = {
-  updates: Array<{ ctid: string; values: Record<string, unknown> }>;
+  updates: Array<{ rowId: string; values: Record<string, unknown> }>;
   deletes: string[];
   inserts: Array<Record<string, unknown>>;
 };
@@ -44,7 +45,7 @@ export type ApplyTableChangesResult = {
   updated: number;
   deleted: number;
   inserted: number;
-  updatedRows: Array<{ oldCtid: string; newCtid: string; values: Record<string, unknown> }>;
+  updatedRows: Array<{ oldRowId: string; newRowId: string; values: Record<string, unknown> }>;
 };
 
 export type DatabaseColumn = {

@@ -60,12 +60,6 @@ impl DbError {
     }
 }
 
-impl From<DbError> for String {
-    fn from(err: DbError) -> Self {
-        err.to_string()
-    }
-}
-
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct StructuredDbError {
     pub kind: String,
@@ -150,4 +144,40 @@ pub fn sanitize_sqlite_error_to_db_error(err: rusqlite::Error) -> DbError {
         return DbError::NotFound(msg);
     }
     DbError::Query { message: msg, code: None }
+}
+
+impl From<tokio_postgres::Error> for DbError {
+    fn from(err: tokio_postgres::Error) -> Self {
+        sanitize_pg_error_to_db_error(err)
+    }
+}
+
+impl From<mysql_async::Error> for DbError {
+    fn from(err: mysql_async::Error) -> Self {
+        sanitize_mysql_error_to_db_error(err)
+    }
+}
+
+impl From<rusqlite::Error> for DbError {
+    fn from(err: rusqlite::Error) -> Self {
+        sanitize_sqlite_error_to_db_error(err)
+    }
+}
+
+impl From<deadpool_postgres::PoolError> for DbError {
+    fn from(err: deadpool_postgres::PoolError) -> Self {
+        DbError::connection(format!("Pool get failed: {err}"))
+    }
+}
+
+impl From<r2d2::Error> for DbError {
+    fn from(err: r2d2::Error) -> Self {
+        DbError::connection(format!("SQLite pool get failed: {err}"))
+    }
+}
+
+impl From<tokio::task::JoinError> for DbError {
+    fn from(err: tokio::task::JoinError) -> Self {
+        DbError::internal(format!("SQLite task failed: {err}"))
+    }
 }

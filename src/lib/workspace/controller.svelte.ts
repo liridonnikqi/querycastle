@@ -5,6 +5,7 @@ import type {
 	ConnectionStatus,
 	DatabaseExplorer,
 	ObjectDefinitionParams,
+	QueryResultPayload,
 	TableChangesPayload,
 } from '$lib/rpc';
 import { rpc } from '$lib/rpc-client';
@@ -19,10 +20,7 @@ import {
 } from '$lib/utils/connection';
 import { tryBuildEditableQuery } from '$lib/utils/editable-query';
 import {
-	removeSession,
 	sessionIdOf,
-	snapshotSession,
-	upsertSession,
 	type LiveWorkspace,
 	type OpenSession,
 } from '$lib/utils/open-session';
@@ -78,27 +76,40 @@ import {
 } from '$lib/utils/workspace-actions';
 import { initializeWorkspace } from '$lib/utils/workspace-init';
 import { toast } from '$lib/stores/toast.svelte';
-
-function disconnectedStatus(): ConnectionStatus {
-	return {
-		connected: false,
-		databaseType: 'postgres',
-		name: 'Disconnected',
-		host: '',
-		port: 5432,
-		database: '',
-		user: '',
-		serverVersion: null,
-		sessionId: '',
-	};
-}
+import { ConnectionSessions } from '$lib/workspace/connection-sessions.svelte';
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
 export class Workspace {
-	connectionStatus = $state<ConnectionStatus>(disconnectedStatus());
+	readonly sessions = new ConnectionSessions();
+
+	get connectionStatus() {
+		return this.sessions.connectionStatus;
+	}
+	set connectionStatus(value: ConnectionStatus) {
+		this.sessions.connectionStatus = value;
+	}
+	get openSessions() {
+		return this.sessions.openSessions;
+	}
+	set openSessions(value) {
+		this.sessions.openSessions = value;
+	}
+	get activeSessionId() {
+		return this.sessions.activeSessionId;
+	}
+	set activeSessionId(value: string) {
+		this.sessions.activeSessionId = value;
+	}
+	get activeSessionInput() {
+		return this.sessions.activeSessionInput;
+	}
+	set activeSessionInput(value: ConnectionInput) {
+		this.sessions.activeSessionInput = value;
+	}
+
 	explorerSearch = $state('');
 	connectionSearch = $state('');
 	tabs = $state<WorkspaceTab[]>([]);
@@ -130,9 +141,6 @@ export class Workspace {
 	resizingResults = $state(false);
 	forceWorkspaceOnDisconnect = $state(false);
 	showSearchPalette = $state(false);
-	openSessions = $state<OpenSession[]>([]);
-	activeSessionId = $state('');
-	activeSessionInput = $state<ConnectionInput>(normalizeConnectionInput({}));
 	connectionForm = $state<ConnectionInput>(normalizeConnectionInput({}));
 	selectedSavedQueryId = $state('');
 	selectedHistoryIndex = $state(0);
@@ -207,9 +215,7 @@ export class Workspace {
 	}
 
 	private restoreSession(session: OpenSession) {
-		this.connectionStatus = session.status;
-		this.activeSessionInput = session.input;
-		this.activeSessionId = session.id;
+		this.sessions.restoreIdentity(session);
 		this.explorer = session.explorer;
 		this.databases = session.databases;
 		this.tabs = session.tabs;
@@ -234,12 +240,7 @@ export class Workspace {
 	}
 
 	private stashActiveSession() {
-		const id = sessionIdOf(this.connectionStatus) || this.activeSessionId;
-		if (!id || !this.connectionStatus.connected) return;
-		this.openSessions = upsertSession(
-			this.openSessions,
-			snapshotSession(id, this.liveWorkspace()),
-		);
+		this.sessions.stash(this.liveWorkspace());
 	}
 
 	private ensureTab() {
@@ -371,7 +372,7 @@ export class Workspace {
 			.filter((name, index, all) => all.indexOf(name) === index);
 		for (const name of names) {
 			try {
-				const stored = await rpc.request.secretGet(name);
+				const stored = await rpc.secretGet(name);
 				if (stored) return injectConnectionPassword(input, stored);
 			} catch {
 				// Keychain misses are non-fatal; the user can still type a password.
@@ -384,7 +385,7 @@ export class Workspace {
 		const password = passwordFromConnection(connection);
 		if (password && connection.name.trim()) {
 			try {
-				await rpc.request.secretSet(connection.name, password);
+				await rpc.secretSet(connection.name, password);
 			} catch (error) {
 				toast.error(
 					`Could not save password to the OS keychain: ${errorMessage(error)}`,
@@ -410,7 +411,7 @@ export class Workspace {
 		this.savedConnections = this.savedConnections.filter((item) => item.name !== name);
 		persistJsonValue(SAVED_CONNECTIONS_KEY, this.savedConnections);
 		try {
-			await rpc.request.secretDelete(name);
+			await rpc.secretDelete(name);
 		} catch {
 			// Missing keychain entries should not block deleting the saved connection.
 		}
@@ -513,7 +514,7 @@ export class Workspace {
 		this.connectionInputMode = 'fields';
 		this.connectionStringInput = '';
 		try {
-			this.connectionStatus = await rpc.request.connect(payload);
+			this.connectionStatus = await rpc.connect(payload);
 			this.bumpQueryEpoch();
 			await this.loadDatabases();
 			await this.loadExplorer({ clearBeforeLoad: true });
@@ -671,7 +672,7 @@ export class Workspace {
 		}
 		this.isExplorerLoading = true;
 		try {
-			this.explorer = await rpc.request.getDatabaseExplorer();
+			this.explorer = await rpc.getDatabaseExplorer(this.activeSessionId);
 			this.globalError = '';
 		} catch (error) {
 			this.explorer = null;
@@ -687,7 +688,7 @@ export class Workspace {
 			return;
 		}
 		try {
-			this.databases = await rpc.request.listDatabases();
+			this.databases = await rpc.listDatabases(this.activeSessionId);
 		} catch {
 			this.databases = this.connectionStatus.database
 				? [this.connectionStatus.database]
@@ -701,7 +702,7 @@ export class Workspace {
 		try {
 			const payload = await this.withResolvedPassword(this.buildConnectionPayload());
 			const engine = payload.databaseType;
-			const response = await rpc.request.testConnection(payload);
+			const response = await rpc.testConnection(payload);
 			this.testConnectionOk = response.ok;
 			this.testConnectionMessage = response.ok
 				? `Connected successfully${response.serverVersion ? ` (${engineDisplayName(engine)} ${response.serverVersion})` : ''}`
@@ -725,7 +726,7 @@ export class Workspace {
 		if (!id || id === this.activeSessionId) return;
 		this.stashActiveSession();
 		try {
-			await rpc.request.switchSession(id);
+			await rpc.switchSession(id);
 		} catch (error) {
 			this.globalError = errorMessage(error);
 			return;
@@ -742,19 +743,19 @@ export class Workspace {
 		}
 		let nextStatus: ConnectionStatus;
 		try {
-			nextStatus = await rpc.request.disconnectSession(id);
+			nextStatus = await rpc.disconnectSession(id);
 		} catch (error) {
 			this.globalError = errorMessage(error);
 			return;
 		}
-		this.openSessions = removeSession(this.openSessions, id);
+		this.sessions.drop(id);
 		if (id !== this.activeSessionId && id !== sessionIdOf(this.connectionStatus)) {
 			return;
 		}
 		this.bumpQueryEpoch();
 		if (nextStatus.connected) {
 			const nextId = sessionIdOf(nextStatus);
-			const stored = this.openSessions.find((item) => item.id === nextId);
+			const stored = this.sessions.find(nextId);
 			if (stored) this.restoreSession(stored);
 			else {
 				this.connectionStatus = nextStatus;
@@ -762,9 +763,7 @@ export class Workspace {
 			}
 			return;
 		}
-		this.openSessions = [];
-		this.activeSessionId = '';
-		this.connectionStatus = disconnectedStatus();
+		this.sessions.clear();
 		this.resetWorkspaceToEmpty();
 	}
 
@@ -784,7 +783,7 @@ export class Workspace {
 				return;
 			}
 			this.stashActiveSession();
-			this.connectionStatus = await rpc.request.connect(payload);
+			this.connectionStatus = await rpc.connect(payload);
 			this.bumpQueryEpoch();
 			const id = sessionIdOf(this.connectionStatus) || crypto.randomUUID();
 			this.connectionStatus = { ...this.connectionStatus, sessionId: id };
@@ -802,10 +801,7 @@ export class Workspace {
 			this.activeSessionInput = payload;
 			this.activeSessionId = id;
 			this.resetWorkspaceToEmpty();
-			this.openSessions = upsertSession(
-				this.openSessions,
-				snapshotSession(id, this.liveWorkspace()),
-			);
+			this.sessions.stash(this.liveWorkspace());
 			await this.loadDatabases();
 			await this.loadExplorer();
 			this.stashActiveSession();
@@ -830,15 +826,17 @@ export class Workspace {
 	async handleDisconnect() {
 		this.bumpQueryEpoch();
 		try {
-			await rpc.request.disconnect();
+			await rpc.disconnect();
 		} catch (error) {
 			this.globalError = errorMessage(error);
 		}
-		this.openSessions = [];
-		this.activeSessionId = '';
-		this.connectionStatus = disconnectedStatus();
+		this.sessions.clear();
 		this.resetWorkspaceToEmpty();
 		this.editingConnectionName = null;
+	}
+
+	runSessionQuery(sql: string): Promise<QueryResultPayload> {
+		return rpc.runQuery({ sql, sessionId: this.activeSessionId });
 	}
 
 	async executeQuery(
@@ -860,7 +858,7 @@ export class Workspace {
 				this.connectionStatus.databaseType,
 				collectExplorerIdentifiers(this.explorer),
 			);
-			const queryResult = await rpc.request.runQuery({ sql, sessionId });
+			const queryResult = await rpc.runQuery({ sql, sessionId });
 			if (epoch !== this.queryEpoch || sessionId !== this.activeSessionId) return;
 			this.queryDurationMs = queryResult.durationMs;
 			this.globalError = '';
@@ -1007,7 +1005,7 @@ export class Workspace {
 		}
 		if (action === 'drop' || action === 'truncate' || action === 'duplicate') {
 			try {
-				await rpc.request.runQuery({
+				await rpc.runQuery({
 					sql: plan.query,
 					sessionId: this.activeSessionId,
 				});
@@ -1065,7 +1063,7 @@ export class Workspace {
 			nextName,
 		});
 		try {
-			await rpc.request.runQuery({ sql, sessionId: this.activeSessionId });
+			await rpc.runQuery({ sql, sessionId: this.activeSessionId });
 			this.globalError = '';
 			await this.loadExplorer();
 		} catch (error) {
@@ -1075,7 +1073,10 @@ export class Workspace {
 
 	async openObjectDefinition(params: ObjectDefinitionParams) {
 		try {
-			const definition = await rpc.request.getObjectDefinition(params);
+			const definition = await rpc.getObjectDefinition({
+				...params,
+				sessionId: this.activeSessionId,
+			});
 			this.addQueryTab(
 				definition.sql,
 				definitionTabTitle(params.kind, params.name, params.identityArgs) ||
@@ -1179,7 +1180,8 @@ export class Workspace {
 		context: { schema: string; table: string },
 		changes: TableChangesPayload,
 	): Promise<ApplyTableChangesResult> {
-		return rpc.request.applyTableChanges({
+		return rpc.applyTableChanges({
+			sessionId: this.activeSessionId,
 			schema: context.schema,
 			table: context.table,
 			changes,
@@ -1192,7 +1194,10 @@ export class Workspace {
 		this.isExplorerLoading = true;
 		this.explorer = null;
 		try {
-			this.connectionStatus = await rpc.request.selectDatabase({ database });
+			this.connectionStatus = await rpc.selectDatabase({
+				sessionId: this.activeSessionId,
+				database,
+			});
 			this.activeSessionInput = { ...this.activeSessionInput, database };
 			this.stashActiveSession();
 			await this.loadDatabases();
@@ -1224,7 +1229,7 @@ export class Workspace {
 			return;
 		}
 		try {
-			await rpc.request.runQuery({
+			await rpc.runQuery({
 				sql: buildCreateDatabaseSql(name, encoding),
 				sessionId: this.activeSessionId,
 			});
@@ -1281,8 +1286,7 @@ export class Workspace {
 						this.connectionStatus = status;
 						const id = sessionIdOf(status);
 						if (status.connected && id && this.openSessions.length === 0) {
-							this.activeSessionId = id;
-							this.openSessions = [snapshotSession(id, this.liveWorkspace())];
+							this.sessions.remember(id, this.liveWorkspace());
 						}
 					},
 					loadDatabases: () => this.loadDatabases(),
@@ -1310,7 +1314,7 @@ export class Workspace {
 	private async migratePlaintextSecrets() {
 		const { connections, changed } = await migrateSavedConnectionSecrets({
 			connections: this.savedConnections,
-			secretSet: (name, password) => rpc.request.secretSet(name, password),
+			secretSet: (name, password) => rpc.secretSet(name, password),
 		});
 		if (!changed) return;
 		this.savedConnections = connections;

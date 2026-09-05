@@ -2,7 +2,7 @@ import type { DatabaseExplorer, DatabaseTable, DatabaseType } from '$lib/rpc';
 import { findExplorerTable } from '$lib/utils/schema-objects';
 import { quoteSqlIdentifier } from '$lib/utils/sql';
 
-export const HIDDEN_ROW_ID_COLUMN = '_querycastle_ctid';
+export const HIDDEN_ROW_ID_COLUMN = '_querycastle_row_id';
 export const MYSQL_ROW_ALIAS = '_querycastle_src';
 
 export type DialectCapabilities = {

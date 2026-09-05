@@ -22,3 +22,9 @@ Thumbs.db
 
 # Script 
 latese.ps1
+
+# Accidental local databases (including src-tauri/main, a SQLite file)
+src-tauri/main
+*.db
+*.sqlite
+*.sqlite3

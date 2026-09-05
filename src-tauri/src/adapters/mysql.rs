@@ -3,18 +3,14 @@ use mysql_async::{Row as MySqlRow, TxOpts, Value as MySqlValue};
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::core::connection::{MAX_QUERY_ROWS, QUERY_TIMEOUT_MS};
-use crate::core::error::{sanitize_mysql_error_to_db_error, DbError};
+use crate::core::error::DbError;
+use crate::core::limits::{apply_select_row_cap, MAX_QUERY_ROWS, QUERY_TIMEOUT_MS};
 use crate::core::sql;
 use crate::core::types::{
     ApplyTableChangesParams, ApplyTableChangesResponse, DatabaseColumn, DatabaseExplorer,
     DatabaseForeignKey, DatabaseIndex, DatabaseRoutine, DatabaseSchema, DatabaseTable,
-    DatabaseTrigger, ObjectDefinition, ObjectDefinitionParams, QueryResultPayload, UpdatedRowCtid,
+    DatabaseTrigger, ObjectDefinition, ObjectDefinitionParams, QueryResultPayload, UpdatedRow,
 };
-
-fn mysql_quote_ident(value: &str) -> String {
-    sql::quote_ident_mysql(value)
-}
 
 fn json_to_mysql_value(value: &Value) -> MySqlValue {
     match value {
@@ -42,7 +38,7 @@ fn mysql_row_hash_expression(columns: &[String]) -> String {
         .map(|column| {
             format!(
                 "coalesce(cast({} as char), '__querycastle_null__')",
-                mysql_quote_ident(column)
+                sql::quote_ident_mysql(column)
             )
         })
         .collect::<Vec<_>>()
@@ -73,32 +69,30 @@ fn mysql_value_to_json(value: &MySqlValue) -> Value {
     }
 }
 
-fn pool_get_error(err: mysql_async::Error) -> DbError {
-    sanitize_mysql_error_to_db_error(err)
-}
-
 pub async fn server_version(pool: &mysql_async::Pool) -> Result<Option<String>, DbError> {
-    let mut conn = pool.get_conn().await.map_err(pool_get_error)?;
-    conn.query_first("select version()")
-        .await
-        .map_err(sanitize_mysql_error_to_db_error)
+    let mut conn = pool.get_conn().await?;
+    Ok(conn.query_first("select version()").await?)
 }
 
 pub async fn run_query(pool: &mysql_async::Pool, sql: &str) -> Result<QueryResultPayload, DbError> {
-    let mut conn = pool.get_conn().await.map_err(pool_get_error)?;
-    let _ = conn
+    let mut conn = pool.get_conn().await?;
+    if let Err(error) = conn
         .query_drop(format!("SET SESSION max_execution_time = {QUERY_TIMEOUT_MS}"))
-        .await;
+        .await
+    {
+        tracing::warn!("Could not set MySQL max_execution_time: {error}");
+    }
 
     let started = std::time::Instant::now();
+    let sql = apply_select_row_cap(sql).into_owned();
     let fut = async {
-        let mut result = conn.query_iter(sql).await.map_err(sanitize_mysql_error_to_db_error)?;
+        let mut result = conn.query_iter(sql).await?;
 
         let mut columns: Vec<String> = Vec::new();
         let mut mapped_rows: Vec<HashMap<String, Value>> = Vec::new();
-        let mut row_count = 0usize;
+        let mut truncated = false;
 
-        while let Some(row) = result.next().await.map_err(sanitize_mysql_error_to_db_error)? {
+        while let Some(row) = result.next().await? {
             if columns.is_empty() {
                 columns = row
                     .columns_ref()
@@ -106,8 +100,8 @@ pub async fn run_query(pool: &mysql_async::Pool, sql: &str) -> Result<QueryResul
                     .map(|column| column.name_str().to_string())
                     .collect();
             }
-            row_count += 1;
             if mapped_rows.len() >= MAX_QUERY_ROWS {
+                truncated = true;
                 break;
             }
             let mut mapped = HashMap::new();
@@ -118,11 +112,13 @@ pub async fn run_query(pool: &mysql_async::Pool, sql: &str) -> Result<QueryResul
             mapped_rows.push(mapped);
         }
 
+        let row_count = mapped_rows.len();
         Ok(QueryResultPayload {
             columns,
             rows: mapped_rows,
             row_count,
             duration_ms: started.elapsed().as_millis(),
+            truncated,
         })
     };
 
@@ -135,11 +131,11 @@ pub async fn run_query(pool: &mysql_async::Pool, sql: &str) -> Result<QueryResul
 }
 
 pub async fn get_database_explorer(pool: &mysql_async::Pool) -> Result<DatabaseExplorer, DbError> {
-    let mut conn = pool.get_conn().await.map_err(pool_get_error)?;
+    let mut conn = pool.get_conn().await?;
     let current_database: String = conn
         .query_first("select database()")
         .await
-        .map_err(sanitize_mysql_error_to_db_error)?
+        ?
         .unwrap_or_default();
 
     let table_rows: Vec<(
@@ -175,7 +171,7 @@ pub async fn get_database_explorer(pool: &mysql_async::Pool) -> Result<DatabaseE
             "#,
         )
         .await
-        .map_err(sanitize_mysql_error_to_db_error)?;
+        ?;
 
     let mut schema_map: HashMap<String, DatabaseSchema> = HashMap::new();
     let mut table_map: HashMap<String, DatabaseTable> = HashMap::new();
@@ -242,7 +238,7 @@ pub async fn get_database_explorer(pool: &mysql_async::Pool) -> Result<DatabaseE
             "#,
         )
         .await
-        .map_err(sanitize_mysql_error_to_db_error)?;
+        ?;
 
     for (schema, table, column, ref_schema, ref_table, ref_column) in fk_rows {
         let table_key = format!("{schema}.{table}");
@@ -298,7 +294,7 @@ async fn load_mysql_indexes(
             "#,
         )
         .await
-        .map_err(sanitize_mysql_error_to_db_error)?;
+        ?;
 
     let mut grouped: HashMap<(String, String, String), (bool, bool, Vec<String>)> = HashMap::new();
     for (schema, table, index_name, non_unique, column_name) in rows {
@@ -345,7 +341,7 @@ async fn load_mysql_triggers(
             "#,
         )
         .await
-        .map_err(sanitize_mysql_error_to_db_error)?;
+        ?;
 
     let mut grouped: HashMap<(String, String, String), (Vec<String>, Option<String>)> = HashMap::new();
     for (schema, table, name, timing, event, statement) in rows {
@@ -395,7 +391,7 @@ async fn load_mysql_routines(
             "#,
         )
         .await
-        .map_err(sanitize_mysql_error_to_db_error)?;
+        ?;
 
     for (schema_name, name, routine_type, return_type, language) in rows {
         schema_map
@@ -425,13 +421,13 @@ pub async fn get_object_definition(
     pool: &mysql_async::Pool,
     params: &ObjectDefinitionParams,
 ) -> Result<ObjectDefinition, DbError> {
-    let mut conn = pool.get_conn().await.map_err(pool_get_error)?;
+    let mut conn = pool.get_conn().await?;
     let kind = params.kind.trim().to_ascii_lowercase();
     let name = params.name.trim();
     if name.is_empty() {
         return Err(DbError::validation("Name is required"));
     }
-    let quoted = mysql_quote_ident(name);
+    let quoted = sql::quote_ident_mysql(name);
     let sql_text = match kind.as_str() {
         "function" => format!("show create function {quoted}"),
         "procedure" => format!("show create procedure {quoted}"),
@@ -441,7 +437,7 @@ pub async fn get_object_definition(
             let qualified = if schema.is_empty() {
                 quoted
             } else {
-                format!("{}.{}", mysql_quote_ident(schema), quoted)
+                format!("{}.{}", sql::quote_ident_mysql(schema), quoted)
             };
             format!("show create view {qualified}")
         }
@@ -463,18 +459,18 @@ pub async fn get_object_definition(
                     (table, name),
                 )
                 .await
-                .map_err(sanitize_mysql_error_to_db_error)?;
+                ?;
             if rows.is_empty() {
                 return Err(DbError::NotFound("Index not found".to_string()));
             }
             let unique = rows[0].0 == 0;
             let columns = rows
                 .into_iter()
-                .map(|(_, column)| mysql_quote_ident(&column))
+                .map(|(_, column)| sql::quote_ident_mysql(&column))
                 .collect::<Vec<_>>()
                 .join(", ");
             let unique_sql = if unique { " unique" } else { "" };
-            let table_sql = mysql_quote_ident(table);
+            let table_sql = sql::quote_ident_mysql(table);
             let sql_out = if name.eq_ignore_ascii_case("PRIMARY") {
                 format!("alter table {table_sql} add primary key ({columns});")
             } else {
@@ -488,7 +484,7 @@ pub async fn get_object_definition(
         _ => return Err(DbError::validation(format!("Unsupported object type: {kind}"))),
     };
 
-    let rows: Vec<MySqlRow> = conn.query(sql_text).await.map_err(sanitize_mysql_error_to_db_error)?;
+    let rows: Vec<MySqlRow> = conn.query(sql_text).await?;
     let create_sql = rows
         .first()
         .and_then(extract_mysql_create_sql)
@@ -522,16 +518,16 @@ fn extract_mysql_create_sql(row: &MySqlRow) -> Option<String> {
 }
 
 pub async fn list_databases(pool: &mysql_async::Pool) -> Result<Vec<String>, DbError> {
-    let mut conn = pool.get_conn().await.map_err(pool_get_error)?;
+    let mut conn = pool.get_conn().await?;
     let dbs: Vec<String> = conn
         .query("show databases")
         .await
-        .map_err(sanitize_mysql_error_to_db_error)?;
+        ?;
     if dbs.is_empty() {
         let current: Option<String> = conn
             .query_first("select database()")
             .await
-            .map_err(sanitize_mysql_error_to_db_error)?;
+            ?;
         Ok(vec![current.unwrap_or_default()])
     } else {
         Ok(dbs)
@@ -555,7 +551,7 @@ async fn mysql_hash_from_values<Q: Queryable>(
         .collect();
     conn.exec_first(sql, params)
         .await
-        .map_err(sanitize_mysql_error_to_db_error)?
+        ?
         .ok_or_else(|| DbError::internal("Could not compute updated MySQL row identity."))
 }
 
@@ -569,21 +565,21 @@ pub async fn apply_table_changes(
         return Err(DbError::validation("Schema and table are required"));
     }
 
-    let mut conn = pool.get_conn().await.map_err(pool_get_error)?;
+    let mut conn = pool.get_conn().await?;
     let mut tx = conn
         .start_transaction(TxOpts::default())
         .await
-        .map_err(sanitize_mysql_error_to_db_error)?;
+        ?;
 
-    let safe_schema = mysql_quote_ident(schema);
-    let safe_table = mysql_quote_ident(table);
+    let safe_schema = sql::quote_ident_mysql(schema);
+    let safe_table = sql::quote_ident_mysql(table);
     let safe_table_ref = format!("{safe_schema}.{safe_table}");
 
     let column_query = "select column_name from information_schema.columns where table_schema = ? and table_name = ? order by ordinal_position";
     let columns: Vec<String> = tx
         .exec(column_query, (schema, table))
         .await
-        .map_err(sanitize_mysql_error_to_db_error)?;
+        ?;
     if columns.is_empty() {
         return Err(DbError::validation("Could not load table columns for MySQL table editing."));
     }
@@ -592,7 +588,7 @@ pub async fn apply_table_changes(
     let pk_columns: Vec<String> = tx
         .exec(pk_sql, (schema, table))
         .await
-        .map_err(sanitize_mysql_error_to_db_error)?;
+        ?;
     if pk_columns.is_empty() {
         return Err(DbError::validation(
             "MySQL table editing requires a PRIMARY KEY. This table has none.",
@@ -603,13 +599,13 @@ pub async fn apply_table_changes(
     let mut updated = 0usize;
     let mut deleted = 0usize;
     let mut inserted = 0usize;
-    let mut updated_rows: Vec<UpdatedRowCtid> = Vec::new();
+    let mut updated_rows: Vec<UpdatedRow> = Vec::new();
 
     for update in &params.changes.updates {
         let entries: Vec<_> = update
             .values
             .iter()
-            .filter(|(key, _)| key.as_str() != "_querycastle_ctid")
+            .filter(|(key, _)| key.as_str() != sql::HIDDEN_ROW_ID_COLUMN)
             .collect();
         if entries.is_empty() {
             continue;
@@ -617,19 +613,18 @@ pub async fn apply_table_changes(
 
         let set_clause = entries
             .iter()
-            .map(|(column, _)| format!("{} = ?", mysql_quote_ident(column)))
+            .map(|(column, _)| format!("{} = ?", sql::quote_ident_mysql(column)))
             .collect::<Vec<_>>()
             .join(", ");
 
         let select_sql = format!("select * from {safe_table_ref} where {row_hash_expr} = ? limit 1");
         let current_row: Option<MySqlRow> = tx
-            .exec_first(select_sql, (update.ctid.clone(),))
-            .await
-            .map_err(sanitize_mysql_error_to_db_error)?;
+            .exec_first(select_sql, (update.row_id.clone(),))
+            .await?;
         let Some(current_row) = current_row else {
             return Err(DbError::NotFound(format!(
                 "Could not update row {}. It may have changed. Refresh and retry.",
-                update.ctid
+                update.row_id
             )));
         };
 
@@ -642,44 +637,42 @@ pub async fn apply_table_changes(
             merged_values.insert(column_name.clone(), value);
         }
         for (column, value) in &update.values {
-            if column == "_querycastle_ctid" {
+            if column.as_str() == sql::HIDDEN_ROW_ID_COLUMN {
                 continue;
             }
             merged_values.insert(column.clone(), value.clone());
         }
 
-        let new_ctid = mysql_hash_from_values(&mut tx, &pk_columns, &merged_values).await?;
+        let new_row_id = mysql_hash_from_values(&mut tx, &pk_columns, &merged_values).await?;
 
         let mut params_vec: Vec<MySqlValue> = entries.iter().map(|(_, value)| json_to_mysql_value(value)).collect();
-        params_vec.push(MySqlValue::Bytes(update.ctid.clone().into_bytes()));
+        params_vec.push(MySqlValue::Bytes(update.row_id.clone().into_bytes()));
         let update_sql = format!("update {safe_table_ref} set {set_clause} where {row_hash_expr} = ? limit 1");
         tx.exec_drop(update_sql, params_vec)
             .await
-            .map_err(sanitize_mysql_error_to_db_error)?;
+            ?;
         let affected = tx.affected_rows();
         if affected == 0 {
             return Err(DbError::NotFound(format!(
                 "Could not update row {}. It may have changed. Refresh and retry.",
-                update.ctid
+                update.row_id
             )));
         }
-        updated_rows.push(UpdatedRowCtid {
-            old_ctid: update.ctid.clone(),
-            new_ctid,
+        updated_rows.push(UpdatedRow {
+            old_row_id: update.row_id.clone(),
+            new_row_id,
             values: merged_values,
         });
         updated += 1;
     }
 
-    for ctid in &params.changes.deletes {
+    for row_id in &params.changes.deletes {
         let delete_sql = format!("delete from {safe_table_ref} where {row_hash_expr} = ? limit 1");
-        tx.exec_drop(delete_sql, (ctid.clone(),))
-            .await
-            .map_err(sanitize_mysql_error_to_db_error)?;
+        tx.exec_drop(delete_sql, (row_id.clone(),)).await?;
         let affected = tx.affected_rows();
         if affected == 0 {
             return Err(DbError::NotFound(format!(
-                "Could not delete row {ctid}. It may have changed. Refresh and retry."
+                "Could not delete row {row_id}. It may have changed. Refresh and retry."
             )));
         }
         deleted += 1;
@@ -688,7 +681,7 @@ pub async fn apply_table_changes(
     for row in &params.changes.inserts {
         let entries: Vec<_> = row
             .iter()
-            .filter(|(key, _)| key.as_str() != "_querycastle_ctid")
+            .filter(|(key, _)| key.as_str() != sql::HIDDEN_ROW_ID_COLUMN)
             .collect();
         if entries.is_empty() {
             continue;
@@ -696,7 +689,7 @@ pub async fn apply_table_changes(
 
         let cols = entries
             .iter()
-            .map(|(column, _)| mysql_quote_ident(column))
+            .map(|(column, _)| sql::quote_ident_mysql(column))
             .collect::<Vec<_>>()
             .join(", ");
         let placeholders = entries.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
@@ -704,11 +697,11 @@ pub async fn apply_table_changes(
         let insert_sql = format!("insert into {safe_table_ref} ({cols}) values ({placeholders})");
         tx.exec_drop(insert_sql, params_vec)
             .await
-            .map_err(sanitize_mysql_error_to_db_error)?;
+            ?;
         inserted += 1;
     }
 
-    tx.commit().await.map_err(sanitize_mysql_error_to_db_error)?;
+    tx.commit().await?;
 
     Ok(ApplyTableChangesResponse {
         ok: true,

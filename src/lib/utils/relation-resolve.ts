@@ -1,5 +1,6 @@
-import type { DatabaseExplorer, DatabaseForeignKey, DatabaseTable } from '$lib/rpc';
+import type { DatabaseExplorer, DatabaseForeignKey } from '$lib/rpc';
 import { HIDDEN_ROW_ID_COLUMN } from '$lib/utils/relation-sql';
+import { findExplorerTable } from '$lib/utils/schema-objects';
 
 export type IncomingRelation = {
 	schema: string;
@@ -9,23 +10,6 @@ export type IncomingRelation = {
 
 function namesEqual(a: string, b: string): boolean {
 	return a === b || a.toLowerCase() === b.toLowerCase();
-}
-
-export function findExplorerTable(
-	explorer: DatabaseExplorer | null,
-	schema: string,
-	table: string,
-): DatabaseTable | null {
-	if (!explorer) return null;
-	const schemaMatch =
-		explorer.schemas.find((item) => item.name === schema) ??
-		explorer.schemas.find((item) => namesEqual(item.name, schema));
-	if (!schemaMatch) return null;
-	return (
-		schemaMatch.tables.find((item) => item.name === table) ??
-		schemaMatch.tables.find((item) => namesEqual(item.name, table)) ??
-		null
-	);
 }
 
 export function isSingleColumnForeignKey(

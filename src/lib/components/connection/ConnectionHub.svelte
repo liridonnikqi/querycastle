@@ -234,7 +234,7 @@
 					: payload.databaseType === 'sqlite'
 						? 'SQLite'
 						: 'PostgreSQL';
-			const response = await rpc.request.testConnection(payload);
+			const response = await rpc.testConnection(payload);
 			testOk = response.ok;
 			testMessage = response.ok
 				? response.serverVersion
@@ -336,10 +336,11 @@
 													onclick={() => connectSaved(connection)}
 													class="h-8 pl-2 pr-3 rounded-sm border border-qc-border bg-qc-panel hover:bg-qc-hover inline-flex items-center gap-2 text-[12px] text-qc-subtle active:scale-[0.97] transition-transform duration-100"
 												>
-													<DatabaseIcon
-														type={connection.databaseType}
-														size={14}
-													/>
+												<DatabaseIcon
+													type={connection.databaseType}
+													size={14}
+													tone={connection.databaseType === 'sqlite' ? 'ink' : 'brand'}
+												/>
 													<span class="truncate max-w-[160px]"
 														>{connection.name}</span
 													>
@@ -422,10 +423,11 @@
 												<div
 													class="w-9 h-9 rounded-sm bg-qc-elevated border border-qc-border flex items-center justify-center shrink-0"
 												>
-													<DatabaseIcon
-														type={connection.databaseType}
-														size={18}
-													/>
+												<DatabaseIcon
+													type={connection.databaseType}
+													size={18}
+													tone={connection.databaseType === 'sqlite' ? 'ink' : 'brand'}
+												/>
 												</div>
 												<div class="min-w-0 flex-1">
 													<div class="text-[13px] font-medium truncate">

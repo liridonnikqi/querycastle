@@ -1,5 +1,7 @@
 use crate::core::types::DatabaseType;
 
+pub(crate) const HIDDEN_ROW_ID_COLUMN: &str = "_querycastle_row_id";
+
 pub(crate) fn quote_ident(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }

@@ -1,9 +1,10 @@
 <script lang="ts">
     import { X, FolderOpen } from "@lucide/svelte";
     import { open } from "@tauri-apps/plugin-dialog";
-    import type { ConnectionInput } from "$lib/rpc";
+    import type { ConnectionInput, DatabaseType } from "$lib/rpc";
     import DatabaseIcon from "$lib/components/ui/DatabaseIcon.svelte";
     import { generateConnectionString } from "$lib/utils/connection";
+    import { engineDisplayName } from "$lib/utils/dialect";
 
     let {
         visible,
@@ -141,16 +142,7 @@
         }
     }
 
-    const engineLabels: Record<string, string> = {
-        postgres: "PostgreSQL",
-        mysql: "MySQL",
-        sqlite: "SQLite",
-        redis: "Redis",
-        mongodb: "MongoDB",
-        duckdb: "DuckDB",
-        mssql: "SQL Server",
-    };
-    const engineLabel = $derived(engineLabels[connectionForm.databaseType] ?? "PostgreSQL");
+    const engineLabel = $derived(engineDisplayName(connectionForm.databaseType));
     const isSqlite = $derived(connectionForm.databaseType === "sqlite");
 
     const connectionStringPlaceholder = $derived.by(() => {
@@ -159,26 +151,11 @@
         return "postgres://postgres:password@localhost:5432/postgres";
     });
 
-    type EngineOption = {
-        value: ConnectionInput["databaseType"] | "redis" | "mongodb" | "duckdb" | "mssql";
-        label: string;
-        detail: string;
-        disabled: boolean;
-    };
-
-    const engineOptions: EngineOption[] = [
-        { value: "postgres", label: "PostgreSQL", detail: "Relational", disabled: false },
-        { value: "mysql", label: "MySQL", detail: "Relational", disabled: false },
-        { value: "sqlite", label: "SQLite", detail: "Local file", disabled: false },
-        { value: "redis", label: "Redis", detail: "In-memory", disabled: true },
-        { value: "mongodb", label: "MongoDB", detail: "Document", disabled: true },
-        { value: "duckdb", label: "DuckDB", detail: "Analytical", disabled: true },
-        { value: "mssql", label: "SQL Server", detail: "Relational", disabled: true },
+    const engineOptions: Array<{ value: DatabaseType; label: string; detail: string }> = [
+        { value: "postgres", label: "PostgreSQL", detail: "Relational" },
+        { value: "mysql", label: "MySQL", detail: "Relational" },
+        { value: "sqlite", label: "SQLite", detail: "Local file" },
     ];
-
-    function isSupportedEngine(value: EngineOption["value"]): value is ConnectionInput["databaseType"] {
-        return value === "postgres" || value === "mysql" || value === "sqlite";
-    }
 
     let step = $state(1);
     let wasVisible = $state(false);
@@ -281,24 +258,15 @@
                         {#each engineOptions as database (database.value)}
                             <button
                                 type="button"
-                                disabled={database.disabled}
-                                title={database.disabled ? `${database.label} support is coming soon` : database.label}
-                                onclick={() => {
-                                    if (!isSupportedEngine(database.value)) return;
-                                    changeDatabaseType(database.value);
-                                }}
+                                title={database.label}
+                                onclick={() => changeDatabaseType(database.value)}
                                 class={`relative flex min-w-0 flex-col items-center justify-center gap-1 rounded-md border px-2 py-2 text-center transition-colors ${
-                                    database.disabled
-                                        ? "border-qc-border-subtle bg-qc-panel text-qc-muted opacity-50 cursor-not-allowed"
-                                        : connectionForm.databaseType === database.value
-                                          ? "border-qc-fg bg-qc-hover text-qc-fg"
-                                          : "border-qc-border bg-qc-panel text-qc-subtle hover:border-qc-muted hover:bg-qc-hover"
+                                    connectionForm.databaseType === database.value
+                                        ? "border-qc-fg bg-qc-hover text-qc-fg"
+                                        : "border-qc-border bg-qc-panel text-qc-subtle hover:border-qc-muted hover:bg-qc-hover"
                                 }`}
                             >
-                                {#if database.disabled}
-                                    <span class="absolute right-1.5 top-1.5 rounded-full bg-qc-hover px-1.5 py-px text-[9px] font-medium text-qc-muted">Soon</span>
-                                {/if}
-                                <span class={`inline-flex h-8 w-8 items-center justify-center rounded-md ${database.disabled ? "bg-qc-hover" : "bg-qc-elevated"}`}>
+                                <span class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-qc-elevated">
                                     <DatabaseIcon type={database.value} size={20} />
                                 </span>
                                 <span class="min-w-0">

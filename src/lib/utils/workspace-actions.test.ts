@@ -35,7 +35,7 @@ describe('buildTableActionPlan', () => {
 		});
 		expect(plan.kind).toBe('run_query');
 		if (plan.kind !== 'run_query') return;
-		expect(plan.query).toContain('ctid::text as _querycastle_ctid');
+		expect(plan.query).toContain('ctid::text as _querycastle_row_id');
 		expect(plan.context).toEqual({ schema: 'public', table: 'users' });
 	});
 

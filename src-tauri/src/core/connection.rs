@@ -3,9 +3,6 @@ use url::Url;
 use crate::core::error::DbError;
 use crate::core::types::{ConnectionInput, DatabaseType};
 
-pub(crate) const QUERY_TIMEOUT_MS: u64 = 30_000;
-pub(crate) const MAX_QUERY_ROWS: usize = 1_000;
-
 fn default_port(database_type: DatabaseType) -> u16 {
     match database_type {
         DatabaseType::Postgres => 5432,
@@ -33,8 +30,8 @@ fn default_database(database_type: DatabaseType) -> &'static str {
 pub(crate) fn normalize_connection_input(input: ConnectionInput) -> Result<ConnectionInput, DbError> {
     let database_type = input.database_type;
 
-    if input.use_connection_string.unwrap_or(false) {
-        let raw = input.connection_string.clone().unwrap_or_default().trim().to_string();
+    if input.use_connection_string {
+        let raw = input.connection_string.trim().to_string();
         if raw.is_empty() {
             return Err(DbError::validation("Connection string is required"));
         }
@@ -115,8 +112,8 @@ pub(crate) fn normalize_connection_input(input: ConnectionInput) -> Result<Conne
             } else {
                 input.ssl_insecure
             },
-            use_connection_string: Some(true),
-            connection_string: Some(raw),
+            use_connection_string: true,
+            connection_string: raw,
         });
     }
 
@@ -168,35 +165,33 @@ pub(crate) fn normalize_connection_input(input: ConnectionInput) -> Result<Conne
         } else {
             input.ssl_insecure
         },
-        use_connection_string: Some(false),
-        connection_string: Some(String::new()),
+        use_connection_string: false,
+        connection_string: String::new(),
     })
 }
 
 pub(crate) fn with_new_database(connection: &ConnectionInput, new_database: &str) -> ConnectionInput {
     let new_db = new_database.trim().to_string();
-    if connection.use_connection_string.unwrap_or(false) {
-        if let Some(raw) = connection.connection_string.as_deref() {
-            let raw = raw.trim();
-            if !raw.is_empty() {
-                if let Ok(mut url) = Url::parse(raw) {
-                    match connection.database_type {
-                        DatabaseType::Postgres | DatabaseType::Mysql => {
-                            url.set_path(&format!("/{}", new_db));
-                            return ConnectionInput {
-                                database: new_db.clone(),
-                                connection_string: Some(url.to_string()),
-                                ..connection.clone()
-                            };
-                        }
-                        DatabaseType::Sqlite => {
-                            url.set_path(&format!("/{}", new_db.trim_start_matches('/')));
-                            return ConnectionInput {
-                                database: new_db.clone(),
-                                connection_string: Some(url.to_string()),
-                                ..connection.clone()
-                            };
-                        }
+    if connection.use_connection_string {
+        let raw = connection.connection_string.trim();
+        if !raw.is_empty() {
+            if let Ok(mut url) = Url::parse(raw) {
+                match connection.database_type {
+                    DatabaseType::Postgres | DatabaseType::Mysql => {
+                        url.set_path(&format!("/{}", new_db));
+                        return ConnectionInput {
+                            database: new_db.clone(),
+                            connection_string: url.to_string(),
+                            ..connection.clone()
+                        };
+                    }
+                    DatabaseType::Sqlite => {
+                        url.set_path(&format!("/{}", new_db.trim_start_matches('/')));
+                        return ConnectionInput {
+                            database: new_db.clone(),
+                            connection_string: url.to_string(),
+                            ..connection.clone()
+                        };
                     }
                 }
             }
@@ -223,8 +218,8 @@ mod tests {
             database: "postgres".into(),
             ssl: true,
             ssl_insecure: true,
-            use_connection_string: Some(false),
-            connection_string: Some(String::new()),
+            use_connection_string: false,
+            connection_string: String::new(),
         }
     }
 

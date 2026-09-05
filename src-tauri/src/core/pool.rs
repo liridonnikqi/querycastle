@@ -19,13 +19,11 @@ pub fn create_pool(connection: &ConnectionInput) -> Result<Pool, DbError> {
 }
 
 fn create_postgres_pool(connection: &ConnectionInput) -> Result<deadpool_postgres::Pool, DbError> {
-    if connection.use_connection_string.unwrap_or(false) {
-        if let Some(raw) = connection.connection_string.as_deref() {
-            let raw = raw.trim();
-            if !raw.is_empty() && (raw.starts_with("postgres://") || raw.starts_with("postgresql://")) {
-                if let Ok(cfg) = raw.parse::<tokio_postgres::Config>() {
-                    return build_postgres_pool(cfg, connection.ssl, connection.ssl_insecure);
-                }
+    if connection.use_connection_string {
+        let raw = connection.connection_string.trim();
+        if !raw.is_empty() && (raw.starts_with("postgres://") || raw.starts_with("postgresql://")) {
+            if let Ok(cfg) = raw.parse::<tokio_postgres::Config>() {
+                return build_postgres_pool(cfg, connection.ssl, connection.ssl_insecure);
             }
         }
     }
@@ -72,10 +70,10 @@ fn build_postgres_pool(
 }
 
 fn create_mysql_pool(connection: &ConnectionInput) -> Result<mysql_async::Pool, DbError> {
-    let base = if connection.use_connection_string.unwrap_or(false)
-        && connection.connection_string.as_deref().unwrap_or_default().trim().starts_with("mysql://")
+    let base = if connection.use_connection_string
+        && connection.connection_string.trim().starts_with("mysql://")
     {
-        mysql_async::Opts::from_url(connection.connection_string.as_deref().unwrap_or_default())
+        mysql_async::Opts::from_url(connection.connection_string.trim())
             .map_err(|e| DbError::validation(format!("Invalid MySQL connection string: {e}")))?
     } else {
         let builder = mysql_async::OptsBuilder::default()

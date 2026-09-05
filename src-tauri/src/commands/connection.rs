@@ -1,6 +1,5 @@
-use std::collections::HashMap;
+use std::sync::Arc;
 
-use serde::Deserialize;
 use tauri::State;
 use tracing::info;
 
@@ -9,13 +8,7 @@ use crate::core::pool::create_pool;
 use crate::core::state::{
     disconnected_status, new_session_id, status_from_active, ActiveConnection, AppState,
 };
-use crate::core::types::{ConnectionInput, ConnectionStatus, TestConnectionResponse};
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionIdParams {
-    pub session_id: String,
-}
+use crate::core::types::{ConnectionInput, ConnectionStatus, SessionIdParams, TestConnectionResponse};
 
 #[tauri::command]
 pub async fn connection_status(state: State<'_, AppState>) -> Result<ConnectionStatus, StructuredDbError> {
@@ -58,7 +51,7 @@ pub async fn connect(
     let status = status_from_active(&active);
     {
         let mut guard = state.inner.write().await;
-        guard.sessions.insert(id.clone(), active);
+        guard.sessions.insert(id.clone(), Arc::new(active));
         guard.active_id = Some(id);
     }
 
@@ -66,13 +59,13 @@ pub async fn connect(
 }
 
 #[tauri::command]
-pub async fn disconnect(state: State<'_, AppState>) -> Result<HashMap<String, bool>, StructuredDbError> {
+pub async fn disconnect(state: State<'_, AppState>) -> Result<(), StructuredDbError> {
     let mut guard = state.inner.write().await;
     let n = guard.sessions.len();
     guard.sessions.clear();
     guard.active_id = None;
     info!("Disconnected all sessions ({n})");
-    Ok(HashMap::from([(String::from("ok"), true)]))
+    Ok(())
 }
 
 #[tauri::command]
@@ -85,12 +78,12 @@ pub async fn switch_session(
         return Err(DbError::validation("Session id is required").into());
     }
     let mut guard = state.inner.write().await;
-    if !guard.sessions.contains_key(id) {
+    let Some(session) = guard.sessions.get(id) else {
         return Err(DbError::NotFound("Connection session not found".to_string()).into());
-    }
+    };
+    let status = status_from_active(session);
     guard.active_id = Some(id.to_string());
-    let active = guard.sessions.get(id).expect("session exists");
-    Ok(status_from_active(active))
+    Ok(status)
 }
 
 #[tauri::command]

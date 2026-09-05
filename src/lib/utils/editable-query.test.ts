@@ -21,7 +21,7 @@ describe('tryBuildEditableQuery', () => {
 			databaseType: 'postgres',
 			explorer,
 		});
-		expect(plan?.sql).toContain('ctid::text as _querycastle_ctid');
+		expect(plan?.sql).toContain('ctid::text as _querycastle_row_id');
 		expect(plan?.sql).toContain('from "public"."users"');
 		expect(plan?.context).toEqual({ schema: 'public', table: 'users' });
 	});

@@ -9,8 +9,11 @@ pub async fn apply_table_changes(
     params: ApplyTableChangesParams,
     state: State<'_, AppState>,
 ) -> Result<ApplyTableChangesResponse, StructuredDbError> {
-    let active = state.require_active().await.map_err(StructuredDbError::from)?;
-    crate::adapters::apply_table_changes(&active.pool, &params)
+    let session = state
+        .require_session(&params.session_id)
+        .await
+        .map_err(StructuredDbError::from)?;
+    crate::adapters::apply_table_changes(&session.pool, &params)
         .await
         .map_err(StructuredDbError::from)
 }

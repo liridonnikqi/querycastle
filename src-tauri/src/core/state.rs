@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::core::error::DbError;
 use crate::core::pool::Pool;
@@ -14,7 +15,7 @@ pub struct ActiveConnection {
 }
 
 pub struct SessionState {
-    pub sessions: HashMap<String, ActiveConnection>,
+    pub sessions: HashMap<String, Arc<ActiveConnection>>,
     pub active_id: Option<String>,
 }
 
@@ -23,19 +24,13 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn get_active(&self) -> Option<ActiveConnection> {
+    pub async fn get_active(&self) -> Option<Arc<ActiveConnection>> {
         let guard = self.inner.read().await;
         let id = guard.active_id.as_ref()?;
         guard.sessions.get(id).cloned()
     }
 
-    pub async fn require_active(&self) -> Result<ActiveConnection, DbError> {
-        self.get_active()
-            .await
-            .ok_or_else(|| DbError::connection("No active database connection"))
-    }
-
-    pub async fn require_session(&self, session_id: &str) -> Result<ActiveConnection, DbError> {
+    pub async fn require_session(&self, session_id: &str) -> Result<Arc<ActiveConnection>, DbError> {
         let id = session_id.trim();
         if id.is_empty() {
             return Err(DbError::validation("Session id is required"));

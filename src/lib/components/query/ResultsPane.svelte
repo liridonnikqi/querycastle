@@ -24,7 +24,6 @@
 		QueryResultPayload,
 		TableChangesPayload,
 	} from '$lib/rpc';
-	import { rpc } from '$lib/rpc-client';
 	import {
 		outgoingFkColumns,
 		resolveIncomingRelations,
@@ -36,7 +35,7 @@
 		formatFollowValue,
 		isFollowableValue,
 	} from '$lib/utils/relation-sql';
-	import { loadFkOptions, type FkOption } from '$lib/utils/fk-lookup';
+	import { loadFkOptions } from '$lib/utils/fk-lookup';
 	import {
 		coerceByColumn,
 		displayCellText,
@@ -47,6 +46,7 @@
 		valuesForInsert,
 		type GridColumnMeta,
 	} from '$lib/utils/grid-editors';
+	import { HIDDEN_ROW_ID_COLUMN } from '$lib/utils/dialect';
 	import { quoteSqlIdentifier } from '$lib/utils/sql';
 	import { buildTableSelect } from '$lib/utils/table-select';
 	import { copyTextToClipboard } from '$lib/utils/clipboard';
@@ -65,6 +65,11 @@
 		pendingChangeCount,
 	} from '$lib/utils/pending-changes';
 	import { toast } from '$lib/stores/toast.svelte';
+	import {
+		ResultsGridSession,
+		isHiddenRowIdColumn,
+		rowIdOf,
+	} from '$lib/workspace/results-grid.svelte';
 	import { fly } from 'svelte/transition';
 	import {
 		PAGE_SIZE_OPTIONS,
@@ -86,7 +91,6 @@
 		row: Record<string, unknown>;
 	} | null;
 	type EditingCell = { rowId: string; column: string } | null;
-	type PendingInsertRow = { id: string; values: Record<string, unknown> };
 	type ResultView = 'results' | 'messages' | 'explain';
 	type ColumnResizeState = {
 		column: string;
@@ -101,6 +105,7 @@
 		resultContext,
 		explorer = null,
 		relationTrail = [],
+		runQuery,
 		onRunSql,
 		onApplyTableChanges,
 		onFollowRelation,
@@ -116,6 +121,7 @@
 		resultContext: { schema: string; table: string } | null;
 		explorer?: DatabaseExplorer | null;
 		relationTrail?: RelationHop[];
+		runQuery: (sql: string) => Promise<QueryResultPayload>;
 		onRunSql: (sql: string) => Promise<void>;
 		onApplyTableChanges?: (
 			context: { schema: string; table: string },
@@ -134,16 +140,13 @@
 		rows: [],
 		rowCount: 0,
 		durationMs: 0,
+		truncated: false,
 	});
 
+	const grid = new ResultsGridSession();
 	let rerunning = $state(false);
 	let runningExplain = $state(false);
 	let syncingChanges = $state(false);
-	let selectedRows = $state(new Set<string>());
-	let activeRowId = $state<string | null>(null);
-	let pendingUpdates = $state(new Map<string, Record<string, unknown>>());
-	let pendingDeletes = $state(new Set<string>());
-	let pendingInserts = $state<PendingInsertRow[]>([]);
 	let rowContextMenu = $state<RowContextMenu>(null);
 	let relatedSubmenuOpen = $state(false);
 	let editingCell = $state<EditingCell>(null);
@@ -156,15 +159,9 @@
 	let activeView = $state<ResultView>('results');
 	const minColumnWidth = 120;
 
-	let fkOptionCache = $state(new Map<string, FkOption[]>());
-	let fkLoadingKeys = $state(new Set<string>());
 	let keepDraftsOnNextResult = $state(false);
-	let pageSize = $state<PageSize>(100);
 	let page = $state(1);
-	let totalRowCount = $state(0);
 	let sort = $state<GridSort | null>(null);
-	let columnFilters = $state<Record<string, string>>({});
-	let showFilterRow = $state(false);
 	let showSortMenu = $state(false);
 	let pendingPanelOpen = $state(false);
 	let inspectorOpen = $state(false);
@@ -185,17 +182,15 @@
 	const FILLER_COL_PX = 120;
 	const EMPTY_SHEET_COLUMNS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 	let userCollapsedPending = $state(false);
-	let baseWhere = $state('');
 	let lastBrowseSourceKey = $state('');
-	let deletedSnapshots = $state(new Map<string, Record<string, unknown>>());
 	let filterTimer: ReturnType<typeof setTimeout> | null = null;
 
 	let editable = $derived.by(
 		() =>
-			!!resultContext && displayResult.columns.includes('_querycastle_ctid'),
+			!!resultContext && displayResult.columns.includes(HIDDEN_ROW_ID_COLUMN),
 	);
 	let visibleColumns = $derived.by(() =>
-		displayResult.columns.filter((column) => column !== '_querycastle_ctid'),
+		displayResult.columns.filter((column) => !isHiddenRowIdColumn(column)),
 	);
 	let visibleRows = $derived(displayResult.rows);
 	let columnMetas = $derived.by(() =>
@@ -208,9 +203,9 @@
 	);
 	let changeCount = $derived.by(() =>
 		pendingChangeCount({
-			updates: pendingUpdates,
-			inserts: pendingInserts,
-			deletes: pendingDeletes,
+			updates: grid.pendingUpdates,
+			inserts: grid.pendingInserts,
+			deletes: grid.pendingDeletes,
 		}),
 	);
 	let pendingCards = $derived.by(() => {
@@ -219,10 +214,10 @@
 			schema: resultContext.schema,
 			table: resultContext.table,
 			rows: displayResult.rows,
-			updates: pendingUpdates,
-			inserts: pendingInserts,
-			deletes: pendingDeletes,
-			deletedSnapshots,
+			updates: grid.pendingUpdates,
+			inserts: grid.pendingInserts,
+			deletes: grid.pendingDeletes,
+			deletedSnapshots: grid.deletedSnapshots,
 		});
 	});
 	let pkColumns = $derived(columnMetas.filter((column) => column.isPrimary).map((column) => column.name));
@@ -232,14 +227,14 @@
 			databaseType,
 			schema: resultContext.schema,
 			table: resultContext.table,
-			updates: Array.from(pendingUpdates.entries()).map(([ctid, values]) => ({
-				ctid,
+			updates: Array.from(grid.pendingUpdates.entries()).map(([rowId, values]) => ({
+				rowId,
 				values,
 			})),
-			deletes: Array.from(pendingDeletes),
-			inserts: pendingInserts.map((row) => row.values),
+			deletes: Array.from(grid.pendingDeletes),
+			inserts: grid.pendingInserts.map((row) => row.values),
 			rows: displayResult.rows,
-			deletedSnapshots,
+			deletedSnapshots: grid.deletedSnapshots,
 			pkColumns,
 		});
 	});
@@ -257,7 +252,7 @@
 	});
 	let canServerBrowse = $derived(!!resultContext);
 	let filterList = $derived.by(() =>
-		Object.entries(columnFilters)
+		Object.entries(grid.columnFilters)
 			.filter(([, value]) => value.trim().length > 0)
 			.map(([column, value]) => ({ column, value })),
 	);
@@ -273,49 +268,49 @@
 			: filterSortRows(visibleRows, filterList, effectiveSort),
 	);
 	let displayTotal = $derived(
-		canServerBrowse ? totalRowCount : clientPreparedRows.length,
+		canServerBrowse ? grid.totalRowCount : clientPreparedRows.length,
 	);
-	let pageCount = $derived.by(() => totalPages(displayTotal, pageSize));
+	let pageCount = $derived.by(() => totalPages(displayTotal, grid.pageSize));
 	let pageRows = $derived.by(() => {
 		if (canServerBrowse) return visibleRows;
-		const start = (page - 1) * pageSize;
-		return clientPreparedRows.slice(start, start + pageSize);
+		const start = (page - 1) * grid.pageSize;
+		return clientPreparedRows.slice(start, start + grid.pageSize);
 	});
 	let inspectorRow = $derived.by(() => {
 		if (pageRows.length === 0) return null;
-		if (!activeRowId) return pageRows[0] ?? null;
+		if (!grid.activeRowId) return pageRows[0] ?? null;
 		return (
 			pageRows.find(
-				(row) => String(row['_querycastle_ctid'] ?? '') === activeRowId,
+				(row) => rowIdOf(row) === grid.activeRowId,
 			) ??
 			pageRows[0] ??
 			null
 		);
 	});
 	let inspectorValues = $derived.by(() => {
-		if (!inspectorRow || !activeRowId) return {} as Record<string, unknown>;
-		return { ...inspectorRow, ...(pendingUpdates.get(activeRowId) ?? {}) };
+		if (!inspectorRow || !grid.activeRowId) return {} as Record<string, unknown>;
+		return { ...inspectorRow, ...(grid.pendingUpdates.get(grid.activeRowId) ?? {}) };
 	});
 	let inspectorSql = $derived.by(() => {
-		if (!resultContext || !activeRowId) return '';
+		if (!resultContext || !grid.activeRowId) return '';
 		return buildRowInspectSql({
 			databaseType,
 			schema: resultContext.schema,
 			table: resultContext.table,
-			ctid: activeRowId,
+			rowId: grid.activeRowId,
 			row: inspectorRow ?? undefined,
 			pkColumns,
 		});
 	});
 	let inspectorLabel = $derived.by(() => {
 		if (pageRows.length === 0) return 'Row';
-		let index = activeRowId
+		let index = grid.activeRowId
 			? pageRows.findIndex(
-					(row) => String(row['_querycastle_ctid'] ?? '') === activeRowId,
+					(row) => rowIdOf(row) === grid.activeRowId,
 				)
 			: 0;
 		if (index < 0) index = 0;
-		return `Row #${(page - 1) * pageSize + index + 1}`;
+		return `Row #${(page - 1) * grid.pageSize + index + 1}`;
 	});
 	const skeletonRowCount = 10;
 	const skeletonRows = Array.from(
@@ -326,7 +321,7 @@
 		if (!editingCell) return false;
 		const { rowId, column } = editingCell;
 		const row = displayResult.rows.find(
-			(item) => String(item['_querycastle_ctid'] ?? '') === rowId,
+			(item) => rowIdOf(item) === rowId,
 		);
 		if (!row) return false;
 		const nextValue = coerceValue(editDraft, column);
@@ -334,9 +329,9 @@
 	});
 	let hasPendingChanges = $derived.by(
 		() =>
-			pendingUpdates.size > 0 ||
-			pendingDeletes.size > 0 ||
-			pendingInserts.length > 0 ||
+			grid.pendingUpdates.size > 0 ||
+			grid.pendingDeletes.size > 0 ||
+			grid.pendingInserts.length > 0 ||
 			editingCellHasPendingChange,
 	);
 
@@ -358,21 +353,21 @@
 			String(payload.rowCount),
 			String(payload.durationMs),
 			String(payload.rows.length),
-			first ? String(first['_querycastle_ctid'] ?? '') : '',
-			last ? String(last['_querycastle_ctid'] ?? '') : '',
+			first ? rowIdOf(first) : '',
+			last ? rowIdOf(last) : '',
 		].join('|');
 	}
 
 	function resetDraftState() {
-		selectedRows = new Set();
-		pendingUpdates = new Map();
-		pendingDeletes = new Set();
-		pendingInserts = [];
+		grid.selectedRows = new Set();
+		grid.pendingUpdates = new Map();
+		grid.pendingDeletes = new Set();
+		grid.pendingInserts = [];
 		rowContextMenu = null;
 		relatedSubmenuOpen = false;
 		editingCell = null;
 		editDraft = '';
-		deletedSnapshots = new Map();
+		grid.deletedSnapshots = new Map();
 		keepDraftsOnNextResult = false;
 		pendingPanelOpen = false;
 		userCollapsedPending = false;
@@ -408,15 +403,16 @@
 			rows: result.rows.map((row) => ({ ...row })),
 			rowCount: result.rowCount,
 			durationMs: result.durationMs,
+			truncated: result.truncated,
 		};
 		if (keepDraftsOnNextResult) {
 			keepDraftsOnNextResult = false;
-			if (!canServerBrowse) totalRowCount = result.rowCount;
+			if (!canServerBrowse) grid.totalRowCount = result.rowCount;
 			return;
 		}
 		clearCellHighlights();
 		resetDraftState();
-		if (!canServerBrowse) totalRowCount = result.rowCount;
+		if (!canServerBrowse) grid.totalRowCount = result.rowCount;
 		activeView = 'results';
 	});
 
@@ -453,19 +449,19 @@
 		search = '',
 	) {
 		const key = `${fkCacheKey(fk)}::${search.trim().toLowerCase()}`;
-		if (fkOptionCache.has(key) || fkLoadingKeys.has(key)) return;
-		const nextLoading = new Set(fkLoadingKeys);
+		if (grid.fkOptionCache.has(key) || grid.fkLoadingKeys.has(key)) return;
+		const nextLoading = new Set(grid.fkLoadingKeys);
 		nextLoading.add(key);
-		fkLoadingKeys = nextLoading;
+		grid.fkLoadingKeys = nextLoading;
 		try {
 			const options = await loadFkOptions({
-				runQuery: (sql) => rpc.request.runQuery({ sql }),
+				runQuery,
 				databaseType,
 				explorer: explorer ?? null,
 				fk,
 				search,
 			});
-			const nextCache = new Map(fkOptionCache);
+			const nextCache = new Map(grid.fkOptionCache);
 			nextCache.set(key, options);
 			const baseKey = fkCacheKey(fk);
 			const existing = nextCache.get(baseKey) ?? [];
@@ -476,15 +472,15 @@
 				}
 			}
 			nextCache.set(baseKey, merged);
-			fkOptionCache = nextCache;
+			grid.fkOptionCache = nextCache;
 		} catch {
-			const nextCache = new Map(fkOptionCache);
+			const nextCache = new Map(grid.fkOptionCache);
 			if (!nextCache.has(fkCacheKey(fk))) nextCache.set(fkCacheKey(fk), []);
-			fkOptionCache = nextCache;
+			grid.fkOptionCache = nextCache;
 		} finally {
-			const done = new Set(fkLoadingKeys);
+			const done = new Set(grid.fkLoadingKeys);
 			done.delete(key);
-			fkLoadingKeys = done;
+			grid.fkLoadingKeys = done;
 		}
 	}
 
@@ -494,7 +490,7 @@
 		referencedColumn: string;
 	}) {
 		const prefix = fkCacheKey(fk);
-		for (const key of fkLoadingKeys) {
+		for (const key of grid.fkLoadingKeys) {
 			if (key === prefix || key.startsWith(`${prefix}::`)) return true;
 		}
 		return false;
@@ -508,7 +504,7 @@
 		} | null,
 	) {
 		if (!fk) return [];
-		return fkOptionCache.get(fkCacheKey(fk)) ?? [];
+		return grid.fkOptionCache.get(fkCacheKey(fk)) ?? [];
 	}
 
 	function draftFromValue(column: string, value: unknown): string {
@@ -540,7 +536,7 @@
 		rowId: string,
 		column: string,
 	): unknown {
-		const pending = pendingUpdates.get(rowId);
+		const pending = grid.pendingUpdates.get(rowId);
 		if (pending && Object.prototype.hasOwnProperty.call(pending, column)) {
 			return pending[column];
 		}
@@ -554,7 +550,7 @@
 	): unknown {
 		if (
 			Object.prototype.hasOwnProperty.call(row, column) ||
-			pendingUpdates.get(rowId)?.[column] !== undefined
+			grid.pendingUpdates.get(rowId)?.[column] !== undefined
 		) {
 			return getRowValue(row, rowId, column);
 		}
@@ -671,7 +667,7 @@
 		currentValue: unknown,
 	) {
 		if (rowId) {
-			activeRowId = rowId;
+			grid.activeRowId = rowId;
 		}
 		if (editingCell?.rowId === rowId && editingCell?.column === column) return;
 		const fks = explorer
@@ -693,17 +689,17 @@
 			inspectorOpen = false;
 			return;
 		}
-		if (!activeRowId) {
+		if (!grid.activeRowId) {
 			const first = pageRows[0];
-			if (first) activeRowId = String(first['_querycastle_ctid'] ?? '');
+			if (first) grid.activeRowId = rowIdOf(first);
 		}
-		if (!activeRowId) return;
+		if (!grid.activeRowId) return;
 		editingCell = null;
 		inspectorOpen = true;
 	}
 
 	function inspectRow(rowId: string) {
-		activeRowId = rowId;
+		grid.activeRowId = rowId;
 		editingCell = null;
 		inspectorOpen = true;
 		rowContextMenu = null;
@@ -794,8 +790,8 @@
 
 	function beginEdit(rowId: string, column: string, currentValue: unknown) {
 		if (inspectorOpen) return;
-		if (!editable || column === '_querycastle_ctid') return;
-		if (pendingDeletes.has(rowId)) return;
+		if (!editable || isHiddenRowIdColumn(column)) return;
+		if (grid.pendingDeletes.has(rowId)) return;
 		const meta = metaFor(column);
 		if (meta?.isAuto || meta?.isPrimary) return;
 		editingCell = { rowId, column };
@@ -804,12 +800,12 @@
 	}
 
 	function applyCellValue(rowId: string, column: string, nextValue: unknown) {
-		const map = new Map(pendingUpdates);
+		const map = new Map(grid.pendingUpdates);
 		const row = displayResult.rows.find(
-			(item) => String(item['_querycastle_ctid'] ?? '') === rowId,
+			(item) => rowIdOf(item) === rowId,
 		);
 		const baseValue = row ? row[column] : undefined;
-		const prev = { ...(pendingUpdates.get(rowId) ?? {}) };
+		const prev = { ...(grid.pendingUpdates.get(rowId) ?? {}) };
 
 		if (valuesEqual(nextValue, baseValue)) {
 			delete prev[column];
@@ -822,7 +818,7 @@
 		} else {
 			map.set(rowId, prev);
 		}
-		pendingUpdates = map;
+		grid.pendingUpdates = map;
 		if (!userCollapsedPending) pendingPanelOpen = true;
 	}
 
@@ -838,8 +834,8 @@
 	}
 
 	function setInspectorField(column: string, raw: string) {
-		if (!activeRowId) return;
-		applyCellValue(activeRowId, column, coerceValue(raw, column));
+		if (!grid.activeRowId) return;
+		applyCellValue(grid.activeRowId, column, coerceValue(raw, column));
 	}
 
 	function discardEdit() {
@@ -912,7 +908,7 @@
 		const lines = [
 			cols.join('\t'),
 			...rows.map((row) => {
-				const rowId = String(row['_querycastle_ctid'] ?? '');
+				const rowId = rowIdOf(row);
 				return cols
 					.map((column) => String(getRowValue(row, rowId, column) ?? ''))
 					.join('\t');
@@ -923,13 +919,13 @@
 
 	function copySelectedRows() {
 		const rows = pageRows.filter((row) =>
-			selectedRows.has(String(row['_querycastle_ctid'] ?? '')),
+			grid.selectedRows.has(rowIdOf(row)),
 		);
 		if (rows.length === 0) return;
 		const lines = [
 			visibleColumns.join('\t'),
 			...rows.map((row) => {
-				const rowId = String(row['_querycastle_ctid'] ?? '');
+				const rowId = rowIdOf(row);
 				return visibleColumns
 					.map((column) => String(getRowValue(row, rowId, column) ?? ''))
 					.join('\t');
@@ -966,42 +962,42 @@
 	}
 
 	function toggleRowSelected(rowId: string) {
-		const next = new Set(selectedRows);
+		const next = new Set(grid.selectedRows);
 		if (next.has(rowId)) next.delete(rowId);
 		else next.add(rowId);
-		selectedRows = next;
-		activeRowId = rowId;
+		grid.selectedRows = next;
+		grid.activeRowId = rowId;
 	}
 
 	function toggleSelectAllVisible() {
 		const ids = pageRows
-			.map((row) => String(row['_querycastle_ctid'] ?? ''))
+			.map((row) => rowIdOf(row))
 			.filter((id) => id.length > 0);
 		const allSelected =
-			ids.length > 0 && ids.every((id) => selectedRows.has(id));
-		selectedRows = allSelected ? new Set() : new Set(ids);
+			ids.length > 0 && ids.every((id) => grid.selectedRows.has(id));
+		grid.selectedRows = allSelected ? new Set() : new Set(ids);
 	}
 
 	function queueDeleteRows(rowIds: string[]) {
-		const nextDeletes = new Set(pendingDeletes);
-		const nextUpdates = new Map(pendingUpdates);
-		const nextSelected = new Set(selectedRows);
+		const nextDeletes = new Set(grid.pendingDeletes);
+		const nextUpdates = new Map(grid.pendingUpdates);
+		const nextSelected = new Set(grid.selectedRows);
 		for (const rowId of rowIds) {
 			const row = displayResult.rows.find(
-				(item) => String(item['_querycastle_ctid'] ?? '') === rowId,
+				(item) => rowIdOf(item) === rowId,
 			);
 			if (row) {
-				const nextSnapshots = new Map(deletedSnapshots);
+				const nextSnapshots = new Map(grid.deletedSnapshots);
 				nextSnapshots.set(rowId, { ...row });
-				deletedSnapshots = nextSnapshots;
+				grid.deletedSnapshots = nextSnapshots;
 			}
 			nextDeletes.add(rowId);
 			nextUpdates.delete(rowId);
 			nextSelected.delete(rowId);
 		}
-		pendingDeletes = nextDeletes;
-		pendingUpdates = nextUpdates;
-		selectedRows = nextSelected;
+		grid.pendingDeletes = nextDeletes;
+		grid.pendingUpdates = nextUpdates;
+		grid.selectedRows = nextSelected;
 		rowContextMenu = null;
 		if (!userCollapsedPending) pendingPanelOpen = true;
 	}
@@ -1022,7 +1018,7 @@
 	function startInsertRow() {
 		if (!editable) return;
 		const values: Record<string, unknown> = {};
-		pendingInserts = [...pendingInserts, { id: crypto.randomUUID(), values }];
+		grid.pendingInserts = [...grid.pendingInserts, { id: crypto.randomUUID(), values }];
 		if (!userCollapsedPending) pendingPanelOpen = true;
 		for (const column of columnMetas) {
 			if (column.fk) void ensureFkOptions(column.fk);
@@ -1030,7 +1026,7 @@
 	}
 
 	function setInsertValue(id: string, column: string, raw: string) {
-		pendingInserts = pendingInserts.map((row) => {
+		grid.pendingInserts = grid.pendingInserts.map((row) => {
 			if (row.id !== id) return row;
 			return {
 				...row,
@@ -1040,34 +1036,34 @@
 	}
 
 	function removePendingInsert(id: string) {
-		pendingInserts = pendingInserts.filter((row) => row.id !== id);
+		grid.pendingInserts = grid.pendingInserts.filter((row) => row.id !== id);
 	}
 
 	async function refreshCount() {
 		if (!resultContext) {
-			totalRowCount = visibleRows.length;
+			grid.totalRowCount = visibleRows.length;
 			return;
 		}
 		try {
-			const payload = await rpc.request.runQuery({
-				sql: buildTableCountSql({
+			const payload = await runQuery(
+				buildTableCountSql({
 					databaseType,
 					schema: resultContext.schema,
 					table: resultContext.table,
-					baseWhere,
+					baseWhere: grid.baseWhere,
 					filters: filterList,
 				}),
-			});
-			totalRowCount = parseCountResult(payload.rows);
+			);
+			grid.totalRowCount = parseCountResult(payload.rows);
 		} catch {
-			totalRowCount = Math.max(displayResult.rowCount, visibleRows.length);
+			grid.totalRowCount = Math.max(displayResult.rowCount, visibleRows.length);
 		}
 	}
 
 	async function applyBrowse() {
 		if (!resultContext) {
-			totalRowCount = visibleRows.length;
-			const maxPage = totalPages(totalRowCount, pageSize);
+			grid.totalRowCount = visibleRows.length;
+			const maxPage = totalPages(grid.totalRowCount, grid.pageSize);
 			if (page > maxPage) page = maxPage;
 			return;
 		}
@@ -1076,11 +1072,11 @@
 			explorer: explorer ?? null,
 			schema: resultContext.schema,
 			table: resultContext.table,
-			baseWhere,
+			baseWhere: grid.baseWhere,
 			filters: filterList,
 			sort: effectiveSort,
-			limit: pageSize,
-			offset: (page - 1) * pageSize,
+			limit: grid.pageSize,
+			offset: (page - 1) * grid.pageSize,
 		});
 		if (!sql) return;
 		keepDraftsOnNextResult = true;
@@ -1121,15 +1117,15 @@
 	}
 
 	function clearFilters() {
-		columnFilters = {};
-		showFilterRow = false;
+		grid.columnFilters = {};
+		grid.showFilterRow = false;
 		page = 1;
 		if (filterTimer) clearTimeout(filterTimer);
 		void applyBrowse();
 	}
 
 	function setPageSize(next: PageSize) {
-		pageSize = next;
+		grid.pageSize = next;
 		page = 1;
 		void applyBrowse();
 	}
@@ -1144,12 +1140,12 @@
 		const key = browseSourceKey;
 		if (key === lastBrowseSourceKey) return;
 		lastBrowseSourceKey = key;
-		baseWhere = extractWhereClause(refreshSql);
+		grid.baseWhere = extractWhereClause(refreshSql);
 		page = 1;
-		columnFilters = {};
+		grid.columnFilters = {};
 		sort = null;
 		if (resultContext) void refreshCount();
-		else totalRowCount = displayResult.rowCount;
+		else grid.totalRowCount = displayResult.rowCount;
 	});
 
 	$effect(() => {
@@ -1180,7 +1176,7 @@
 	async function syncChanges() {
 		if (!resultContext || !onApplyTableChanges || !hasPendingChanges) return;
 		if (editingCell) commitEdit();
-		for (const insert of pendingInserts) {
+		for (const insert of grid.pendingInserts) {
 			const draft: Record<string, string> = {};
 			for (const column of columnMetas) {
 				draft[column.name] = isEmptyCell(insert.values[column.name])
@@ -1197,12 +1193,12 @@
 		syncingChanges = true;
 		try {
 			const payload: TableChangesPayload = {
-				updates: Array.from(pendingUpdates.entries()).map(([ctid, values]) => ({
-					ctid,
+				updates: Array.from(grid.pendingUpdates.entries()).map(([rowId, values]) => ({
+					rowId,
 					values,
 				})),
-				deletes: Array.from(pendingDeletes),
-				inserts: pendingInserts
+				deletes: Array.from(grid.pendingDeletes),
+				inserts: grid.pendingInserts
 					.map((row) =>
 						valuesForInsert(
 							Object.fromEntries(
@@ -1227,20 +1223,20 @@
 			}
 
 			const updatedRowsByOldCtid = new Map(
-				applyResult.updatedRows.map((entry) => [entry.oldCtid, entry]),
+				applyResult.updatedRows.map((entry) => [entry.oldRowId, entry]),
 			);
 			const updatesByOldCtid = new Map(
-				payload.updates.map((entry) => [entry.ctid, entry.values]),
+				payload.updates.map((entry) => [entry.rowId, entry.values]),
 			);
 			const deleteSet = new Set(payload.deletes);
 			const nextHighlights: Array<{ rowId: string; column: string }> = [];
 			const nextRows = displayResult.rows
 				.filter((row) => {
-					const ctid = String(row['_querycastle_ctid'] ?? '');
+					const ctid = rowIdOf(row);
 					return !ctid || !deleteSet.has(ctid);
 				})
 				.map((row) => {
-					const ctid = String(row['_querycastle_ctid'] ?? '');
+					const ctid = rowIdOf(row);
 					const updatedRow = ctid ? updatedRowsByOldCtid.get(ctid) : undefined;
 					if (!updatedRow) return row;
 					const optimisticValues = ctid
@@ -1250,10 +1246,10 @@
 						...row,
 						...(optimisticValues ?? {}),
 						...updatedRow.values,
-						_querycastle_ctid: updatedRow.newCtid,
+						[HIDDEN_ROW_ID_COLUMN]: updatedRow.newRowId,
 					};
 					for (const column of Object.keys(optimisticValues ?? {})) {
-						nextHighlights.push({ rowId: updatedRow.newCtid, column });
+						nextHighlights.push({ rowId: updatedRow.newRowId, column });
 					}
 					return merged;
 				});
@@ -1336,11 +1332,11 @@
 		inspectSourceKey = browseSourceKey;
 		const first = pageRows[0];
 		if (!first) {
-			activeRowId = null;
+			grid.activeRowId = null;
 			inspectorOpen = false;
 			return;
 		}
-		activeRowId = String(first['_querycastle_ctid'] ?? '');
+		grid.activeRowId = rowIdOf(first);
 	});
 
 	$effect(() => {
@@ -1369,7 +1365,7 @@
 			if (cellRange) {
 				event.preventDefault();
 				copyCellRange();
-			} else if (selectedRows.size > 0) {
+			} else if (grid.selectedRows.size > 0) {
 				event.preventDefault();
 				copySelectedRows();
 			}
@@ -1400,9 +1396,9 @@
 		visibleColumns.length > 0 ? visibleColumns : EMPTY_SHEET_COLUMNS,
 	);
 	let fillerRowCount = $derived.by(() => {
-		const headerH = GRID_HEADER_PX + (showFilterRow ? GRID_ROW_PX : 0);
+		const headerH = GRID_HEADER_PX + (grid.showFilterRow ? GRID_ROW_PX : 0);
 		const usedRows =
-			activeView === 'results' ? pageRows.length + pendingInserts.length : 0;
+			activeView === 'results' ? pageRows.length + grid.pendingInserts.length : 0;
 		const remaining = gridViewportH - headerH - usedRows * GRID_ROW_PX;
 		return Math.max(16, Math.ceil(Math.max(0, remaining) / GRID_ROW_PX) + 4);
 	});
@@ -1444,12 +1440,12 @@
 		class="h-10 px-2 border-b border-qc-border bg-qc-panel shrink-0 flex items-center gap-0.5"
 	>
 		{#if editable}
-			{#if selectedRows.size > 0}
+			{#if grid.selectedRows.size > 0}
 				<button
 					type="button"
-					onclick={() => queueDeleteRows(Array.from(selectedRows))}
+					onclick={() => queueDeleteRows(Array.from(grid.selectedRows))}
 					class="btn-danger h-6 w-[72px] px-2 text-[12px] font-medium inline-flex items-center justify-center gap-1 shrink-0"
-					title={`Delete ${selectedRows.size} row${selectedRows.size === 1 ? '' : 's'}`}
+					title={`Delete ${grid.selectedRows.size} row${grid.selectedRows.size === 1 ? '' : 's'}`}
 				>
 					<Trash2 size={12} />Delete
 				</button>
@@ -1476,11 +1472,11 @@
 		</button>
 		<button
 			type="button"
-			onclick={() => (showFilterRow = !showFilterRow)}
-			class={`toolbar-icon ${showFilterRow || hasActiveFilters ? 'is-on' : ''}`}
+			onclick={() => (grid.showFilterRow = !grid.showFilterRow)}
+			class={`toolbar-icon ${grid.showFilterRow || hasActiveFilters ? 'is-on' : ''}`}
 			title="Filter"
 			aria-label="Filter"
-			aria-pressed={showFilterRow || hasActiveFilters}
+			aria-pressed={grid.showFilterRow || hasActiveFilters}
 		>
 			<Filter size={14} />
 		</button>
@@ -1554,7 +1550,7 @@
 				</div>
 			{/if}
 		</div>
-		{#if selectedRows.size > 0}
+		{#if grid.selectedRows.size > 0}
 			<button
 				type="button"
 				onclick={copySelectedRows}
@@ -1566,11 +1562,11 @@
 			</button>
 			<button
 				type="button"
-				onclick={() => (selectedRows = new Set())}
+				onclick={() => (grid.selectedRows = new Set())}
 				class="h-7 px-1.5 text-[11px] text-qc-muted hover:text-qc-subtle inline-flex items-center gap-1 shrink-0"
 				title="Clear selection"
 			>
-				{selectedRows.size} selected
+				{grid.selectedRows.size} selected
 				<X size={11} />
 			</button>
 		{/if}
@@ -1621,7 +1617,7 @@
 			</button>
 			<select
 				class="h-6 rounded border border-qc-border bg-qc-elevated text-[11px] text-qc-subtle px-1 outline-none"
-				value={String(pageSize)}
+				value={String(grid.pageSize)}
 				onchange={(event) =>
 					setPageSize(
 						Number(
@@ -1645,10 +1641,12 @@
 			</button>
 			<span
 				class="inline-flex items-center gap-1 tabular-nums"
-				title={`${displayTotal} rows`}
+				title={displayResult.truncated
+					? `${displayTotal} rows (result capped at 1000)`
+					: `${displayTotal} rows`}
 			>
 				<Table2 size={12} />
-				{displayTotal}
+				{displayTotal}{displayResult.truncated ? '+' : ''}
 			</span>
 			<span
 				class="hidden sm:inline-flex items-center gap-1 tabular-nums"
@@ -1691,7 +1689,7 @@
 							class="rounded border border-qc-border bg-qc-elevated px-3 py-2"
 						>
 							Last query executed successfully in {durationMs}ms and returned {displayResult.rowCount}
-							rows.
+							rows{displayResult.truncated ? ' (capped)' : ''}.
 						</div>
 					{/if}
 				</div>
@@ -1808,8 +1806,8 @@
 												onchange={toggleSelectAllVisible}
 												checked={pageRows.length > 0 &&
 													pageRows.every((row) =>
-														selectedRows.has(
-															String(row['_querycastle_ctid'] ?? ''),
+														grid.selectedRows.has(
+															rowIdOf(row),
 														),
 													)}
 											/>
@@ -1856,7 +1854,7 @@
 								{/each}
 								{@render fillerHeader()}
 							</tr>
-							{#if showFilterRow}
+							{#if grid.showFilterRow}
 								<tr class="bg-qc-grid">
 									{#if editable}
 										<th class="qc-select-col"></th>
@@ -1868,13 +1866,13 @@
 										>
 											{#if visibleColumns.includes(column)}
 												<input
-													value={columnFilters[column] ?? ''}
+													value={grid.columnFilters[column] ?? ''}
 													oninput={(event) => {
 														const value = (
 															event.currentTarget as HTMLInputElement
 														).value;
-														columnFilters = {
-															...columnFilters,
+														grid.columnFilters = {
+															...grid.columnFilters,
 															[column]: value,
 														};
 														scheduleFilterBrowse();
@@ -1890,7 +1888,7 @@
 							{/if}
 						</thead>
 						<tbody class="font-mono text-[12px] tabular-nums text-qc-data">
-							{#each editable ? pendingInserts : [] as insertRow (insertRow.id)}
+							{#each editable ? grid.pendingInserts : [] as insertRow (insertRow.id)}
 								<tr
 									class="row-pending-insert h-8 max-h-8"
 									in:fly|local={{ y: -8, duration: 220 }}
@@ -1948,18 +1946,18 @@
 									{@render fillerCells()}
 								</tr>
 							{/each}
-							{#each pageRows as row, rowIndex (String(row['_querycastle_ctid'] ?? `row-${rowIndex}`))}
-								{@const rowId = String(row['_querycastle_ctid'] ?? '')}
-								{@const isChecked = selectedRows.has(rowId)}
-								{@const isActive = activeRowId === rowId}
-								{@const isPendingDelete = pendingDeletes.has(rowId)}
+							{#each pageRows as row, rowIndex (rowIdOf(row) || `row-${rowIndex}`)}
+								{@const rowId = rowIdOf(row)}
+								{@const isChecked = grid.selectedRows.has(rowId)}
+								{@const isActive = grid.activeRowId === rowId}
+								{@const isPendingDelete = grid.pendingDeletes.has(rowId)}
 								<tr
 									class={`group table-row h-8 max-h-8 transition-colors duration-200 ${isPendingDelete ? 'row-pending-delete' : isChecked ? 'row-selected' : isActive ? 'row-current' : ''}`}
 									out:fly|local={{ y: -6, duration: 180 }}
 									oncontextmenu={(event) =>
 										openRowContextMenu(event, rowId, row)}
 									onclick={() => {
-										if (rowId) activeRowId = rowId;
+										if (rowId) grid.activeRowId = rowId;
 									}}
 								>
 									{#if editable}
@@ -1970,7 +1968,7 @@
 												<input
 													type="checkbox"
 													class="qc-check"
-													checked={selectedRows.has(rowId)}
+													checked={grid.selectedRows.has(rowId)}
 													onchange={() => toggleRowSelected(rowId)}
 												/>
 											</div>
@@ -1987,7 +1985,7 @@
 										{@const canFollowFk =
 											isFkColumn && isFollowableValue(currentValue)}
 										{@const isPendingEdit =
-											pendingUpdates.get(rowId)?.[column] !== undefined}
+											grid.pendingUpdates.get(rowId)?.[column] !== undefined}
 										<td
 											class={`grid-cell text-[12px] overflow-hidden whitespace-nowrap max-w-0 font-mono tabular-nums text-qc-data ${editable && !meta?.isAuto && !meta?.isPrimary && !isPendingDelete ? 'cursor-cell' : ''} ${isEditing ? 'p-0 outline outline-1 -outline-offset-1 outline-qc-cell bg-qc-bg' : 'px-2.5 py-0'} ${isPendingEdit && !isEditing && !isPendingDelete ? 'cell-dirty' : ''} ${meta?.kind === 'number' ? 'text-right' : ''}`}
 											style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;max-width:${getColumnWidth(column)}px;`}
@@ -2109,7 +2107,7 @@
 			onClose={() => (inspectorOpen = false)}
 			onFieldChange={setInspectorField}
 			onDelete={() => {
-				if (activeRowId) queueDeleteRows([activeRowId]);
+				if (grid.activeRowId) queueDeleteRows([grid.activeRowId]);
 			}}
 		/>
 		<PendingChangesPane
