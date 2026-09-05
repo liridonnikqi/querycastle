@@ -93,6 +93,37 @@ async fn query_opt_untyped(
         .map_err(sanitize_pg_error_to_db_error)
 }
 
+fn apply_select_row_cap(sql: &str) -> std::borrow::Cow<'_, str> {
+    let trimmed = sql.trim();
+    if trimmed.is_empty() {
+        return std::borrow::Cow::Borrowed(sql);
+    }
+    let body = trimmed.trim_end_matches(';').trim_end();
+    // Interior `;` ⇒ multi-statement; cannot inject LIMIT safely.
+    if body.contains(';') {
+        return std::borrow::Cow::Borrowed(sql);
+    }
+    let lower = body.to_ascii_lowercase();
+    let select_like = lower.starts_with("select")
+        || lower.starts_with("table ")
+        || lower.starts_with("values")
+        || (lower.starts_with("with")
+            && (lower.contains(" select ") || lower.contains(")select"))
+            && !lower.contains(" insert ")
+            && !lower.contains(" update ")
+            && !lower.contains(" delete "));
+    if !select_like {
+        return std::borrow::Cow::Borrowed(sql);
+    }
+    if lower.contains(" limit")
+        || lower.contains(" fetch first ")
+        || lower.contains(" fetch next ")
+    {
+        return std::borrow::Cow::Borrowed(sql);
+    }
+    std::borrow::Cow::Owned(format!("{body} limit {MAX_QUERY_ROWS}"))
+}
+
 async fn set_statement_timeout(client: &tokio_postgres::Client) -> Result<(), DbError> {
     client
         .batch_execute(&format!("set statement_timeout = {QUERY_TIMEOUT_MS}"))
@@ -115,7 +146,8 @@ pub async fn run_query(pool: &deadpool_postgres::Pool, sql: &str) -> Result<Quer
     set_statement_timeout(&client).await?;
 
     let started = std::time::Instant::now();
-    let messages = client.simple_query(sql).await.map_err(sanitize_pg_error_to_db_error)?;
+    let sql = apply_select_row_cap(sql);
+    let messages = client.simple_query(sql.as_ref()).await.map_err(sanitize_pg_error_to_db_error)?;
 
     let mut columns: Vec<String> = Vec::new();
     let mut rows: Vec<HashMap<String, Value>> = Vec::new();
@@ -818,4 +850,65 @@ fn extract_definition_row(row: Option<tokio_postgres::Row>) -> Result<String, Db
         .try_get("definition")
         .map_err(sanitize_pg_error_to_db_error)?;
     Ok(value.unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn injects_limit_on_simple_select() {
+        let capped = apply_select_row_cap("select * from users;");
+        assert_eq!(capped.as_ref(), &format!("select * from users limit {MAX_QUERY_ROWS}"));
+    }
+
+    #[test]
+    fn injects_limit_on_table_and_values() {
+        assert_eq!(
+            apply_select_row_cap("table users").as_ref(),
+            &format!("table users limit {MAX_QUERY_ROWS}")
+        );
+        assert_eq!(
+            apply_select_row_cap("values (1), (2)").as_ref(),
+            &format!("values (1), (2) limit {MAX_QUERY_ROWS}")
+        );
+    }
+
+    #[test]
+    fn injects_limit_on_select_cte() {
+        let sql = "with x as (select 1 as n) select * from x";
+        assert_eq!(
+            apply_select_row_cap(sql).as_ref(),
+            &format!("{sql} limit {MAX_QUERY_ROWS}")
+        );
+    }
+
+    #[test]
+    fn skips_existing_limit_or_fetch() {
+        assert_eq!(
+            apply_select_row_cap("select * from users limit 10").as_ref(),
+            "select * from users limit 10"
+        );
+        assert_eq!(
+            apply_select_row_cap("select * from users fetch first 5 rows only").as_ref(),
+            "select * from users fetch first 5 rows only"
+        );
+    }
+
+    #[test]
+    fn skips_multi_statement_and_dml() {
+        let multi = "select 1; select 2";
+        assert_eq!(apply_select_row_cap(multi).as_ref(), multi);
+        assert_eq!(apply_select_row_cap("insert into t values (1)").as_ref(), "insert into t values (1)");
+        assert_eq!(
+            apply_select_row_cap("with x as (select 1) insert into t select * from x").as_ref(),
+            "with x as (select 1) insert into t select * from x"
+        );
+    }
+
+    #[test]
+    fn skips_empty_sql() {
+        assert_eq!(apply_select_row_cap("").as_ref(), "");
+        assert_eq!(apply_select_row_cap("   ").as_ref(), "   ");
+    }
 }

@@ -389,6 +389,8 @@ export class Workspace {
 				toast.error(
 					`Could not save password to the OS keychain: ${errorMessage(error)}`,
 				);
+				// Match migrate: do not strip+persist when keychain write fails.
+				return;
 			}
 		}
 		const stripped = stripConnectionSecrets(connection);
@@ -858,7 +860,7 @@ export class Workspace {
 				this.connectionStatus.databaseType,
 				collectExplorerIdentifiers(this.explorer),
 			);
-			const queryResult = await rpc.request.runQuery({ sql });
+			const queryResult = await rpc.request.runQuery({ sql, sessionId });
 			if (epoch !== this.queryEpoch || sessionId !== this.activeSessionId) return;
 			this.queryDurationMs = queryResult.durationMs;
 			this.globalError = '';
@@ -1005,7 +1007,10 @@ export class Workspace {
 		}
 		if (action === 'drop' || action === 'truncate' || action === 'duplicate') {
 			try {
-				await rpc.request.runQuery({ sql: plan.query });
+				await rpc.request.runQuery({
+					sql: plan.query,
+					sessionId: this.activeSessionId,
+				});
 				this.globalError = '';
 				await this.loadExplorer();
 				if (action === 'drop' || action === 'duplicate') {
@@ -1060,7 +1065,7 @@ export class Workspace {
 			nextName,
 		});
 		try {
-			await rpc.request.runQuery({ sql });
+			await rpc.request.runQuery({ sql, sessionId: this.activeSessionId });
 			this.globalError = '';
 			await this.loadExplorer();
 		} catch (error) {
@@ -1221,6 +1226,7 @@ export class Workspace {
 		try {
 			await rpc.request.runQuery({
 				sql: buildCreateDatabaseSql(name, encoding),
+				sessionId: this.activeSessionId,
 			});
 			await this.loadDatabases();
 			await this.handleDatabaseChange(name);

@@ -34,6 +34,19 @@ impl AppState {
             .await
             .ok_or_else(|| DbError::connection("No active database connection"))
     }
+
+    pub async fn require_session(&self, session_id: &str) -> Result<ActiveConnection, DbError> {
+        let id = session_id.trim();
+        if id.is_empty() {
+            return Err(DbError::validation("Session id is required"));
+        }
+        let guard = self.inner.read().await;
+        guard
+            .sessions
+            .get(id)
+            .cloned()
+            .ok_or_else(|| DbError::NotFound("Connection session not found".to_string()))
+    }
 }
 
 impl Default for AppState {

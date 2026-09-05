@@ -233,6 +233,8 @@ impl DatabaseTable {
 #[serde(rename_all = "camelCase")]
 pub struct QueryParams {
     pub sql: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

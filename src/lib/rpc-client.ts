@@ -48,7 +48,8 @@ export const rpc = {
     secretDelete: (connectionName: string) =>
       invokeCmd<void>("secret_delete", { params: { connectionName } }),
     connectionStatus: () => invokeCmd<ConnectionStatus>("connection_status"),
-    runQuery: (params: { sql: string }) => invokeCmd<QueryResultPayload>("run_query", { params }),
+    runQuery: (params: { sql: string; sessionId?: string }) =>
+      invokeCmd<QueryResultPayload>("run_query", { params }),
     getDatabaseExplorer: () => invokeCmd<DatabaseExplorer>("get_database_explorer"),
     listDatabases: () => invokeCmd<string[]>("list_databases"),
     selectDatabase: (params: { database: string }) =>
