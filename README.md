@@ -4,7 +4,7 @@
 
 A desktop SQL client for PostgreSQL, Microsoft SQL Server, MySQL, and SQLite.
 
-> This is still a early preview. Expect bugs and missing features. Feedback is welcome!
+> This is still an early preview. Expect bugs and missing features. Feedback is welcome!
 
 ![Connection list](main-page.png)
 
@@ -17,7 +17,7 @@ Open a connection, browse the schema, run queries, and edit rows in the grid.
 - SQL editor with autocomplete and formatting (`Ctrl+Enter` to run)
 - Results grid you can edit in place
 - Query tabs, saved queries, and per-connection history
-- Uses native OS keychains to store credentials securely
+- Uses native OS(MacOS and Windows) keychains to store credentials securely (macOS Keychain and Windows Credential Manager respectively)
 
 ## Run locally
 
