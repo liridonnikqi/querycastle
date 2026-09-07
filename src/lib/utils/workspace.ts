@@ -43,7 +43,7 @@ export type TableAction =
 export type SchemaAction = 'copy_name' | 'copy_quoted_name' | 'sql_list_tables';
 
 export function createEmptyResult(): QueryResultPayload {
-	return { columns: [], rows: [], rowCount: 0, durationMs: 0 };
+	return { columns: [], rows: [], rowCount: 0, durationMs: 0, truncated: false };
 }
 
 export function createDefaultTab(): WorkspaceTab {

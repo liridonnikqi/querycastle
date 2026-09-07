@@ -19,7 +19,9 @@ export type GridColumnFilter = { column: string; value: string };
 
 export function extractWhereClause(sql: string): string {
 	const cleaned = sql.trim().replace(/;+\s*$/, '');
-	const match = cleaned.match(/\bwhere\b\s+([\s\S]+?)\s*(?:order\s+by|limit)\b/i);
+	const match = cleaned.match(
+		/\bwhere\b\s+([\s\S]+?)\s*(?:order\s+by|limit|offset|fetch)\b/i,
+	);
 	return match?.[1]?.trim() ?? '';
 }
 
@@ -41,6 +43,9 @@ export function buildFilterPredicate(
 	}
 	if (databaseType === 'mysql') {
 		return `cast(${qualified} as char) like ${pattern}`;
+	}
+	if (databaseType === 'mssql') {
+		return `convert(varchar(max), ${qualified}) like ${pattern}`;
 	}
 	return `cast(${qualified} as text) like ${pattern}`;
 }

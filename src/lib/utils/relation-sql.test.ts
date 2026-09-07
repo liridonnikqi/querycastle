@@ -7,9 +7,9 @@ import {
 	createRelationHop,
 	formatFollowValue,
 	isFollowableValue,
-	quoteIdent,
 	quoteLiteral,
 } from '$lib/utils/relation-sql';
+import { quoteSqlIdentifier } from '$lib/utils/sql';
 import type { DatabaseForeignKey } from '$lib/rpc';
 
 const customerFk: DatabaseForeignKey = {
@@ -22,16 +22,16 @@ const customerFk: DatabaseForeignKey = {
 const explorer = shopExplorer();
 const fromOrders = { schema: 'public', table: 'orders' };
 
-describe('quoteIdent', () => {
+describe('quoteSqlIdentifier', () => {
 	it('quotes reserved words per dialect', () => {
-		expect(quoteIdent('postgres', 'user')).toBe('"user"');
-		expect(quoteIdent('sqlite', 'order')).toBe('"order"');
-		expect(quoteIdent('mysql', 'user')).toBe('`user`');
+		expect(quoteSqlIdentifier('postgres', 'user')).toBe('"user"');
+		expect(quoteSqlIdentifier('sqlite', 'order')).toBe('"order"');
+		expect(quoteSqlIdentifier('mysql', 'user')).toBe('`user`');
 	});
 
 	it('escapes quote characters inside identifiers', () => {
-		expect(quoteIdent('postgres', 'we"ird')).toBe('"we""ird"');
-		expect(quoteIdent('mysql', 'we`ird')).toBe('`we``ird`');
+		expect(quoteSqlIdentifier('postgres', 'we"ird')).toBe('"we""ird"');
+		expect(quoteSqlIdentifier('mysql', 'we`ird')).toBe('`we``ird`');
 	});
 });
 
@@ -93,7 +93,7 @@ describe('buildOutgoingFollowSql', () => {
 				value: 9,
 			}),
 		).toBe(
-			'select ctid::text as _querycastle_ctid, * from "public"."users" where "id" = 9 order by "id" asc nulls last limit 100;',
+			'select ctid::text as _querycastle_row_id, * from "public"."users" where "id" = 9 order by "id" asc nulls last limit 100;',
 		);
 	});
 
@@ -107,7 +107,7 @@ describe('buildOutgoingFollowSql', () => {
 				value: 9,
 			}),
 		).toBe(
-			'select cast(rowid as text) as _querycastle_ctid, * from "public"."users" where "id" = 9 order by "id" asc nulls last limit 100;',
+			'select cast(rowid as text) as _querycastle_row_id, * from "public"."users" where "id" = 9 order by "id" asc nulls last limit 100;',
 		);
 	});
 
@@ -119,7 +119,7 @@ describe('buildOutgoingFollowSql', () => {
 			fk: customerFk,
 			value: 9,
 		});
-		expect(sql).toContain(' as _querycastle_ctid, _querycastle_src.* from `public`.`users` as _querycastle_src');
+		expect(sql).toContain(' as _querycastle_row_id, _querycastle_src.* from `public`.`users` as _querycastle_src');
 		expect(sql).toContain('where _querycastle_src.`id` = 9');
 		expect(sql).toContain('order by `id` asc limit 100;');
 		expect(sql).toContain('md5(');
@@ -141,7 +141,7 @@ describe('buildOutgoingFollowSql', () => {
 				value: "O'Brien",
 			}),
 		).toBe(
-			`select ctid::text as _querycastle_ctid, * from "public"."user" where "name" = 'O''Brien' order by "id" asc nulls last limit 100;`,
+			`select ctid::text as _querycastle_row_id, * from "public"."user" where "name" = 'O''Brien' order by "id" asc nulls last limit 100;`,
 		);
 	});
 });
@@ -169,7 +169,7 @@ describe('buildIncomingFollowSql', () => {
 				parentValue: 9,
 			}),
 		).toBe(
-			'select ctid::text as _querycastle_ctid, * from "public"."orders" where "customer_id" = 9 order by "id" asc nulls last limit 100;',
+			'select ctid::text as _querycastle_row_id, * from "public"."orders" where "customer_id" = 9 order by "id" asc nulls last limit 100;',
 		);
 	});
 });

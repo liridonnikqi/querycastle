@@ -1,8 +1,9 @@
 import type { DatabaseExplorer, DatabaseForeignKey, DatabaseType, QueryResultPayload } from '$lib/rpc';
 import { formatFkOptionLabel, pickFkLabelColumns } from '$lib/utils/grid-editors';
-import { findExplorerTable } from '$lib/utils/relation-resolve';
+import { findExplorerTable } from '$lib/utils/schema-objects';
 import { quoteLiteral } from '$lib/utils/relation-sql';
 import { quoteSqlIdentifier } from '$lib/utils/sql';
+import { buildLimitClause, buildOrderByClause } from '$lib/utils/table-select';
 
 export type FkOption = {
 	id: unknown;
@@ -26,11 +27,11 @@ export function buildFkLookupSql(params: {
 	const idCol = quoteSqlIdentifier(databaseType, fk.referencedColumn);
 	const labelCols = labelColumns.map((column) => quoteSqlIdentifier(databaseType, column));
 	const selectList = [idCol, ...labelCols].join(', ');
-	const orderCol = labelCols[0] ?? idCol;
-	const orderBy =
-		databaseType === 'mysql'
-			? ` order by ${orderCol} asc`
-			: ` order by ${orderCol} asc nulls last`;
+	const orderColName = labelColumns[0] ?? fk.referencedColumn;
+	const orderBy = buildOrderByClause(databaseType, {
+		column: orderColName,
+		dir: 'asc',
+	});
 
 	let where = '';
 	const trimmed = search?.trim() ?? '';
@@ -44,12 +45,15 @@ export function buildFkLookupSql(params: {
 			if (databaseType === 'mysql') {
 				return `cast(${column} as char) ${likeOp} ${pattern}`;
 			}
+			if (databaseType === 'mssql') {
+				return `convert(varchar(max), ${column}) ${likeOp} ${pattern}`;
+			}
 			return `cast(${column} as text) ${likeOp} ${pattern}`;
 		});
 		where = ` where ${predicates.join(' or ')}`;
 	}
 
-	return `select ${selectList} from ${tableRef}${where}${orderBy} limit ${LOOKUP_LIMIT};`;
+	return `select ${selectList} from ${tableRef}${where}${orderBy}${buildLimitClause(LOOKUP_LIMIT, 0, databaseType)};`;
 }
 
 export function rowsToFkOptions(

@@ -963,6 +963,69 @@ button.rail-btn:not(:disabled):active {
 	flex-shrink: 0;
 }
 
+/* Compact context menu, shadcn-style: narrow panel, dense 12px items. */
+.ctx-menu {
+	min-width: 10rem;
+	max-width: min(16rem, calc(100vw - 16px));
+	border-radius: 8px;
+	border: 1px solid var(--qc-border);
+	background: var(--qc-elevated);
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.32);
+	padding: 4px;
+	font-size: 12px;
+	line-height: 1.25;
+	color: var(--qc-fg);
+}
+
+.ctx-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	padding: 5px 8px;
+	font-size: 12px;
+	line-height: 1.25;
+	color: var(--qc-fg);
+	text-align: left;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.ctx-item:hover:not(:disabled) {
+	background: var(--qc-hover);
+}
+
+.ctx-item:focus-visible {
+	outline: none;
+	background: var(--qc-hover);
+}
+
+.ctx-item:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.ctx-item svg {
+	flex-shrink: 0;
+}
+
+.ctx-item-danger {
+	color: var(--qc-danger);
+}
+
+.ctx-item-danger:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--qc-danger) 12%, transparent);
+}
+
+.ctx-separator {
+	height: 1px;
+	background: var(--qc-border);
+	margin: 4px -4px;
+}
+
 .toolbar-icon:hover {
 	color: var(--qc-fg);
 	background: var(--qc-hover);

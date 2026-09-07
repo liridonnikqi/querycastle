@@ -114,13 +114,23 @@
 				const option = filteredOptions[highlight];
 				if (option) chooseOption(option);
 				else onCommit?.();
+				releaseFocus();
 				return;
 			}
 		}
 		if (event.key === 'Enter') {
 			event.preventDefault();
 			(onEnter ?? onCommit)?.();
+			// Commit unmounts this editor; blur so focus lands on the grid
+			// instead of a detached input (which left the editor visibly
+			// stuck open with focus lost to <body>).
+			releaseFocus();
 		}
+	}
+
+	function releaseFocus() {
+		const active = document.activeElement;
+		if (active instanceof HTMLElement) active.blur();
 	}
 
 	function placePanel() {

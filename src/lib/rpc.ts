@@ -1,4 +1,4 @@
-export type DatabaseType = "postgres" | "mysql" | "sqlite";
+export type DatabaseType = "postgres" | "mysql" | "sqlite" | "mssql";
 
 export type ConnectionInput = {
   databaseType: DatabaseType;
@@ -9,6 +9,7 @@ export type ConnectionInput = {
   password: string;
   database: string;
   ssl: boolean;
+  sslInsecure?: boolean;
   useConnectionString?: boolean;
   connectionString?: string;
 };
@@ -22,7 +23,7 @@ export type ConnectionStatus = {
   database: string;
   user: string;
   serverVersion: string | null;
-  sessionId?: string;
+  sessionId: string;
 };
 
 export type QueryResultPayload = {
@@ -30,10 +31,11 @@ export type QueryResultPayload = {
   rows: Array<Record<string, unknown>>;
   rowCount: number;
   durationMs: number;
+  truncated: boolean;
 };
 
 export type TableChangesPayload = {
-  updates: Array<{ ctid: string; values: Record<string, unknown> }>;
+  updates: Array<{ rowId: string; values: Record<string, unknown> }>;
   deletes: string[];
   inserts: Array<Record<string, unknown>>;
 };
@@ -43,7 +45,7 @@ export type ApplyTableChangesResult = {
   updated: number;
   deleted: number;
   inserted: number;
-  updatedRows: Array<{ oldCtid: string; newCtid: string; values: Record<string, unknown> }>;
+  updatedRows: Array<{ oldRowId: string; newRowId: string; values: Record<string, unknown> }>;
 };
 
 export type DatabaseColumn = {
@@ -51,6 +53,7 @@ export type DatabaseColumn = {
   dataType: string;
   notNull: boolean;
   isPrimary: boolean;
+  hasDefault?: boolean;
 };
 
 export type DatabaseForeignKey = {

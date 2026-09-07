@@ -2,6 +2,7 @@
 	import { Trash2, X } from '@lucide/svelte';
 	import type { GridColumnMeta } from '$lib/utils/grid-editors';
 	import { displayCellText } from '$lib/utils/grid-editors';
+	import { HIDDEN_ROW_ID_COLUMN } from '$lib/utils/dialect';
 	import ColumnTypeIcon from '$lib/components/query/ColumnTypeIcon.svelte';
 
 	let {
@@ -37,7 +38,7 @@
 	let jsonText = $derived.by(() => {
 		const body: Record<string, unknown> = {};
 		for (const column of columns) {
-			if (column === '_querycastle_ctid') continue;
+			if (column === HIDDEN_ROW_ID_COLUMN) continue;
 			body[column] = values[column] ?? null;
 		}
 		return JSON.stringify(body, null, 2);
@@ -83,7 +84,7 @@
 		<div class="flex-1 overflow-y-auto px-3 py-3 space-y-3 min-h-0">
 			{#if tab === 'fields'}
 				{#each columns as column}
-					{#if column !== '_querycastle_ctid'}
+					{#if column !== HIDDEN_ROW_ID_COLUMN}
 						{@const meta = metaFor(column)}
 						{@const locked = meta?.isAuto || meta?.isPrimary}
 						<div>

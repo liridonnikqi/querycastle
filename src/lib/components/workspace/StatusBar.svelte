@@ -7,6 +7,7 @@
 	import { Download, RefreshCw, Check, AlertCircle, Loader2 } from '@lucide/svelte';
 	import GithubIcon from '$lib/components/ui/GithubIcon.svelte';
 	import { downloadAndInstallUpdate } from '$lib/updater';
+	import { toast } from '$lib/stores/toast.svelte';
 
 	const REPO_URL = 'https://github.com/liridonnikqi/querycastle';
 	const tooltipClass =
@@ -49,6 +50,7 @@
 
 	async function handleCheck() {
 		if (!isDesktop) return;
+		if (status === 'checking' || status === 'downloading') return;
 		status = 'checking';
 		errorMsg = '';
 		try {
@@ -58,8 +60,10 @@
 				updateVersion = update.version;
 				updateBody = update.body ?? '';
 				status = 'available';
+				toast.success(`Update available: v${update.version}`);
 			} else {
 				status = 'uptodate';
+				toast.success('QueryCastle is up to date');
 				setTimeout(() => {
 					if (status === 'uptodate') status = 'idle';
 				}, 3000);
@@ -67,6 +71,7 @@
 		} catch (e) {
 			status = 'error';
 			errorMsg = e instanceof Error ? e.message : String(e);
+			toast.error(`Update check failed: ${errorMsg}`);
 		}
 	}
 
@@ -84,6 +89,7 @@
 		} catch (e) {
 			status = 'error';
 			errorMsg = e instanceof Error ? e.message : String(e);
+			toast.error(`Update failed: ${errorMsg}`);
 		}
 	}
 

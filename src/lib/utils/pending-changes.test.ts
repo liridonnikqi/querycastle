@@ -35,7 +35,7 @@ describe('pending changes', () => {
 		const cards = buildPendingChangeCards({
 			schema: 'public',
 			table: 'users',
-			rows: [{ _querycastle_ctid: '1', email: 'old@x.com' }],
+			rows: [{ _querycastle_row_id: '1', email: 'old@x.com' }],
 			updates: new Map([['1', { email: 'new@x.com' }]]),
 			inserts: [],
 			deletes: new Set(),
@@ -53,7 +53,7 @@ describe('pending changes', () => {
 		const cards = buildPendingChangeCards({
 			schema: 'public',
 			table: 'users',
-			rows: [{ _querycastle_ctid: '1', email: 'old@x.com' }],
+			rows: [{ _querycastle_row_id: '1', email: 'old@x.com' }],
 			updates: new Map([['1', { email: null }]]),
 			inserts: [],
 			deletes: new Set(),
@@ -77,10 +77,10 @@ describe('pending changes', () => {
 				databaseType: 'postgres',
 				schema: 'public',
 				table: 'users',
-				updates: [{ ctid: '(0,1)', values: { email: "o'brien@x.com" } }],
+				updates: [{ rowId: '(0,1)', values: { email: "o'brien@x.com" } }],
 				deletes: [],
 				inserts: [],
-				rows: [{ _querycastle_ctid: '(0,1)', id: '2', email: 'old@x.com' }],
+				rows: [{ _querycastle_row_id: '(0,1)', id: '2', email: 'old@x.com' }],
 				pkColumns: ['id'],
 			}),
 		).toBe(
@@ -97,7 +97,7 @@ describe('pending changes', () => {
 				updates: [],
 				deletes: ['(0,1)'],
 				inserts: [],
-				rows: [{ _querycastle_ctid: '(0,1)', id: 2, email: 'a@x.com' }],
+				rows: [{ _querycastle_row_id: '(0,1)', id: 2, email: 'a@x.com' }],
 				pkColumns: ['id'],
 			}),
 		).toBe(`delete from "demo"."users" where "id" = 2;`);
@@ -109,8 +109,8 @@ describe('pending changes', () => {
 				databaseType: 'postgres',
 				schema: 'demo',
 				table: 'users',
-				ctid: '(0,2)',
-				row: { _querycastle_ctid: '(0,2)', id: '2' },
+				rowId: '(0,2)',
+				row: { _querycastle_row_id: '(0,2)', id: '2' },
 				pkColumns: ['id'],
 			}),
 		).toBe(`select * from "demo"."users" where "id" = 2;`);

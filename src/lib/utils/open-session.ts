@@ -28,8 +28,22 @@ export type LiveWorkspace = {
 	queryDurationMs: number;
 };
 
+export function disconnectedStatus(): ConnectionStatus {
+	return {
+		connected: false,
+		databaseType: 'postgres',
+		name: 'Disconnected',
+		host: '',
+		port: 5432,
+		database: '',
+		user: '',
+		serverVersion: null,
+		sessionId: '',
+	};
+}
+
 export function sessionIdOf(status: ConnectionStatus): string {
-	return status.sessionId?.trim() ?? '';
+	return status.sessionId.trim();
 }
 
 export function snapshotSession(id: string, live: LiveWorkspace): OpenSession {

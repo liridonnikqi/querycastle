@@ -1,7 +1,7 @@
 import type { DatabaseColumn, DatabaseExplorer, DatabaseForeignKey, DatabaseTable } from '$lib/rpc';
 
-function col(name: string, isPrimary = false): DatabaseColumn {
-	return { name, dataType: 'int', notNull: true, isPrimary };
+function col(name: string, isPrimary = false, hasDefault = false): DatabaseColumn {
+	return { name, dataType: 'int', notNull: true, isPrimary, hasDefault };
 }
 
 function table(

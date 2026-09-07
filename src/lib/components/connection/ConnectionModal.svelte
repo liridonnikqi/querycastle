@@ -1,436 +1,279 @@
 <script lang="ts">
-    import { X,  FolderOpen, Database } from "@lucide/svelte";
-    import { open } from "@tauri-apps/plugin-dialog";
-    import type { ConnectionInput } from "$lib/rpc";
-    import DatabaseIcon from "$lib/components/ui/DatabaseIcon.svelte";
-    import { generateConnectionString } from "$lib/utils/connection";
+	import { X } from '@lucide/svelte';
+	import type { ConnectionInput } from '$lib/rpc';
+	import DatabaseIcon from '$lib/components/ui/DatabaseIcon.svelte';
+	import ConnectionFields from '$lib/components/connection/ConnectionFields.svelte';
+	import {
+		DATABASE_ENGINES,
+		defaultsForType,
+		generateConnectionString,
+		withDatabaseType,
+	} from '$lib/utils/connection';
+	import { engineDisplayName } from '$lib/utils/dialect';
 
-    let {
-        visible,
-        editing,
-        connectionForm,
-        connectionStringInput,
-        testConnectionMessage,
-        testConnectionOk,
-        isTestingConnection,
-        isConnecting,
-        onClose,
-        onModeChange,
-        onConnectionFormChange,
-        onConnectionStringChange,
-        onTest,
-        onSaveAndConnect,
-    }: {
-        visible: boolean;
-        editing: boolean;
-        connectionForm: ConnectionInput;
-        connectionStringInput: string;
-        testConnectionMessage: string;
-        testConnectionOk: boolean;
-        isTestingConnection: boolean;
-        isConnecting: boolean;
-        onClose: () => void;
-        onModeChange: (mode: "fields" | "string") => void;
-        onConnectionFormChange: (next: ConnectionInput) => void;
-        onConnectionStringChange: (value: string) => void;
-        onTest: () => void;
-        onSaveAndConnect: () => void;
-    } = $props();
+	let {
+		visible,
+		editing,
+		connectionForm,
+		connectionStringInput,
+		testConnectionMessage,
+		testConnectionOk,
+		isTestingConnection,
+		isConnecting,
+		onClose,
+		onModeChange,
+		onConnectionFormChange,
+		onConnectionStringChange,
+		onTest,
+		onSaveAndConnect,
+	}: {
+		visible: boolean;
+		editing: boolean;
+		connectionForm: ConnectionInput;
+		connectionStringInput: string;
+		testConnectionMessage: string;
+		testConnectionOk: boolean;
+		isTestingConnection: boolean;
+		isConnecting: boolean;
+		onClose: () => void;
+		onModeChange: (mode: 'fields' | 'string') => void;
+		onConnectionFormChange: (next: ConnectionInput) => void;
+		onConnectionStringChange: (value: string) => void;
+		onTest: () => void;
+		onSaveAndConnect: () => void;
+	} = $props();
 
-    function updateField<K extends keyof ConnectionInput>(key: K, value: ConnectionInput[K]) {
-        const nextForm = { ...connectionForm, [key]: value };
-        onConnectionFormChange(nextForm);
-        onConnectionStringChange(generateConnectionString(nextForm));
-    }
+	const engineLabel = $derived(engineDisplayName(connectionForm.databaseType));
+	const isSqlite = $derived(connectionForm.databaseType === 'sqlite');
 
-    function defaultNameForType(databaseType: ConnectionInput["databaseType"]) {
-        if (databaseType === "mysql") return "local_mysql";
-        if (databaseType === "sqlite") return "local_sqlite";
-        return "local_pg";
-    }
+	let step = $state(1);
+	let wasVisible = $state(false);
+	let nameInput: HTMLInputElement | null = $state(null);
 
-    function changeDatabaseType(nextType: ConnectionInput["databaseType"]) {
-        if (nextType === connectionForm.databaseType) return;
-        const prevType = connectionForm.databaseType;
-        const prevDefaultName = defaultNameForType(prevType);
-        const nextDefaultName = defaultNameForType(nextType);
-        const shouldUseDefaultName = !connectionForm.name.trim() || connectionForm.name === prevDefaultName;
-        const nextPort = nextType === "mysql" ? 3306 : nextType === "sqlite" ? 0 : 5432;
-        const nextUser = nextType === "mysql" ? "root" : nextType === "sqlite" ? "" : "postgres";
-        const nextDatabase = nextType === "mysql" ? "mysql" : nextType === "sqlite" ? "main" : "postgres";
+	$effect(() => {
+		if (visible && !wasVisible) {
+			step = editing ? 2 : 1;
+			if (!editing) {
+				const freshForm = defaultsForType('postgres');
+				onConnectionFormChange(freshForm);
+				onConnectionStringChange(generateConnectionString(freshForm));
+			}
+		}
+		wasVisible = visible;
+	});
 
-        const nextForm = {
-            ...connectionForm,
-            databaseType: nextType,
-            name: shouldUseDefaultName ? nextDefaultName : connectionForm.name,
-            port: nextPort,
-            user: nextUser,
-            password: nextType === "sqlite" ? "" : connectionForm.password,
-            database: nextDatabase,
-            host: nextType === "sqlite" ? "" : connectionForm.host || "localhost",
-            ssl: nextType === "sqlite" ? false : connectionForm.ssl,
-        };
+	$effect(() => {
+		if (visible && step === 2) {
+			const node = nameInput;
+			if (node) queueMicrotask(() => node.focus());
+		}
+	});
 
-        onConnectionFormChange(nextForm);
-        onConnectionStringChange(generateConnectionString(nextForm));
-    }
+	function changeDatabaseType(nextType: ConnectionInput['databaseType']) {
+		const nextForm = withDatabaseType(connectionForm, nextType);
+		onConnectionFormChange(nextForm);
+		onConnectionStringChange(generateConnectionString(nextForm));
+	}
 
-    async function chooseSqliteFile() {
-        const selected = await open({
-            multiple: false,
-            directory: false,
-            filters: [
-                { name: "SQLite Database", extensions: ["db", "sqlite", "sqlite3"] },
-                { name: "All Files", extensions: ["*"] },
-            ],
-        });
-        if (!selected || Array.isArray(selected)) return;
+	function handleFormChange(next: ConnectionInput) {
+		onConnectionFormChange(next);
+	}
 
-        const normalized = selected.replaceAll("\\", "/");
-        const fileName = normalized.split("/").pop() ?? "";
-        const nextName =
-            !connectionForm.name.trim() || connectionForm.name === "local_sqlite"
-                ? fileName.replace(/\.(sqlite|sqlite3|db)$/i, "") || connectionForm.name
-                : connectionForm.name;
+	function handleStringChange(value: string) {
+		onConnectionStringChange(value);
+		onModeChange(value.trim() ? 'string' : 'fields');
+	}
 
-        const nextForm = {
-            ...connectionForm,
-            database: selected,
-            name: nextName,
-        };
+	function handleBackdropClick(event: MouseEvent) {
+		if (event.target === event.currentTarget) onClose();
+	}
 
-        onConnectionFormChange(nextForm);
-        onConnectionStringChange(generateConnectionString(nextForm));
-    }
-
-    function tryParseAndFill(val: string) {
-        if (!val.trim()) return;
-        try {
-            if (val.startsWith("sqlite://")) {
-                onConnectionFormChange({
-                    ...connectionForm,
-                    databaseType: "sqlite",
-                    database: val.substring(9)
-                });
-                return;
-            }
-
-            const url = new URL(val);
-            let dt = connectionForm.databaseType;
-            if (url.protocol.includes("postgres")) dt = "postgres";
-            else if (url.protocol.includes("mysql")) dt = "mysql";
-
-            onConnectionFormChange({
-                ...connectionForm,
-                databaseType: dt,
-                host: url.hostname || connectionForm.host,
-                port: url.port ? parseInt(url.port) : (dt === "mysql" ? 3306 : 5432),
-                user: url.username ? decodeURIComponent(url.username) : connectionForm.user,
-                password: url.password ? decodeURIComponent(url.password) : connectionForm.password,
-                database: url.pathname && url.pathname.length > 1 ? url.pathname.substring(1) : connectionForm.database,
-            });
-        } catch (err) {
-            // Ignore parse errors while typing
-        }
-    }
-
-    const engineLabels: Record<string, string> = {
-        postgres: "PostgreSQL",
-        mysql: "MySQL",
-        sqlite: "SQLite",
-        redis: "Redis",
-        mongodb: "MongoDB",
-        duckdb: "DuckDB",
-        mssql: "SQL Server",
-    };
-    const engineLabel = $derived(engineLabels[connectionForm.databaseType] ?? "PostgreSQL");
-    const isSqlite = $derived(connectionForm.databaseType === "sqlite");
-
-    const connectionStringPlaceholder = $derived.by(() => {
-        if (connectionForm.databaseType === "sqlite") return "sqlite://C:/path/to/db.sqlite";
-        if (connectionForm.databaseType === "mysql") return "mysql://root:password@localhost:3306/mydb";
-        return "postgres://postgres:password@localhost:5432/postgres";
-    });
-
-    let step = $state(1);
-    let wasVisible = $state(false);
-
-    $effect(() => {
-        if (visible && !wasVisible) {
-            step = editing ? 2 : 1;
-
-            if (!editing) {
-                const freshForm: ConnectionInput = {
-                    databaseType: "postgres",
-                    name: "local_pg",
-                    host: "localhost",
-                    port: 5432,
-                    user: "postgres",
-                    password: "",
-                    database: "postgres",
-                    ssl: false,
-                };
-                onConnectionFormChange(freshForm);
-                onConnectionStringChange(generateConnectionString(freshForm));
-            }
-        }
-        wasVisible = visible;
-    });
+	function handleWindowKeydown(event: KeyboardEvent) {
+		if (!visible) return;
+		if (event.key === 'Escape') onClose();
+	}
 </script>
 
+<svelte:window onkeydown={handleWindowKeydown} />
+
 {#if visible}
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[2px] p-4">
-        <div class="w-full max-w-[620px] overflow-hidden rounded-xl border border-qc-border bg-qc-elevated shadow-[0_24px_60px_rgba(0,0,0,0.35)]">
-            <div class="border-b border-qc-border bg-qc-elevated px-4 py-3 text-qc-fg">
-                <div class="flex items-start justify-between gap-3">
-                    <div>
-                        <h3 class="inline-flex items-center gap-2.5 text-[14px] font-semibold text-qc-fg">
-                            <span class="inline-flex h-7 w-7 items-center justify-center rounded-sm bg-qc-hover text-qc-subtle">
-                                <DatabaseIcon type={connectionForm.databaseType} size={18} />
-                            </span>
-                            {editing
-                                ? `Edit ${engineLabel} Connection`
-                                : `New ${engineLabel} Connection`}
-                        </h3>
-                        <div class="mt-2.5 flex items-center gap-2 text-[11px] text-qc-muted">
-                            <span class={step === 1 ? "font-semibold text-qc-fg" : ""}>1. Database</span>
-                            <span class="text-qc-border">/</span>
-                            <span class={step === 2 ? "font-semibold text-qc-fg" : ""}>2. Details</span>
-                        </div>
-                    </div>
-                    <button
-                        aria-label="Close modal"
-                        title="Close"
-                        onclick={onClose}
-                        class="flex h-7 w-7 items-center justify-center rounded-sm text-qc-muted hover:bg-qc-hover hover:text-qc-fg"
-                    >
-                        <X size={16} />
-                    </button>
-                </div>
-            </div>
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions: backdrop click mirrors Cancel; Escape is handled globally above -->
+	<div
+		role="presentation"
+		class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[2px] p-4 cursor-default"
+		onclick={handleBackdropClick}
+	>
+		<div
+			class="w-full max-w-[560px] overflow-hidden rounded-lg border border-qc-border bg-qc-elevated shadow-[0_24px_60px_rgba(0,0,0,0.35)]"
+			role="dialog"
+			aria-modal="true"
+			aria-label={editing ? `Edit ${engineLabel} connection` : `New ${engineLabel} connection`}
+		>
+			<div class="border-b border-qc-border bg-qc-elevated px-4 py-3 text-qc-fg">
+				<div class="flex items-center justify-between gap-3">
+					<div class="flex min-w-0 items-center gap-2.5">
+						<span
+							class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-qc-hover text-qc-subtle"
+						>
+							<DatabaseIcon type={connectionForm.databaseType} size={18} />
+						</span>
+						<div class="min-w-0">
+							<h3 class="truncate text-[13px] font-semibold text-qc-fg">
+								{editing
+									? `Edit ${engineLabel} Connection`
+									: `New ${engineLabel} Connection`}
+							</h3>
+							<div class="mt-1 flex items-center gap-1 text-[11px]">
+								<span
+									class={`rounded-full px-2 py-0.5 ${step === 1 ? 'bg-qc-hover font-medium text-qc-fg' : 'text-qc-muted'}`}
+									>1. Database</span
+								>
+								<span
+									class={`rounded-full px-2 py-0.5 ${step === 2 ? 'bg-qc-hover font-medium text-qc-fg' : 'text-qc-muted'}`}
+									>2. Details</span
+								>
+							</div>
+						</div>
+					</div>
+					<button
+						aria-label="Close modal"
+						title="Close"
+						onclick={onClose}
+						class="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-qc-muted hover:bg-qc-hover hover:text-qc-fg"
+					>
+						<X size={16} />
+					</button>
+				</div>
+			</div>
 
-            <div class="space-y-3 p-4 text-[13px] bg-qc-elevated text-qc-fg">
-            {#if step === 1}
-                <div>
-                    <div class="mb-2 flex items-center justify-between">
-                        <span class="text-[10px] font-semibold uppercase tracking-wider text-qc-muted">Database Type</span>
-                        <span class="text-[11px] text-qc-muted">Choose an engine</span>
-                    </div>
-                    <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        {#each [
-                            { value: "postgres", label: "PostgreSQL", detail: "Relational", disabled: false },
-                            { value: "mysql", label: "MySQL", detail: "Relational", disabled: false },
-                            { value: "sqlite", label: "SQLite", detail: "Local file", disabled: false },
-                            { value: "redis", label: "Redis", detail: "In-memory", disabled: true },
-                            { value: "mongodb", label: "MongoDB", detail: "Document", disabled: true },
-                            { value: "duckdb", label: "DuckDB", detail: "Analytical", disabled: true },
-                            { value: "mssql", label: "SQL Server", detail: "Relational", disabled: true },
-                        ] as database}
-                            <button
-                                type="button"
-                                disabled={database.disabled}
-                                onclick={() => changeDatabaseType(database.value as any)}
-                                class={`flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-md border px-2.5 py-2.5 text-center transition-colors ${
-                                    database.disabled
-                                        ? "border-qc-border-subtle bg-qc-panel text-qc-muted opacity-50 cursor-not-allowed"
-                                        : connectionForm.databaseType === database.value
-                                          ? "border-qc-fg bg-qc-hover text-qc-fg"
-                                          : "border-qc-border bg-qc-panel text-qc-subtle hover:border-qc-muted hover:bg-qc-hover"
-                                }`}
-                            >
-                                <span class={`inline-flex h-9 w-9 items-center justify-center rounded-md ${database.disabled ? "bg-qc-hover" : "bg-qc-elevated"}`}>
-                                    {#if database.value === "postgres" || database.value === "mysql" || database.value === "sqlite"}
-                                        <DatabaseIcon type={database.value as any} size={22} />
-                                    {:else if database.value === "redis" || database.value === "mongodb" || database.value === "duckdb" || database.value === "mssql"}
-                                        <DatabaseIcon type={database.value as any} size={22} />
-                                    {:else}
-                                        <Database size={21} strokeWidth={1.7} class="text-qc-muted" />
-                                    {/if}
-                                </span>
-                                <span class="min-w-0">
-                                    <span class="block truncate text-[12px] font-semibold">{database.label}</span>
-                                    <span class="block text-[10px] text-qc-muted">{database.detail}</span>
-                                </span>
-                            </button>
-                        {/each}
-                    </div>
-                </div>
-            {:else}
-                <div class="flex items-center gap-3 rounded-md border border-qc-border bg-qc-panel px-3 py-2">
-                    <DatabaseIcon type={connectionForm.databaseType} size={22} />
-                    <div class="min-w-0">
-                        <div class="text-[12px] font-semibold text-qc-fg">{engineLabel}</div>
-                        <div class="text-[11px] text-qc-muted">{isSqlite ? "Connect to a local database file" : "Connect to a database server"}</div>
-                    </div>
-                    <button type="button" onclick={() => (step = 1)} class="ml-auto text-[11px] font-medium text-qc-muted hover:text-qc-fg">Change</button>
-                </div>
+			<div class="space-y-3 p-4 text-[13px] bg-qc-elevated text-qc-fg">
+				{#if step === 1}
+					<div>
+						<div class="mb-2 flex items-center justify-between">
+							<span
+								class="text-[10px] font-semibold uppercase tracking-wider text-qc-muted"
+								>Database Type</span
+							>
+							<span class="text-[11px] text-qc-muted">Choose an engine</span>
+						</div>
+						<div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
+							{#each DATABASE_ENGINES as database (database.value)}
+								<button
+									type="button"
+									title={database.label}
+									onclick={() => changeDatabaseType(database.value)}
+									class={`relative flex min-w-0 flex-col items-center justify-center gap-1 rounded-md border px-2 py-2 text-center transition-colors ${
+										connectionForm.databaseType === database.value
+											? 'border-qc-fg bg-qc-hover text-qc-fg'
+											: 'border-qc-border bg-qc-panel text-qc-subtle hover:border-qc-muted hover:bg-qc-hover'
+									}`}
+								>
+									<span
+										class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-qc-elevated"
+									>
+										<DatabaseIcon type={database.value} size={20} />
+									</span>
+									<span class="min-w-0">
+										<span class="block truncate text-[12px] font-semibold"
+											>{database.label}</span
+										>
+										<span class="block text-[10px] text-qc-muted"
+											>{database.detail}</span
+										>
+									</span>
+								</button>
+							{/each}
+						</div>
+					</div>
+				{:else}
+					<div
+						class="flex items-center gap-3 rounded-md border border-qc-border bg-qc-panel px-3 py-2"
+					>
+						<DatabaseIcon type={connectionForm.databaseType} size={22} />
+						<div class="min-w-0">
+							<div class="text-[12px] font-semibold text-qc-fg">{engineLabel}</div>
+							<div class="text-[11px] text-qc-muted">
+								{isSqlite
+									? 'Connect to a local database file'
+									: 'Connect to a database server'}
+							</div>
+						</div>
+						<button
+							type="button"
+							onclick={() => (step = 1)}
+							class="ml-auto text-[11px] font-medium text-qc-muted hover:text-qc-fg"
+							>Change</button
+						>
+					</div>
 
-                <div class="grid content-start grid-cols-1 gap-2.5 sm:grid-cols-2">
-                    <label class="sm:col-span-2 flex flex-col gap-1 text-qc-subtle">
-                        <span class="text-[10px] font-semibold uppercase tracking-wider text-qc-muted">Connection Name</span>
-                        <input
-                            value={connectionForm.name}
-                            oninput={(e) =>
-                                updateField("name", (e.currentTarget as HTMLInputElement).value)}
-                            class="ui-input h-8 px-3"
-                        />
-                    </label>
+					<ConnectionFields
+						form={connectionForm}
+						connectionString={connectionStringInput}
+						bind:nameInput
+						onFormChange={handleFormChange}
+						onStringChange={handleStringChange}
+					/>
+				{/if}
 
-                    {#if connectionForm.databaseType !== "sqlite"}
-                        <label class="sm:col-span-2 flex flex-col gap-1 text-qc-subtle">
-                            <span class="text-[10px] font-semibold uppercase tracking-wider text-qc-muted">Host & Port</span>
-                            <div class="flex gap-2">
-                                <input
-                                    value={connectionForm.host}
-                                    oninput={(e) =>
-                                        updateField("host", (e.currentTarget as HTMLInputElement).value)}
-                                    class="ui-input h-8 w-full px-3"
-                                    placeholder="localhost"
-                                />
-                                <input
-                                    type="number"
-                                    value={connectionForm.port}
-                                    oninput={(e) =>
-                                        updateField(
-                                            "port",
-                                            Number((e.currentTarget as HTMLInputElement).value) || (connectionForm.databaseType === "mysql" ? 3306 : 5432),
-                                        )}
-                                    class="ui-input h-8 w-24 shrink-0 px-3"
-                                    title="Port"
-                                />
-                            </div>
-                        </label>
-                    {/if}
-                    <label class="sm:col-span-2 flex flex-col gap-1 text-qc-subtle">
-                        <span class="text-[10px] font-semibold uppercase tracking-wider text-qc-muted">{isSqlite ? "Database Path" : "Database"}{!isSqlite && connectionForm.databaseType === "postgres" ? ' — Optional' : ''}</span>
-                        <div class="flex items-center gap-2">
-                            <input
-                                value={connectionForm.database}
-                                oninput={(e) =>
-                                    updateField("database", (e.currentTarget as HTMLInputElement).value)}
-                                placeholder={isSqlite
-                                    ? "C:/data/mydb.sqlite"
-                                    : connectionForm.databaseType === "postgres"
-                                        ? "postgres (default)"
-                                        : connectionForm.databaseType === "mysql"
-                                            ? "mysql (default)"
-                                            : undefined}
-                                class="ui-input h-8 w-full px-3 placeholder:text-qc-muted"
-                            />
-                            {#if isSqlite}
-                                <button
-                                    type="button"
-                                    onclick={chooseSqliteFile}
-                                    class="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-qc-border bg-qc-panel px-3 text-[12px] font-medium text-qc-subtle hover:bg-qc-hover hover:text-qc-fg"
-                                >
-                                    <FolderOpen size={14} />
-                                    Open File
-                                </button>
-                            {/if}
-                        </div>
-                    </label>
-                    {#if !isSqlite}
-                        <label class="flex flex-col gap-1 text-qc-subtle">
-                            <span class="text-[10px] font-semibold uppercase tracking-wider text-qc-muted">User</span>
-                            <input
-                                value={connectionForm.user}
-                                oninput={(e) =>
-                                    updateField("user", (e.currentTarget as HTMLInputElement).value)}
-                                class="ui-input h-8 px-3"
-                            />
-                        </label>
-                        <label class="flex flex-col gap-1 text-qc-subtle">
-                            <span class="text-[10px] font-semibold uppercase tracking-wider text-qc-muted">Password</span>
-                            <input
-                                type="password"
-                                value={connectionForm.password}
-                                oninput={(e) =>
-                                    updateField("password", (e.currentTarget as HTMLInputElement).value)}
-                                class="ui-input h-8 px-3"
-                            />
-                        </label>
-                    {/if}
-                </div>
+				{#if testConnectionMessage}
+					<div
+						class={`rounded-md border px-3 py-2 text-xs ${
+							testConnectionOk
+								? 'border-qc-border bg-qc-panel text-qc-subtle'
+								: 'border-qc-danger/30 bg-qc-danger/10 text-qc-danger'
+						}`}
+					>
+						{testConnectionMessage}
+					</div>
+				{/if}
+			</div>
 
-                <div class="sm:col-span-2 mt-2 pt-1">
-                    <div class="relative py-2">
-                        <div class="absolute inset-0 flex items-center" aria-hidden="true">
-                            <div class="w-full border-t border-qc-border"></div>
-                        </div>
-                        <div class="relative flex justify-center">
-                            <span class="bg-qc-elevated px-2 text-[10px] font-semibold uppercase tracking-wider text-qc-muted">Or paste a connection string to auto-fill</span>
-                        </div>
-                    </div>
-                    <input
-                        value={connectionStringInput}
-                        oninput={(e) => {
-                            const val = (e.currentTarget as HTMLInputElement).value;
-                            onConnectionStringChange(val);
-                            onModeChange(val.trim() ? "string" : "fields");
-                            tryParseAndFill(val);
-                        }}
-                        placeholder={connectionStringPlaceholder}
-                        class="ui-input h-8 w-full px-3 mt-1 placeholder:text-qc-muted"
-                    />
-                </div>
-            {/if}
-
-                {#if testConnectionMessage}
-                    <div
-                        class={`rounded-md border px-3 py-2 text-xs ${
-                            testConnectionOk
-                                ? "border-qc-border bg-qc-panel text-qc-subtle"
-                                : "border-qc-danger/30 bg-qc-danger/10 text-qc-danger"
-                        }`}
-                    >
-                        {testConnectionMessage}
-                    </div>
-                {/if}
-            </div>
-
-            <div class="flex flex-wrap items-center justify-between gap-2 border-t border-qc-border bg-qc-panel px-4 py-3">
-                {#if step === 2}
-                    <button type="button" onclick={() => (step = 1)} class="btn-secondary h-8 px-3 text-[13px] font-medium">Back</button>
-                {:else}
-                    <span></span>
-                {/if}
-                <div class="flex flex-wrap items-center justify-end gap-2">
-                <button
-                    onclick={onClose}
-                    class="btn-secondary h-8 px-3 text-[13px] font-medium"
-                >
-                    Cancel
-                </button>
-                {#if step === 1}
-                <button
-                    type="button"
-                    onclick={() => (step = 2)}
-                    class="h-8 btn-primary px-3 text-[13px] font-medium"
-                >
-                    Next
-                </button>
-                {:else}
-                <button
-                    onclick={onTest}
-                    disabled={isTestingConnection || isConnecting}
-                    class="btn-secondary h-8 px-3 text-[13px] font-medium disabled:opacity-60"
-                >
-                    {isTestingConnection ? "Testing..." : "Test"}
-                </button>
-                <button
-                    onclick={onSaveAndConnect}
-                    disabled={isTestingConnection || isConnecting}
-                    class="h-8 btn-primary px-3 text-[13px] font-medium disabled:opacity-60"
-                >
-                    {isConnecting
-                        ? "Connecting..."
-                        : editing
-                            ? "Save Changes and Connect"
-                            : "Save and Connect"}
-                </button>
-                    {/if}
-                    </div>
-            </div>
-        </div>
-    </div>
+			<div
+				class="flex flex-wrap items-center justify-between gap-2 border-t border-qc-border bg-qc-panel px-4 py-3"
+			>
+				{#if step === 2}
+					<button
+						type="button"
+						onclick={() => (step = 1)}
+						class="btn-secondary h-8 px-3 text-[13px] font-medium">Back</button
+					>
+				{:else}
+					<span></span>
+				{/if}
+				<div class="flex flex-wrap items-center justify-end gap-2">
+					<button onclick={onClose} class="btn-secondary h-8 px-3 text-[13px] font-medium">
+						Cancel
+					</button>
+					{#if step === 1}
+						<button
+							type="button"
+							onclick={() => (step = 2)}
+							class="h-8 btn-primary px-3 text-[13px] font-medium"
+						>
+							Next
+						</button>
+					{:else}
+						<button
+							onclick={onTest}
+							disabled={isTestingConnection || isConnecting}
+							class="btn-secondary h-8 px-3 text-[13px] font-medium disabled:opacity-60"
+						>
+							{isTestingConnection ? 'Testing...' : 'Test'}
+						</button>
+						<button
+							onclick={onSaveAndConnect}
+							disabled={isTestingConnection || isConnecting}
+							class="h-8 btn-primary px-3 text-[13px] font-medium disabled:opacity-60"
+						>
+							{isConnecting
+								? 'Connecting...'
+								: editing
+									? 'Save Changes and Connect'
+									: 'Save and Connect'}
+						</button>
+					{/if}
+				</div>
+			</div>
+		</div>
+	</div>
 {/if}

@@ -11,7 +11,38 @@ export function quoteSqlIdentifier(
 	if (databaseType === 'mysql') {
 		return `\`${value.replaceAll('`', '``')}\``;
 	}
+	if (databaseType === 'mssql') {
+		return `[${value.replaceAll(']', ']]')}]`;
+	}
 	return quoteIdent(value);
+}
+
+const COMMAND_VERBS = [
+	'insert',
+	'update',
+	'delete',
+	'truncate',
+	'create',
+	'drop',
+	'alter',
+	'rename',
+] as const;
+
+export type SqlCommandVerb = (typeof COMMAND_VERBS)[number];
+
+const COMMAND_VERB_RE = new RegExp(`^\\s*(${COMMAND_VERBS.join('|')})\\b`, 'i');
+
+export function sqlCommandVerb(sql: string): SqlCommandVerb | null {
+	const match = sql.trim().match(COMMAND_VERB_RE);
+	if (!match) return null;
+	return match[1]!.toLowerCase() as SqlCommandVerb;
+}
+
+export function commandSuccessMessage(sql: string): string | null {
+	const verb = sqlCommandVerb(sql);
+	if (!verb) return null;
+	if (verb === 'truncate') return 'Table truncated';
+	return `${verb.charAt(0).toUpperCase()}${verb.slice(1)} succeeded`;
 }
 
 export function unquoteIdent(value: string): string {
@@ -22,6 +53,9 @@ export function unquoteIdent(value: string): string {
 	if (trimmed.startsWith('`') && trimmed.endsWith('`') && trimmed.length >= 2) {
 		return trimmed.slice(1, -1).replaceAll('``', '`');
 	}
+	if (trimmed.startsWith('[') && trimmed.endsWith(']') && trimmed.length >= 2) {
+		return trimmed.slice(1, -1).replaceAll(']]', ']');
+	}
 	return trimmed;
 }
 
@@ -31,6 +65,9 @@ export function identifierNeedsQuotes(
 ): boolean {
 	if (databaseType === 'mysql') {
 		return !/^[A-Za-z_][A-Za-z0-9_$]*$/.test(name) || /[A-Z]/.test(name);
+	}
+	if (databaseType === 'mssql') {
+		return true;
 	}
 	return !/^[a-z_][a-z0-9_$]*$/.test(name);
 }
@@ -140,6 +177,16 @@ export function quoteCatalogIdentifiersInSql(
 			const end = skipSqlString(sql, i, '`');
 			output += sql.slice(i, end);
 			i = end;
+			continue;
+		}
+		if (char === '[' && databaseType === 'mssql') {
+			const end = sql.indexOf(']', i + 1);
+			if (end === -1) {
+				output += sql.slice(i);
+				break;
+			}
+			output += sql.slice(i, end + 1);
+			i = end + 1;
 			continue;
 		}
 		if (char === '$' && databaseType === 'postgres') {

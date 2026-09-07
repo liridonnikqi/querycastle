@@ -111,7 +111,11 @@
 						class="inline-flex items-center gap-1.5 min-w-0"
 						title={`${label(session.status)} · ${session.status.database}`}
 					>
-						<DatabaseIcon type={session.status.databaseType} size={12} />
+						<DatabaseIcon
+						type={session.status.databaseType}
+						size={12}
+						tone={session.status.databaseType === 'sqlite' ? 'ink' : 'brand'}
+					/>
 						<span class={`truncate ${embedded ? 'max-w-24' : 'max-w-40'}`}>{label(session.status)}</span>
 					</button>
 					<button
@@ -157,7 +161,11 @@
 					onclick={() => pickSaved(connection)}
 					class={`w-full px-3 py-2 text-left flex items-center gap-2 ${alreadyOpen ? 'opacity-50 cursor-default' : 'hover:bg-qc-hover'}`}
 				>
-					<DatabaseIcon type={connection.databaseType} size={14} />
+					<DatabaseIcon
+					type={connection.databaseType}
+					size={14}
+					tone={connection.databaseType === 'sqlite' ? 'ink' : 'brand'}
+				/>
 					<div class="min-w-0 flex-1">
 						<div class="text-[12px] text-qc-fg truncate">{connection.name}</div>
 						<div class="text-[11px] text-qc-muted truncate">{connectionMetaLine(connection)}</div>

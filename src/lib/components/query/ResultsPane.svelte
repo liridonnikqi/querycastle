@@ -24,7 +24,6 @@
 		QueryResultPayload,
 		TableChangesPayload,
 	} from '$lib/rpc';
-	import { rpc } from '$lib/rpc-client';
 	import {
 		outgoingFkColumns,
 		resolveIncomingRelations,
@@ -36,7 +35,7 @@
 		formatFollowValue,
 		isFollowableValue,
 	} from '$lib/utils/relation-sql';
-	import { loadFkOptions, type FkOption } from '$lib/utils/fk-lookup';
+	import { loadFkOptions } from '$lib/utils/fk-lookup';
 	import {
 		coerceByColumn,
 		displayCellText,
@@ -47,8 +46,17 @@
 		valuesForInsert,
 		type GridColumnMeta,
 	} from '$lib/utils/grid-editors';
+	import { HIDDEN_ROW_ID_COLUMN, dialectCapabilities } from '$lib/utils/dialect';
+	import {
+		explorerTableColumnNames,
+		isCommandQueryResult,
+		isGridEditable,
+		queryOutcomeMessage,
+		visibleGridColumns,
+	} from '$lib/utils/result-grid';
 	import { quoteSqlIdentifier } from '$lib/utils/sql';
 	import { buildTableSelect } from '$lib/utils/table-select';
+	import { copyTextToClipboard } from '$lib/utils/clipboard';
 	import type { RelationHop } from '$lib/utils/workspace';
 	import RelationTrail from '$lib/components/query/RelationTrail.svelte';
 	import ColumnTypeIcon from '$lib/components/query/ColumnTypeIcon.svelte';
@@ -64,6 +72,11 @@
 		pendingChangeCount,
 	} from '$lib/utils/pending-changes';
 	import { toast } from '$lib/stores/toast.svelte';
+	import {
+		ResultsGridSession,
+		isHiddenRowIdColumn,
+		rowIdOf,
+	} from '$lib/workspace/results-grid.svelte';
 	import { fly } from 'svelte/transition';
 	import {
 		PAGE_SIZE_OPTIONS,
@@ -85,7 +98,6 @@
 		row: Record<string, unknown>;
 	} | null;
 	type EditingCell = { rowId: string; column: string } | null;
-	type PendingInsertRow = { id: string; values: Record<string, unknown> };
 	type ResultView = 'results' | 'messages' | 'explain';
 	type ColumnResizeState = {
 		column: string;
@@ -100,6 +112,7 @@
 		resultContext,
 		explorer = null,
 		relationTrail = [],
+		runQuery,
 		onRunSql,
 		onApplyTableChanges,
 		onFollowRelation,
@@ -115,6 +128,7 @@
 		resultContext: { schema: string; table: string } | null;
 		explorer?: DatabaseExplorer | null;
 		relationTrail?: RelationHop[];
+		runQuery: (sql: string) => Promise<QueryResultPayload>;
 		onRunSql: (sql: string) => Promise<void>;
 		onApplyTableChanges?: (
 			context: { schema: string; table: string },
@@ -133,16 +147,13 @@
 		rows: [],
 		rowCount: 0,
 		durationMs: 0,
+		truncated: false,
 	});
 
+	const grid = new ResultsGridSession();
 	let rerunning = $state(false);
 	let runningExplain = $state(false);
 	let syncingChanges = $state(false);
-	let selectedRows = $state(new Set<string>());
-	let activeRowId = $state<string | null>(null);
-	let pendingUpdates = $state(new Map<string, Record<string, unknown>>());
-	let pendingDeletes = $state(new Set<string>());
-	let pendingInserts = $state<PendingInsertRow[]>([]);
 	let rowContextMenu = $state<RowContextMenu>(null);
 	let relatedSubmenuOpen = $state(false);
 	let editingCell = $state<EditingCell>(null);
@@ -155,15 +166,9 @@
 	let activeView = $state<ResultView>('results');
 	const minColumnWidth = 120;
 
-	let fkOptionCache = $state(new Map<string, FkOption[]>());
-	let fkLoadingKeys = $state(new Set<string>());
 	let keepDraftsOnNextResult = $state(false);
-	let pageSize = $state<PageSize>(100);
 	let page = $state(1);
-	let totalRowCount = $state(0);
 	let sort = $state<GridSort | null>(null);
-	let columnFilters = $state<Record<string, string>>({});
-	let showFilterRow = $state(false);
 	let showSortMenu = $state(false);
 	let pendingPanelOpen = $state(false);
 	let inspectorOpen = $state(false);
@@ -175,6 +180,7 @@
 	} | null>(null);
 	let rangeDragging = $state(false);
 	let rangeAnchor = $state<{ r: number; c: number } | null>(null);
+	let rangeCapture: { el: HTMLElement; pointerId: number } | null = null;
 	let gridScrollEl = $state<HTMLDivElement | null>(null);
 	let gridViewportH = $state(0);
 	let gridViewportW = $state(0);
@@ -183,17 +189,41 @@
 	const FILLER_COL_PX = 120;
 	const EMPTY_SHEET_COLUMNS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 	let userCollapsedPending = $state(false);
-	let baseWhere = $state('');
 	let lastBrowseSourceKey = $state('');
-	let deletedSnapshots = $state(new Map<string, Record<string, unknown>>());
 	let filterTimer: ReturnType<typeof setTimeout> | null = null;
 
-	let editable = $derived.by(
-		() =>
-			!!resultContext && displayResult.columns.includes('_querycastle_ctid'),
+	let explorerColumns = $derived(
+		explorerTableColumnNames(explorer ?? null, resultContext),
 	);
-	let visibleColumns = $derived.by(() =>
-		displayResult.columns.filter((column) => column !== '_querycastle_ctid'),
+	let visibleColumns = $derived(
+		visibleGridColumns(displayResult.columns, explorerColumns),
+	);
+	let editable = $derived(
+		isGridEditable({
+			databaseType,
+			explorer: explorer ?? null,
+			context: resultContext,
+			resultColumns: displayResult.columns,
+			rowCount: displayResult.rows.length,
+			visibleColumns,
+		}),
+	);
+	let isCommandResult = $derived(
+		isCommandQueryResult({
+			loading,
+			sqlError,
+			resultColumns: displayResult.columns,
+			visibleColumns,
+			lastRunSql: refreshSql,
+		}),
+	);
+	let outcomeMessage = $derived(
+		queryOutcomeMessage({
+			durationMs,
+			rowCount: displayResult.rowCount,
+			truncated: displayResult.truncated,
+			columns: displayResult.columns,
+		}),
 	);
 	let visibleRows = $derived(displayResult.rows);
 	let columnMetas = $derived.by(() =>
@@ -206,9 +236,9 @@
 	);
 	let changeCount = $derived.by(() =>
 		pendingChangeCount({
-			updates: pendingUpdates,
-			inserts: pendingInserts,
-			deletes: pendingDeletes,
+			updates: grid.pendingUpdates,
+			inserts: grid.pendingInserts,
+			deletes: grid.pendingDeletes,
 		}),
 	);
 	let pendingCards = $derived.by(() => {
@@ -217,10 +247,10 @@
 			schema: resultContext.schema,
 			table: resultContext.table,
 			rows: displayResult.rows,
-			updates: pendingUpdates,
-			inserts: pendingInserts,
-			deletes: pendingDeletes,
-			deletedSnapshots,
+			updates: grid.pendingUpdates,
+			inserts: grid.pendingInserts,
+			deletes: grid.pendingDeletes,
+			deletedSnapshots: grid.deletedSnapshots,
 		});
 	});
 	let pkColumns = $derived(columnMetas.filter((column) => column.isPrimary).map((column) => column.name));
@@ -230,14 +260,11 @@
 			databaseType,
 			schema: resultContext.schema,
 			table: resultContext.table,
-			updates: Array.from(pendingUpdates.entries()).map(([ctid, values]) => ({
-				ctid,
-				values,
-			})),
-			deletes: Array.from(pendingDeletes),
-			inserts: pendingInserts.map((row) => row.values),
+			updates: grid.toUpdates(),
+			deletes: Array.from(grid.pendingDeletes),
+			inserts: grid.pendingInserts.map((row) => row.values),
 			rows: displayResult.rows,
-			deletedSnapshots,
+			deletedSnapshots: grid.deletedSnapshots,
 			pkColumns,
 		});
 	});
@@ -255,7 +282,7 @@
 	});
 	let canServerBrowse = $derived(!!resultContext);
 	let filterList = $derived.by(() =>
-		Object.entries(columnFilters)
+		Object.entries(grid.columnFilters)
 			.filter(([, value]) => value.trim().length > 0)
 			.map(([column, value]) => ({ column, value })),
 	);
@@ -271,49 +298,49 @@
 			: filterSortRows(visibleRows, filterList, effectiveSort),
 	);
 	let displayTotal = $derived(
-		canServerBrowse ? totalRowCount : clientPreparedRows.length,
+		canServerBrowse ? grid.totalRowCount : clientPreparedRows.length,
 	);
-	let pageCount = $derived.by(() => totalPages(displayTotal, pageSize));
+	let pageCount = $derived.by(() => totalPages(displayTotal, grid.pageSize));
 	let pageRows = $derived.by(() => {
 		if (canServerBrowse) return visibleRows;
-		const start = (page - 1) * pageSize;
-		return clientPreparedRows.slice(start, start + pageSize);
+		const start = (page - 1) * grid.pageSize;
+		return clientPreparedRows.slice(start, start + grid.pageSize);
 	});
 	let inspectorRow = $derived.by(() => {
 		if (pageRows.length === 0) return null;
-		if (!activeRowId) return pageRows[0] ?? null;
+		if (!grid.activeRowId) return pageRows[0] ?? null;
 		return (
 			pageRows.find(
-				(row) => String(row['_querycastle_ctid'] ?? '') === activeRowId,
+				(row) => rowIdOf(row) === grid.activeRowId,
 			) ??
 			pageRows[0] ??
 			null
 		);
 	});
 	let inspectorValues = $derived.by(() => {
-		if (!inspectorRow || !activeRowId) return {} as Record<string, unknown>;
-		return { ...inspectorRow, ...(pendingUpdates.get(activeRowId) ?? {}) };
+		if (!inspectorRow || !grid.activeRowId) return {} as Record<string, unknown>;
+		return { ...inspectorRow, ...(grid.pendingUpdates.get(grid.activeRowId) ?? {}) };
 	});
 	let inspectorSql = $derived.by(() => {
-		if (!resultContext || !activeRowId) return '';
+		if (!resultContext || !grid.activeRowId) return '';
 		return buildRowInspectSql({
 			databaseType,
 			schema: resultContext.schema,
 			table: resultContext.table,
-			ctid: activeRowId,
+			rowId: grid.activeRowId,
 			row: inspectorRow ?? undefined,
 			pkColumns,
 		});
 	});
 	let inspectorLabel = $derived.by(() => {
 		if (pageRows.length === 0) return 'Row';
-		let index = activeRowId
+		let index = grid.activeRowId
 			? pageRows.findIndex(
-					(row) => String(row['_querycastle_ctid'] ?? '') === activeRowId,
+					(row) => rowIdOf(row) === grid.activeRowId,
 				)
 			: 0;
 		if (index < 0) index = 0;
-		return `Row #${(page - 1) * pageSize + index + 1}`;
+		return `Row #${(page - 1) * grid.pageSize + index + 1}`;
 	});
 	const skeletonRowCount = 10;
 	const skeletonRows = Array.from(
@@ -324,7 +351,7 @@
 		if (!editingCell) return false;
 		const { rowId, column } = editingCell;
 		const row = displayResult.rows.find(
-			(item) => String(item['_querycastle_ctid'] ?? '') === rowId,
+			(item) => rowIdOf(item) === rowId,
 		);
 		if (!row) return false;
 		const nextValue = coerceValue(editDraft, column);
@@ -332,9 +359,9 @@
 	});
 	let hasPendingChanges = $derived.by(
 		() =>
-			pendingUpdates.size > 0 ||
-			pendingDeletes.size > 0 ||
-			pendingInserts.length > 0 ||
+			grid.pendingUpdates.size > 0 ||
+			grid.pendingDeletes.size > 0 ||
+			grid.pendingInserts.length > 0 ||
 			editingCellHasPendingChange,
 	);
 
@@ -356,21 +383,17 @@
 			String(payload.rowCount),
 			String(payload.durationMs),
 			String(payload.rows.length),
-			first ? String(first['_querycastle_ctid'] ?? '') : '',
-			last ? String(last['_querycastle_ctid'] ?? '') : '',
+			first ? rowIdOf(first) : '',
+			last ? rowIdOf(last) : '',
 		].join('|');
 	}
 
 	function resetDraftState() {
-		selectedRows = new Set();
-		pendingUpdates = new Map();
-		pendingDeletes = new Set();
-		pendingInserts = [];
+		grid.clearDrafts();
 		rowContextMenu = null;
 		relatedSubmenuOpen = false;
 		editingCell = null;
 		editDraft = '';
-		deletedSnapshots = new Map();
 		keepDraftsOnNextResult = false;
 		pendingPanelOpen = false;
 		userCollapsedPending = false;
@@ -386,7 +409,7 @@
 				schema: resultContext.schema,
 				table: resultContext.table,
 				orderClause: firstVisibleColumn
-					? ` order by ${quoteSqlIdentifier(databaseType, firstVisibleColumn)} asc${databaseType === 'mysql' ? '' : ' nulls last'}`
+					? ` order by ${quoteSqlIdentifier(databaseType, firstVisibleColumn)} asc${dialectCapabilities(databaseType).supportsNullsLast ? ' nulls last' : ''}`
 					: '',
 				limit: 100,
 			}) ?? ''
@@ -406,15 +429,16 @@
 			rows: result.rows.map((row) => ({ ...row })),
 			rowCount: result.rowCount,
 			durationMs: result.durationMs,
+			truncated: result.truncated,
 		};
 		if (keepDraftsOnNextResult) {
 			keepDraftsOnNextResult = false;
-			if (!canServerBrowse) totalRowCount = result.rowCount;
+			if (!canServerBrowse) grid.totalRowCount = result.rowCount;
 			return;
 		}
 		clearCellHighlights();
 		resetDraftState();
-		if (!canServerBrowse) totalRowCount = result.rowCount;
+		if (!canServerBrowse) grid.totalRowCount = result.rowCount;
 		activeView = 'results';
 	});
 
@@ -451,38 +475,30 @@
 		search = '',
 	) {
 		const key = `${fkCacheKey(fk)}::${search.trim().toLowerCase()}`;
-		if (fkOptionCache.has(key) || fkLoadingKeys.has(key)) return;
-		const nextLoading = new Set(fkLoadingKeys);
-		nextLoading.add(key);
-		fkLoadingKeys = nextLoading;
+		if (grid.fkOptionCache.has(key) || grid.fkLoadingKeys.has(key)) return;
+		grid.beginFkLoad(key);
 		try {
 			const options = await loadFkOptions({
-				runQuery: (sql) => rpc.request.runQuery({ sql }),
+				runQuery,
 				databaseType,
 				explorer: explorer ?? null,
 				fk,
 				search,
 			});
-			const nextCache = new Map(fkOptionCache);
-			nextCache.set(key, options);
+			grid.setFkOptions(key, options);
 			const baseKey = fkCacheKey(fk);
-			const existing = nextCache.get(baseKey) ?? [];
+			const existing = grid.fkOptions(baseKey);
 			const merged = [...existing];
 			for (const option of options) {
 				if (!merged.some((item) => String(item.id) === String(option.id))) {
 					merged.push(option);
 				}
 			}
-			nextCache.set(baseKey, merged);
-			fkOptionCache = nextCache;
+			grid.setFkOptions(baseKey, merged);
 		} catch {
-			const nextCache = new Map(fkOptionCache);
-			if (!nextCache.has(fkCacheKey(fk))) nextCache.set(fkCacheKey(fk), []);
-			fkOptionCache = nextCache;
+			if (!grid.fkOptionCache.has(fkCacheKey(fk))) grid.setFkOptions(fkCacheKey(fk), []);
 		} finally {
-			const done = new Set(fkLoadingKeys);
-			done.delete(key);
-			fkLoadingKeys = done;
+			grid.endFkLoad(key);
 		}
 	}
 
@@ -491,11 +507,7 @@
 		referencedTable: string;
 		referencedColumn: string;
 	}) {
-		const prefix = fkCacheKey(fk);
-		for (const key of fkLoadingKeys) {
-			if (key === prefix || key.startsWith(`${prefix}::`)) return true;
-		}
-		return false;
+		return grid.isFkLoading(fkCacheKey(fk));
 	}
 
 	function optionsForFk(
@@ -506,7 +518,7 @@
 		} | null,
 	) {
 		if (!fk) return [];
-		return fkOptionCache.get(fkCacheKey(fk)) ?? [];
+		return grid.fkOptions(fkCacheKey(fk));
 	}
 
 	function draftFromValue(column: string, value: unknown): string {
@@ -538,11 +550,7 @@
 		rowId: string,
 		column: string,
 	): unknown {
-		const pending = pendingUpdates.get(rowId);
-		if (pending && Object.prototype.hasOwnProperty.call(pending, column)) {
-			return pending[column];
-		}
-		return row[column];
+		return grid.cellValue(row, rowId, column);
 	}
 
 	function getRowValueByName(
@@ -552,7 +560,7 @@
 	): unknown {
 		if (
 			Object.prototype.hasOwnProperty.call(row, column) ||
-			pendingUpdates.get(rowId)?.[column] !== undefined
+			grid.hasPendingCell(rowId, column)
 		) {
 			return getRowValue(row, rowId, column);
 		}
@@ -669,7 +677,7 @@
 		currentValue: unknown,
 	) {
 		if (rowId) {
-			activeRowId = rowId;
+			grid.activeRowId = rowId;
 		}
 		if (editingCell?.rowId === rowId && editingCell?.column === column) return;
 		const fks = explorer
@@ -691,17 +699,17 @@
 			inspectorOpen = false;
 			return;
 		}
-		if (!activeRowId) {
+		if (!grid.activeRowId) {
 			const first = pageRows[0];
-			if (first) activeRowId = String(first['_querycastle_ctid'] ?? '');
+			if (first) grid.activeRowId = rowIdOf(first);
 		}
-		if (!activeRowId) return;
+		if (!grid.activeRowId) return;
 		editingCell = null;
 		inspectorOpen = true;
 	}
 
 	function inspectRow(rowId: string) {
-		activeRowId = rowId;
+		grid.activeRowId = rowId;
 		editingCell = null;
 		inspectorOpen = true;
 		rowContextMenu = null;
@@ -792,8 +800,8 @@
 
 	function beginEdit(rowId: string, column: string, currentValue: unknown) {
 		if (inspectorOpen) return;
-		if (!editable || column === '_querycastle_ctid') return;
-		if (pendingDeletes.has(rowId)) return;
+		if (!editable || isHiddenRowIdColumn(column)) return;
+		if (grid.pendingDeletes.has(rowId)) return;
 		const meta = metaFor(column);
 		if (meta?.isAuto || meta?.isPrimary) return;
 		editingCell = { rowId, column };
@@ -802,25 +810,8 @@
 	}
 
 	function applyCellValue(rowId: string, column: string, nextValue: unknown) {
-		const map = new Map(pendingUpdates);
-		const row = displayResult.rows.find(
-			(item) => String(item['_querycastle_ctid'] ?? '') === rowId,
-		);
-		const baseValue = row ? row[column] : undefined;
-		const prev = { ...(pendingUpdates.get(rowId) ?? {}) };
-
-		if (valuesEqual(nextValue, baseValue)) {
-			delete prev[column];
-		} else {
-			prev[column] = nextValue;
-		}
-
-		if (Object.keys(prev).length === 0) {
-			map.delete(rowId);
-		} else {
-			map.set(rowId, prev);
-		}
-		pendingUpdates = map;
+		const row = displayResult.rows.find((item) => rowIdOf(item) === rowId);
+		grid.setCellValue(rowId, column, nextValue, row ? row[column] : undefined);
 		if (!userCollapsedPending) pendingPanelOpen = true;
 	}
 
@@ -836,8 +827,8 @@
 	}
 
 	function setInspectorField(column: string, raw: string) {
-		if (!activeRowId) return;
-		applyCellValue(activeRowId, column, coerceValue(raw, column));
+		if (!grid.activeRowId) return;
+		applyCellValue(grid.activeRowId, column, coerceValue(raw, column));
 	}
 
 	function discardEdit() {
@@ -855,21 +846,52 @@
 		rangeAnchor = { r: rowIndex, c: colIndex };
 		cellRange = { r0: rowIndex, r1: rowIndex, c0: colIndex, c1: colIndex };
 		rangeDragging = true;
-		(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+		// NOTE: pointer capture is intentionally NOT taken here. Capturing on
+		// plain mousedown steals focus from cell editors opened by the same
+		// click (e.g. double-click to edit). Capture starts in
+		// extendCellRange once an actual drag is underway.
 	}
 
-	function extendCellRange(rowIndex: number, colIndex: number) {
+	function extendCellRange(rowIndex: number, colIndex: number, event?: PointerEvent) {
 		if (!rangeDragging || !rangeAnchor) return;
-		cellRange = {
+		const next = {
 			r0: Math.min(rangeAnchor.r, rowIndex),
 			r1: Math.max(rangeAnchor.r, rowIndex),
 			c0: Math.min(rangeAnchor.c, colIndex),
 			c1: Math.max(rangeAnchor.c, colIndex),
 		};
+		const grew =
+			next.r0 !== cellRange?.r0 ||
+			next.r1 !== cellRange?.r1 ||
+			next.c0 !== cellRange?.c0 ||
+			next.c1 !== cellRange?.c1;
+		cellRange = next;
+		if (grew && event) {
+			const target = event.currentTarget as HTMLElement | null;
+			try {
+				target?.setPointerCapture?.(event.pointerId);
+				if (target) rangeCapture = { el: target, pointerId: event.pointerId };
+			} catch {
+				// Capture is best-effort; range tracking works without it.
+			}
+		}
 	}
 
 	function endCellRange() {
 		rangeDragging = false;
+		if (rangeCapture) {
+			try {
+				rangeCapture.el.releasePointerCapture?.(rangeCapture.pointerId);
+			} catch {
+				// Capture already released; nothing to do.
+			}
+			rangeCapture = null;
+		}
+	}
+
+	async function copyGridText(text: string) {
+		const ok = await copyTextToClipboard(text);
+		if (!ok) toast.error('Copy failed. The document is not focused.');
 	}
 
 	function copyCellRange() {
@@ -879,30 +901,30 @@
 		const lines = [
 			cols.join('\t'),
 			...rows.map((row) => {
-				const rowId = String(row['_querycastle_ctid'] ?? '');
+				const rowId = rowIdOf(row);
 				return cols
 					.map((column) => String(getRowValue(row, rowId, column) ?? ''))
 					.join('\t');
 			}),
 		];
-		void navigator.clipboard.writeText(lines.join('\n'));
+		void copyGridText(lines.join('\n'));
 	}
 
 	function copySelectedRows() {
 		const rows = pageRows.filter((row) =>
-			selectedRows.has(String(row['_querycastle_ctid'] ?? '')),
+			grid.selectedRows.has(rowIdOf(row)),
 		);
 		if (rows.length === 0) return;
 		const lines = [
 			visibleColumns.join('\t'),
 			...rows.map((row) => {
-				const rowId = String(row['_querycastle_ctid'] ?? '');
+				const rowId = rowIdOf(row);
 				return visibleColumns
 					.map((column) => String(getRowValue(row, rowId, column) ?? ''))
 					.join('\t');
 			}),
 		];
-		void navigator.clipboard.writeText(lines.join('\n'));
+		void copyGridText(lines.join('\n'));
 	}
 
 	function updateRangeOverlay() {
@@ -933,42 +955,17 @@
 	}
 
 	function toggleRowSelected(rowId: string) {
-		const next = new Set(selectedRows);
-		if (next.has(rowId)) next.delete(rowId);
-		else next.add(rowId);
-		selectedRows = next;
-		activeRowId = rowId;
+		grid.toggleRowSelected(rowId);
 	}
 
 	function toggleSelectAllVisible() {
-		const ids = pageRows
-			.map((row) => String(row['_querycastle_ctid'] ?? ''))
-			.filter((id) => id.length > 0);
-		const allSelected =
-			ids.length > 0 && ids.every((id) => selectedRows.has(id));
-		selectedRows = allSelected ? new Set() : new Set(ids);
+		grid.toggleSelectAll(
+			pageRows.map((row) => rowIdOf(row)).filter((id) => id.length > 0),
+		);
 	}
 
 	function queueDeleteRows(rowIds: string[]) {
-		const nextDeletes = new Set(pendingDeletes);
-		const nextUpdates = new Map(pendingUpdates);
-		const nextSelected = new Set(selectedRows);
-		for (const rowId of rowIds) {
-			const row = displayResult.rows.find(
-				(item) => String(item['_querycastle_ctid'] ?? '') === rowId,
-			);
-			if (row) {
-				const nextSnapshots = new Map(deletedSnapshots);
-				nextSnapshots.set(rowId, { ...row });
-				deletedSnapshots = nextSnapshots;
-			}
-			nextDeletes.add(rowId);
-			nextUpdates.delete(rowId);
-			nextSelected.delete(rowId);
-		}
-		pendingDeletes = nextDeletes;
-		pendingUpdates = nextUpdates;
-		selectedRows = nextSelected;
+		grid.deleteRows(rowIds, displayResult.rows);
 		rowContextMenu = null;
 		if (!userCollapsedPending) pendingPanelOpen = true;
 	}
@@ -988,8 +985,7 @@
 
 	function startInsertRow() {
 		if (!editable) return;
-		const values: Record<string, unknown> = {};
-		pendingInserts = [...pendingInserts, { id: crypto.randomUUID(), values }];
+		grid.startInsert();
 		if (!userCollapsedPending) pendingPanelOpen = true;
 		for (const column of columnMetas) {
 			if (column.fk) void ensureFkOptions(column.fk);
@@ -997,44 +993,38 @@
 	}
 
 	function setInsertValue(id: string, column: string, raw: string) {
-		pendingInserts = pendingInserts.map((row) => {
-			if (row.id !== id) return row;
-			return {
-				...row,
-				values: { ...row.values, [column]: coerceValue(raw, column) },
-			};
-		});
+		grid.setInsertValue(id, column, coerceValue(raw, column));
 	}
 
 	function removePendingInsert(id: string) {
-		pendingInserts = pendingInserts.filter((row) => row.id !== id);
+		grid.removeInsert(id);
 	}
 
 	async function refreshCount() {
 		if (!resultContext) {
-			totalRowCount = visibleRows.length;
+			grid.totalRowCount = visibleRows.length;
 			return;
 		}
 		try {
-			const payload = await rpc.request.runQuery({
-				sql: buildTableCountSql({
+			const payload = await runQuery(
+				buildTableCountSql({
 					databaseType,
 					schema: resultContext.schema,
 					table: resultContext.table,
-					baseWhere,
+					baseWhere: grid.baseWhere,
 					filters: filterList,
 				}),
-			});
-			totalRowCount = parseCountResult(payload.rows);
+			);
+			grid.totalRowCount = parseCountResult(payload.rows);
 		} catch {
-			totalRowCount = Math.max(displayResult.rowCount, visibleRows.length);
+			grid.totalRowCount = Math.max(displayResult.rowCount, visibleRows.length);
 		}
 	}
 
 	async function applyBrowse() {
 		if (!resultContext) {
-			totalRowCount = visibleRows.length;
-			const maxPage = totalPages(totalRowCount, pageSize);
+			grid.totalRowCount = visibleRows.length;
+			const maxPage = totalPages(grid.totalRowCount, grid.pageSize);
 			if (page > maxPage) page = maxPage;
 			return;
 		}
@@ -1043,11 +1033,11 @@
 			explorer: explorer ?? null,
 			schema: resultContext.schema,
 			table: resultContext.table,
-			baseWhere,
+			baseWhere: grid.baseWhere,
 			filters: filterList,
 			sort: effectiveSort,
-			limit: pageSize,
-			offset: (page - 1) * pageSize,
+			limit: grid.pageSize,
+			offset: (page - 1) * grid.pageSize,
 		});
 		if (!sql) return;
 		keepDraftsOnNextResult = true;
@@ -1088,15 +1078,14 @@
 	}
 
 	function clearFilters() {
-		columnFilters = {};
-		showFilterRow = false;
+		grid.clearFilters();
 		page = 1;
 		if (filterTimer) clearTimeout(filterTimer);
 		void applyBrowse();
 	}
 
 	function setPageSize(next: PageSize) {
-		pageSize = next;
+		grid.setPageSize(next);
 		page = 1;
 		void applyBrowse();
 	}
@@ -1111,12 +1100,12 @@
 		const key = browseSourceKey;
 		if (key === lastBrowseSourceKey) return;
 		lastBrowseSourceKey = key;
-		baseWhere = extractWhereClause(refreshSql);
+		grid.baseWhere = extractWhereClause(refreshSql);
 		page = 1;
-		columnFilters = {};
+		grid.columnFilters = {};
 		sort = null;
 		if (resultContext) void refreshCount();
-		else totalRowCount = displayResult.rowCount;
+		else grid.totalRowCount = displayResult.rowCount;
 	});
 
 	$effect(() => {
@@ -1128,6 +1117,7 @@
 	});
 
 	async function runExplain() {
+		if (!dialectCapabilities(databaseType).supportsExplain) return;
 		const sourceSql =
 			refreshSql.trim().length > 0 ? refreshSql : buildDefaultContextSql();
 		if (!sourceSql) return;
@@ -1147,7 +1137,7 @@
 	async function syncChanges() {
 		if (!resultContext || !onApplyTableChanges || !hasPendingChanges) return;
 		if (editingCell) commitEdit();
-		for (const insert of pendingInserts) {
+		for (const insert of grid.pendingInserts) {
 			const draft: Record<string, string> = {};
 			for (const column of columnMetas) {
 				draft[column.name] = isEmptyCell(insert.values[column.name])
@@ -1164,12 +1154,9 @@
 		syncingChanges = true;
 		try {
 			const payload: TableChangesPayload = {
-				updates: Array.from(pendingUpdates.entries()).map(([ctid, values]) => ({
-					ctid,
-					values,
-				})),
-				deletes: Array.from(pendingDeletes),
-				inserts: pendingInserts
+				updates: grid.toUpdates(),
+				deletes: Array.from(grid.pendingDeletes),
+				inserts: grid.pendingInserts
 					.map((row) =>
 						valuesForInsert(
 							Object.fromEntries(
@@ -1194,20 +1181,20 @@
 			}
 
 			const updatedRowsByOldCtid = new Map(
-				applyResult.updatedRows.map((entry) => [entry.oldCtid, entry]),
+				applyResult.updatedRows.map((entry) => [entry.oldRowId, entry]),
 			);
 			const updatesByOldCtid = new Map(
-				payload.updates.map((entry) => [entry.ctid, entry.values]),
+				payload.updates.map((entry) => [entry.rowId, entry.values]),
 			);
 			const deleteSet = new Set(payload.deletes);
 			const nextHighlights: Array<{ rowId: string; column: string }> = [];
 			const nextRows = displayResult.rows
 				.filter((row) => {
-					const ctid = String(row['_querycastle_ctid'] ?? '');
+					const ctid = rowIdOf(row);
 					return !ctid || !deleteSet.has(ctid);
 				})
 				.map((row) => {
-					const ctid = String(row['_querycastle_ctid'] ?? '');
+					const ctid = rowIdOf(row);
 					const updatedRow = ctid ? updatedRowsByOldCtid.get(ctid) : undefined;
 					if (!updatedRow) return row;
 					const optimisticValues = ctid
@@ -1217,10 +1204,10 @@
 						...row,
 						...(optimisticValues ?? {}),
 						...updatedRow.values,
-						_querycastle_ctid: updatedRow.newCtid,
+						[HIDDEN_ROW_ID_COLUMN]: updatedRow.newRowId,
 					};
 					for (const column of Object.keys(optimisticValues ?? {})) {
-						nextHighlights.push({ rowId: updatedRow.newCtid, column });
+						nextHighlights.push({ rowId: updatedRow.newRowId, column });
 					}
 					return merged;
 				});
@@ -1303,11 +1290,11 @@
 		inspectSourceKey = browseSourceKey;
 		const first = pageRows[0];
 		if (!first) {
-			activeRowId = null;
+			grid.activeRowId = null;
 			inspectorOpen = false;
 			return;
 		}
-		activeRowId = String(first['_querycastle_ctid'] ?? '');
+		grid.activeRowId = rowIdOf(first);
 	});
 
 	$effect(() => {
@@ -1318,6 +1305,16 @@
 
 	$effect(() => {
 		const onKey = (event: KeyboardEvent) => {
+			if (event.key === 'Escape') {
+				// GridCellEditor stops keydown propagation while focused, so
+				// this only runs when focus is elsewhere: dismiss open menus
+				// and commit any orphaned cell edit (same as blur).
+				if (rowContextMenu) rowContextMenu = null;
+				relatedSubmenuOpen = false;
+				if (showSortMenu) showSortMenu = false;
+				if (editingCell) commitEdit();
+				return;
+			}
 			if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'c')
 				return;
 			const target = event.target as HTMLElement | null;
@@ -1326,7 +1323,7 @@
 			if (cellRange) {
 				event.preventDefault();
 				copyCellRange();
-			} else if (selectedRows.size > 0) {
+			} else if (grid.selectedRows.size > 0) {
 				event.preventDefault();
 				copySelectedRows();
 			}
@@ -1357,9 +1354,9 @@
 		visibleColumns.length > 0 ? visibleColumns : EMPTY_SHEET_COLUMNS,
 	);
 	let fillerRowCount = $derived.by(() => {
-		const headerH = GRID_HEADER_PX + (showFilterRow ? GRID_ROW_PX : 0);
+		const headerH = GRID_HEADER_PX + (grid.showFilterRow ? GRID_ROW_PX : 0);
 		const usedRows =
-			activeView === 'results' ? pageRows.length + pendingInserts.length : 0;
+			activeView === 'results' ? pageRows.length + grid.pendingInserts.length : 0;
 		const remaining = gridViewportH - headerH - usedRows * GRID_ROW_PX;
 		return Math.max(16, Math.ceil(Math.max(0, remaining) / GRID_ROW_PX) + 4);
 	});
@@ -1401,12 +1398,12 @@
 		class="h-10 px-2 border-b border-qc-border bg-qc-panel shrink-0 flex items-center gap-0.5"
 	>
 		{#if editable}
-			{#if selectedRows.size > 0}
+			{#if grid.selectedRows.size > 0}
 				<button
 					type="button"
-					onclick={() => queueDeleteRows(Array.from(selectedRows))}
+					onclick={() => queueDeleteRows(Array.from(grid.selectedRows))}
 					class="btn-danger h-6 w-[72px] px-2 text-[12px] font-medium inline-flex items-center justify-center gap-1 shrink-0"
-					title={`Delete ${selectedRows.size} row${selectedRows.size === 1 ? '' : 's'}`}
+					title={`Delete ${grid.selectedRows.size} row${grid.selectedRows.size === 1 ? '' : 's'}`}
 				>
 					<Trash2 size={12} />Delete
 				</button>
@@ -1433,11 +1430,11 @@
 		</button>
 		<button
 			type="button"
-			onclick={() => (showFilterRow = !showFilterRow)}
-			class={`toolbar-icon ${showFilterRow || hasActiveFilters ? 'is-on' : ''}`}
+			onclick={() => (grid.showFilterRow = !grid.showFilterRow)}
+			class={`toolbar-icon ${grid.showFilterRow || hasActiveFilters ? 'is-on' : ''}`}
 			title="Filter"
 			aria-label="Filter"
-			aria-pressed={showFilterRow || hasActiveFilters}
+			aria-pressed={grid.showFilterRow || hasActiveFilters}
 		>
 			<Filter size={14} />
 		</button>
@@ -1511,7 +1508,7 @@
 				</div>
 			{/if}
 		</div>
-		{#if selectedRows.size > 0}
+		{#if grid.selectedRows.size > 0}
 			<button
 				type="button"
 				onclick={copySelectedRows}
@@ -1523,11 +1520,11 @@
 			</button>
 			<button
 				type="button"
-				onclick={() => (selectedRows = new Set())}
+				onclick={() => grid.clearSelection()}
 				class="h-7 px-1.5 text-[11px] text-qc-muted hover:text-qc-subtle inline-flex items-center gap-1 shrink-0"
 				title="Clear selection"
 			>
-				{selectedRows.size} selected
+				{grid.selectedRows.size} selected
 				<X size={11} />
 			</button>
 		{/if}
@@ -1547,13 +1544,15 @@
 			>
 				Messages
 			</button>
-			<button
-				type="button"
-				class={`h-7 px-2 rounded ${activeView === 'explain' ? 'text-qc-fg' : 'text-qc-muted hover:text-qc-subtle'}`}
-				onclick={() => (activeView = 'explain')}
-			>
-				Explain
-			</button>
+			{#if dialectCapabilities(databaseType).supportsExplain}
+				<button
+					type="button"
+					class={`h-7 px-2 rounded ${activeView === 'explain' ? 'text-qc-fg' : 'text-qc-muted hover:text-qc-subtle'}`}
+					onclick={() => (activeView = 'explain')}
+				>
+					Explain
+				</button>
+			{/if}
 		</div>
 		<div class="w-px h-4 bg-qc-border mx-1 shrink-0"></div>
 		<div class="flex items-center gap-1 text-[12px] text-qc-muted shrink-0">
@@ -1578,7 +1577,7 @@
 			</button>
 			<select
 				class="h-6 rounded border border-qc-border bg-qc-elevated text-[11px] text-qc-subtle px-1 outline-none"
-				value={String(pageSize)}
+				value={String(grid.pageSize)}
 				onchange={(event) =>
 					setPageSize(
 						Number(
@@ -1602,10 +1601,12 @@
 			</button>
 			<span
 				class="inline-flex items-center gap-1 tabular-nums"
-				title={`${displayTotal} rows`}
+				title={displayResult.truncated
+					? `${displayTotal} rows (result capped at 1000)`
+					: `${displayTotal} rows`}
 			>
 				<Table2 size={12} />
-				{displayTotal}
+				{displayTotal}{displayResult.truncated ? '+' : ''}
 			</span>
 			<span
 				class="hidden sm:inline-flex items-center gap-1 tabular-nums"
@@ -1647,8 +1648,7 @@
 						<div
 							class="rounded border border-qc-border bg-qc-elevated px-3 py-2"
 						>
-							Last query executed successfully in {durationMs}ms and returned {displayResult.rowCount}
-							rows.
+							{outcomeMessage}
 						</div>
 					{/if}
 				</div>
@@ -1680,6 +1680,14 @@
 							Run a query first to generate an explain plan.
 						</div>
 					{/if}
+				</div>
+			{:else if isCommandResult}
+				<div class="h-full p-4 text-xs text-qc-subtle">
+					<div
+						class="rounded border border-qc-border bg-qc-elevated px-3 py-2"
+					>
+						{outcomeMessage}
+					</div>
 				</div>
 			{:else if loading}
 				<div class="min-w-full min-h-full">
@@ -1765,8 +1773,8 @@
 												onchange={toggleSelectAllVisible}
 												checked={pageRows.length > 0 &&
 													pageRows.every((row) =>
-														selectedRows.has(
-															String(row['_querycastle_ctid'] ?? ''),
+														grid.selectedRows.has(
+															rowIdOf(row),
 														),
 													)}
 											/>
@@ -1813,7 +1821,7 @@
 								{/each}
 								{@render fillerHeader()}
 							</tr>
-							{#if showFilterRow}
+							{#if grid.showFilterRow}
 								<tr class="bg-qc-grid">
 									{#if editable}
 										<th class="qc-select-col"></th>
@@ -1825,15 +1833,12 @@
 										>
 											{#if visibleColumns.includes(column)}
 												<input
-													value={columnFilters[column] ?? ''}
+													value={grid.columnFilters[column] ?? ''}
 													oninput={(event) => {
 														const value = (
 															event.currentTarget as HTMLInputElement
 														).value;
-														columnFilters = {
-															...columnFilters,
-															[column]: value,
-														};
+														grid.setColumnFilter(column, value);
 														scheduleFilterBrowse();
 													}}
 													placeholder="Contains…"
@@ -1847,7 +1852,7 @@
 							{/if}
 						</thead>
 						<tbody class="font-mono text-[12px] tabular-nums text-qc-data">
-							{#each editable ? pendingInserts : [] as insertRow (insertRow.id)}
+							{#each editable ? grid.pendingInserts : [] as insertRow (insertRow.id)}
 								<tr
 									class="row-pending-insert h-8 max-h-8"
 									in:fly|local={{ y: -8, duration: 220 }}
@@ -1905,18 +1910,18 @@
 									{@render fillerCells()}
 								</tr>
 							{/each}
-							{#each pageRows as row, rowIndex (String(row['_querycastle_ctid'] ?? `row-${rowIndex}`))}
-								{@const rowId = String(row['_querycastle_ctid'] ?? '')}
-								{@const isChecked = selectedRows.has(rowId)}
-								{@const isActive = activeRowId === rowId}
-								{@const isPendingDelete = pendingDeletes.has(rowId)}
+							{#each pageRows as row, rowIndex (rowIdOf(row) || `row-${rowIndex}`)}
+								{@const rowId = rowIdOf(row)}
+								{@const isChecked = grid.selectedRows.has(rowId)}
+								{@const isActive = grid.activeRowId === rowId}
+								{@const isPendingDelete = grid.pendingDeletes.has(rowId)}
 								<tr
 									class={`group table-row h-8 max-h-8 transition-colors duration-200 ${isPendingDelete ? 'row-pending-delete' : isChecked ? 'row-selected' : isActive ? 'row-current' : ''}`}
 									out:fly|local={{ y: -6, duration: 180 }}
 									oncontextmenu={(event) =>
 										openRowContextMenu(event, rowId, row)}
 									onclick={() => {
-										if (rowId) activeRowId = rowId;
+										if (rowId) grid.activeRowId = rowId;
 									}}
 								>
 									{#if editable}
@@ -1927,7 +1932,7 @@
 												<input
 													type="checkbox"
 													class="qc-check"
-													checked={selectedRows.has(rowId)}
+													checked={grid.selectedRows.has(rowId)}
 													onchange={() => toggleRowSelected(rowId)}
 												/>
 											</div>
@@ -1944,7 +1949,7 @@
 										{@const canFollowFk =
 											isFkColumn && isFollowableValue(currentValue)}
 										{@const isPendingEdit =
-											pendingUpdates.get(rowId)?.[column] !== undefined}
+											grid.hasPendingCell(rowId, column)}
 										<td
 											class={`grid-cell text-[12px] overflow-hidden whitespace-nowrap max-w-0 font-mono tabular-nums text-qc-data ${editable && !meta?.isAuto && !meta?.isPrimary && !isPendingDelete ? 'cursor-cell' : ''} ${isEditing ? 'p-0 outline outline-1 -outline-offset-1 outline-qc-cell bg-qc-bg' : 'px-2.5 py-0'} ${isPendingEdit && !isEditing && !isPendingDelete ? 'cell-dirty' : ''} ${meta?.kind === 'number' ? 'text-right' : ''}`}
 											style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;max-width:${getColumnWidth(column)}px;`}
@@ -1952,7 +1957,8 @@
 											data-c={colIndex}
 											onpointerdown={(event) =>
 												beginCellRange(rowIndex, colIndex, event)}
-											onpointerenter={() => extendCellRange(rowIndex, colIndex)}
+											onpointerenter={(event) =>
+												extendCellRange(rowIndex, colIndex, event)}
 											onclick={(event) =>
 												handleCellClick(event, rowId, column, currentValue)}
 											title={isPendingEdit
@@ -2065,11 +2071,11 @@
 			onClose={() => (inspectorOpen = false)}
 			onFieldChange={setInspectorField}
 			onDelete={() => {
-				if (activeRowId) queueDeleteRows([activeRowId]);
+				if (grid.activeRowId) queueDeleteRows([grid.activeRowId]);
 			}}
 		/>
 		<PendingChangesPane
-			open={pendingPanelOpen}
+			open={pendingPanelOpen && (changeCount > 0 || syncingChanges)}
 			{changeCount}
 			cards={pendingCards}
 			sqlPreview={pendingSqlPreview}
@@ -2101,29 +2107,29 @@
 			}}
 		></button>
 		<div
-			class="fixed z-50 min-w-[240px] bg-qc-elevated rounded-md border border-qc-border shadow-[0_8px_24px_rgba(0,0,0,0.28)] py-1"
+			class="ctx-menu fixed z-50"
 			style={`left:${rowContextMenu?.x ?? 0}px;top:${rowContextMenu?.y ?? 0}px;`}
 		>
 			<button
 				type="button"
 				onclick={() => inspectRow(rowContextMenu?.rowId ?? '')}
-				class="w-full px-3 py-1.5 text-left text-sm text-qc-fg hover:bg-qc-hover inline-flex items-center gap-2"
+				class="ctx-item"
 			>
-				<PanelRight size={14} class="shrink-0 text-qc-muted" />
+				<PanelRight size={12} class="shrink-0 text-qc-muted" />
 				Inspect row
 			</button>
-			<div class="my-1 border-t border-qc-border"></div>
+			<div class="ctx-separator"></div>
 			{#each outgoing as item}
 				<button
 					type="button"
 					disabled={hasPendingChanges}
 					onclick={() => startOutgoingFollow(item.fk, item.value)}
-					class="w-full px-3 py-1.5 text-left text-sm text-qc-fg hover:bg-qc-hover disabled:opacity-50 inline-flex items-center gap-2"
+					class="ctx-item"
 					title={hasPendingChanges
 						? 'Save or discard grid edits first'
 						: undefined}
 				>
-					<ArrowUpRight size={14} class="shrink-0 text-qc-cell" />
+					<ArrowUpRight size={12} class="shrink-0 text-qc-cell" />
 					<span class="truncate"
 						>Open {item.fk.referencedTable} where {item.fk.referencedColumn} =
 						{formatFollowValue(item.value)}</span
@@ -2134,23 +2140,23 @@
 				<div class="relative">
 					<button
 						type="button"
-						class="w-full px-3 py-1.5 text-left text-sm text-qc-fg hover:bg-qc-hover inline-flex items-center justify-between gap-2"
+						class="ctx-item justify-between"
 						onmouseenter={() => (relatedSubmenuOpen = true)}
 						onclick={() => (relatedSubmenuOpen = !relatedSubmenuOpen)}
 					>
 						Related rows
-						<ChevronRight size={14} class="text-qc-muted" />
+						<ChevronRight size={12} class="text-qc-muted" />
 					</button>
 					{#if relatedSubmenuOpen}
 						<div
-							class="absolute left-full top-0 ml-0.5 min-w-[220px] max-h-72 overflow-auto bg-qc-elevated rounded-md border border-qc-border shadow-[0_8px_24px_rgba(0,0,0,0.28)] py-1"
+							class="ctx-menu absolute left-full top-0 ml-0.5 max-h-72 overflow-auto"
 						>
 							{#each incoming as rel}
 								<button
 									type="button"
 									disabled={hasPendingChanges}
 									onclick={() => startIncomingFollow(rel, rel.value)}
-									class="w-full px-3 py-1.5 text-left text-sm text-qc-fg hover:bg-qc-hover disabled:opacity-50 truncate"
+									class="ctx-item"
 									title={hasPendingChanges
 										? 'Save or discard grid edits first'
 										: undefined}
@@ -2167,7 +2173,7 @@
 						type="button"
 						disabled={hasPendingChanges}
 						onclick={() => startIncomingFollow(rel, rel.value)}
-						class="w-full px-3 py-1.5 text-left text-sm text-qc-fg hover:bg-qc-hover disabled:opacity-50 truncate"
+						class="ctx-item"
 						title={hasPendingChanges
 							? 'Save or discard grid edits first'
 							: undefined}
@@ -2177,15 +2183,15 @@
 				{/each}
 			{/if}
 			{#if editable && (outgoing.length > 0 || incoming.length > 0)}
-				<div class="my-1 border-t border-qc-border"></div>
+				<div class="ctx-separator"></div>
 			{/if}
 			{#if editable}
 				<button
 					onclick={() =>
 						rowContextMenu && queueDeleteRows([rowContextMenu.rowId])}
-					class="w-full px-3 py-1.5 text-left text-sm text-qc-danger hover:bg-qc-danger/10 inline-flex items-center gap-2"
+					class="ctx-item ctx-item-danger"
 				>
-					<Trash2 size={14} />
+					<Trash2 size={12} />
 					Delete Row
 				</button>
 			{/if}
