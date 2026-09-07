@@ -1,4 +1,4 @@
-export type DatabaseType = "postgres" | "mysql" | "sqlite";
+export type DatabaseType = "postgres" | "mysql" | "sqlite" | "mssql";
 
 export type ConnectionInput = {
   databaseType: DatabaseType;
@@ -23,7 +23,7 @@ export type ConnectionStatus = {
   database: string;
   user: string;
   serverVersion: string | null;
-  sessionId?: string;
+  sessionId: string;
 };
 
 export type QueryResultPayload = {

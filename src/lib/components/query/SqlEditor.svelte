@@ -3,7 +3,7 @@
 	import { EditorView } from 'codemirror';
 	import { Compartment, EditorState } from '@codemirror/state';
 	import { keymap, lineNumbers } from '@codemirror/view';
-	import { MySQL, PostgreSQL, SQLite, sql } from '@codemirror/lang-sql';
+	import { MSSQL, MySQL, PostgreSQL, SQLite, sql } from '@codemirror/lang-sql';
 	import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 	import { tags } from '@lezer/highlight';
 	import { Play, Save, WandSparkles } from '@lucide/svelte';
@@ -90,7 +90,9 @@
 				? MySQL
 				: databaseType === 'sqlite'
 					? SQLite
-					: PostgreSQL;
+					: databaseType === 'mssql'
+						? MSSQL
+						: PostgreSQL;
 		return sql({
 			dialect,
 			schema: explorerToSqlSchema(explorer),

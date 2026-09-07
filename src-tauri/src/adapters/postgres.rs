@@ -1,4 +1,5 @@
 use bytes::BytesMut;
+use futures_util::StreamExt;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::error::Error;
@@ -6,7 +7,7 @@ use tokio_postgres::types::{to_sql_checked, Format, IsNull, ToSql, Type};
 use tokio_postgres::Transaction;
 
 use crate::core::error::DbError;
-use crate::core::limits::{apply_select_row_cap, MAX_QUERY_ROWS, QUERY_TIMEOUT_MS};
+use crate::core::limits::{MAX_QUERY_ROWS, QUERY_TIMEOUT_MS};
 use crate::core::sql;
 use crate::core::types::{
     ApplyTableChangesParams, ApplyTableChangesResponse, DatabaseColumn, DatabaseExplorer,
@@ -106,40 +107,56 @@ pub async fn run_query(pool: &deadpool_postgres::Pool, sql: &str) -> Result<Quer
     set_statement_timeout(&client).await?;
 
     let started = std::time::Instant::now();
-    let sql = apply_select_row_cap(sql);
-    let messages = client.simple_query(sql.as_ref()).await?;
+    let mut stream = std::pin::pin!(client.simple_query_raw(sql).await?);
 
     let mut columns: Vec<String> = Vec::new();
     let mut rows: Vec<HashMap<String, Value>> = Vec::new();
     let mut truncated = false;
-    for message in messages {
-        if let tokio_postgres::SimpleQueryMessage::Row(row) = message {
-            if columns.is_empty() {
-                columns = row
-                    .columns()
-                    .iter()
-                    .map(|column| column.name().to_string())
-                    .collect();
+    let mut affected_rows: u64 = 0;
+    while let Some(message) = stream.next().await {
+        match message? {
+            tokio_postgres::SimpleQueryMessage::RowDescription(description) => {
+                if columns.is_empty() {
+                    columns = description
+                        .iter()
+                        .map(|column| column.name().to_string())
+                        .collect();
+                }
             }
-
-            if rows.len() >= MAX_QUERY_ROWS {
-                truncated = true;
-                break;
+            tokio_postgres::SimpleQueryMessage::Row(row) => {
+                if columns.is_empty() {
+                    columns = row
+                        .columns()
+                        .iter()
+                        .map(|column| column.name().to_string())
+                        .collect();
+                }
+                if rows.len() >= MAX_QUERY_ROWS {
+                    truncated = true;
+                    continue;
+                }
+                let mut mapped = HashMap::new();
+                for (index, column_name) in columns.iter().enumerate() {
+                    let value = row
+                        .get(index)
+                        .map(|entry| Value::String(entry.to_string()))
+                        .unwrap_or(Value::Null);
+                    mapped.insert(column_name.clone(), value);
+                }
+                rows.push(mapped);
             }
-
-            let mut mapped = HashMap::new();
-            for (index, column_name) in columns.iter().enumerate() {
-                let value = row
-                    .get(index)
-                    .map(|entry| Value::String(entry.to_string()))
-                    .unwrap_or(Value::Null);
-                mapped.insert(column_name.clone(), value);
+            tokio_postgres::SimpleQueryMessage::CommandComplete(count) => {
+                affected_rows = count;
             }
-            rows.push(mapped);
+            _ => {}
         }
     }
 
-    let row_count = rows.len();
+    let row_count = if columns.is_empty() {
+        affected_rows as usize
+    } else {
+        rows.len()
+    };
     Ok(QueryResultPayload {
         columns,
         rows,

@@ -1,8 +1,11 @@
 import type { DatabaseExplorer, DatabaseType } from '$lib/rpc';
 import {
 	HIDDEN_ROW_ID_COLUMN,
-	buildMysqlRowHashExpression,
+	ROW_SOURCE_ALIAS,
+	buildPkHashExpression,
+	dialectCapabilities,
 	qualifyTable,
+	usesPkHashRowId,
 } from '$lib/utils/dialect';
 import { findExplorerTable } from '$lib/utils/schema-objects';
 import { quoteSqlIdentifier, unquoteIdent } from '$lib/utils/sql';
@@ -48,8 +51,6 @@ function resolvePreferredOrderColumn(
 	return tableMeta?.columns[0]?.name ?? null;
 }
 
-export { buildMysqlRowHashExpression };
-
 export function tryBuildEditableQuery(params: {
 	sql: string;
 	databaseType: DatabaseType;
@@ -59,7 +60,8 @@ export function tryBuildEditableQuery(params: {
 	if (
 		databaseType !== 'postgres' &&
 		databaseType !== 'mysql' &&
-		databaseType !== 'sqlite'
+		databaseType !== 'sqlite' &&
+		databaseType !== 'mssql'
 	) {
 		return null;
 	}
@@ -77,8 +79,9 @@ export function tryBuildEditableQuery(params: {
 		return null;
 	}
 
+	const ident = String.raw`(?:\[[^\]]+\]|"(?:[^"]|"")+"|` + '`[^`]+`' + String.raw`|[A-Za-z_][A-Za-z0-9_$]*)`;
 	const tableMatch = fromAndTail.match(
-		/^\s*((?:"(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*)(?:\s*\.\s*(?:"(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*))?)([\s\S]*)$/s,
+		new RegExp(String.raw`^\s*((?:${ident})(?:\s*\.\s*(?:${ident}))?)([\s\S]*)$`, 's'),
 	);
 	if (!tableMatch) return null;
 
@@ -88,28 +91,25 @@ export function tryBuildEditableQuery(params: {
 	if (/^\s*,/.test(tail)) return null;
 
 	const qualifiedIdMatch = tableRef.match(
-		/^\s*(?:"((?:[^"]|"")*)"|([A-Za-z_][A-Za-z0-9_$]*))\s*\.\s*(?:"((?:[^"]|"")*)"|([A-Za-z_][A-Za-z0-9_$]*))\s*$/s,
+		/^\s*(?:\["?((?:[^\]"]|"")*)"?\]|"((?:[^"]|"")*)"|([A-Za-z_][A-Za-z0-9_$]*))\s*\.\s*(?:\["?((?:[^\]"]|"")*)"?\]|"((?:[^"]|"")*)"|([A-Za-z_][A-Za-z0-9_$]*))\s*$/s,
 	);
 	const unqualifiedIdMatch = tableRef.match(
-		/^\s*(?:"((?:[^"]|"")*)"|([A-Za-z_][A-Za-z0-9_$]*))\s*$/s,
+		/^\s*(?:\["?((?:[^\]"]|"")*)"?\]|"((?:[^"]|"")*)"|([A-Za-z_][A-Za-z0-9_$]*))\s*$/s,
 	);
 
 	let contextSchema = '';
 	let contextTable = '';
 	if (qualifiedIdMatch) {
-		const rawSchema = qualifiedIdMatch[1]
-			? `"${qualifiedIdMatch[1]}"`
-			: (qualifiedIdMatch[2] ?? '');
-		const rawTable = qualifiedIdMatch[3]
-			? `"${qualifiedIdMatch[3]}"`
-			: (qualifiedIdMatch[4] ?? '');
+		const rawSchema =
+			qualifiedIdMatch[1] ?? qualifiedIdMatch[2] ?? qualifiedIdMatch[3] ?? '';
+		const rawTable =
+			qualifiedIdMatch[4] ?? qualifiedIdMatch[5] ?? qualifiedIdMatch[6] ?? '';
 		if (!rawSchema || !rawTable) return null;
 		contextSchema = unquoteIdent(rawSchema);
 		contextTable = unquoteIdent(rawTable);
 	} else if (unqualifiedIdMatch) {
-		const rawTable = unqualifiedIdMatch[1]
-			? `"${unqualifiedIdMatch[1]}"`
-			: (unqualifiedIdMatch[2] ?? '');
+		const rawTable =
+			unqualifiedIdMatch[1] ?? unqualifiedIdMatch[2] ?? unqualifiedIdMatch[3] ?? '';
 		const tableName = unquoteIdent(rawTable);
 		const resolvedSchema = resolveTableSchema(explorer, tableName);
 		if (!resolvedSchema) return null;
@@ -137,12 +137,14 @@ export function tryBuildEditableQuery(params: {
 			contextTable,
 		);
 		const orderByClause = preferredOrderColumn
-			? databaseType === 'mysql'
-				? ` order by ${quoteSqlIdentifier(databaseType, preferredOrderColumn)} asc`
-				: ` order by ${quoteSqlIdentifier(databaseType, preferredOrderColumn)} asc nulls last`
+			? dialectCapabilities(databaseType).supportsNullsLast
+				? ` order by ${quoteSqlIdentifier(databaseType, preferredOrderColumn)} asc nulls last`
+				: ` order by ${quoteSqlIdentifier(databaseType, preferredOrderColumn)} asc`
 			: databaseType === 'sqlite'
 				? ' order by rowid asc'
-				: ' order by ctid asc';
+				: databaseType === 'mssql'
+					? ' order by (select null)'
+					: ' order by ctid asc';
 		const limitLikeMatch = effectiveTail.match(/\b(limit|offset|fetch)\b/i);
 		if (limitLikeMatch && limitLikeMatch.index !== undefined) {
 			const insertAt = limitLikeMatch.index;
@@ -162,17 +164,19 @@ export function tryBuildEditableQuery(params: {
 		};
 	}
 
-	if (databaseType === 'mysql') {
-		const rowHashExpression = buildMysqlRowHashExpression(
+	if (usesPkHashRowId(databaseType)) {
+		const rowHashExpression = buildPkHashExpression(
+			databaseType,
 			explorer,
 			contextSchema,
 			contextTable,
+			ROW_SOURCE_ALIAS,
 		);
 		if (!rowHashExpression) return null;
-		const mysqlSelectPart =
-			selectPart.trim() === '*' ? `${quotedTableRef}.*` : selectPart;
+		const hashedSelect =
+			selectPart.trim() === '*' ? `${ROW_SOURCE_ALIAS}.*` : selectPart;
 		return {
-			sql: `select ${rowHashExpression} as ${HIDDEN_ROW_ID_COLUMN}, ${mysqlSelectPart} from ${quotedTableRef}${effectiveTail};`,
+			sql: `select ${rowHashExpression} as ${HIDDEN_ROW_ID_COLUMN}, ${hashedSelect} from ${quotedTableRef} as ${ROW_SOURCE_ALIAS}${effectiveTail};`,
 			context,
 		};
 	}

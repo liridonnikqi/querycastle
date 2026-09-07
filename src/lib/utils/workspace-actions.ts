@@ -76,9 +76,13 @@ export function buildTableActionPlan(params: {
 		// quotes produced invalid SQL for names needing quoting
 		// (e.g. "my table"_copy).
 		const copyTable = quoteSqlIdentifier(databaseType, `${table}_copy`);
+		const query =
+			databaseType === 'mssql'
+				? `select * into ${safeSchema}.${copyTable} from ${safeSchema}.${safeTable};`
+				: `create table ${safeSchema}.${copyTable} as select * from ${safeSchema}.${safeTable};`;
 		return {
 			kind: 'run_query',
-			query: `create table ${safeSchema}.${copyTable} as select * from ${safeSchema}.${safeTable};`,
+			query,
 			title: `${table} [duplicate]`,
 			context: null,
 		};
@@ -132,7 +136,10 @@ export function buildTableActionPlan(params: {
 	}
 
 	if (action === 'export_file') {
-		query = `select * from ${safeSchema}.${safeTable} limit 1000;`;
+		query =
+			databaseType === 'mssql'
+				? `select * from ${safeSchema}.${safeTable} order by (select null) offset 0 rows fetch next 1000 rows only;`
+				: `select * from ${safeSchema}.${safeTable} limit 1000;`;
 		title = `${table} [export]`;
 	}
 
@@ -154,7 +161,9 @@ export function buildSchemaActionPlan(params: {
 			? `select name as table_name, type\nfrom sqlite_master\nwhere type in ('table', 'view') and name not like 'sqlite_%'\norder by name;`
 			: databaseType === 'mysql'
 				? `select table_name\nfrom information_schema.tables\nwhere table_schema = '${escaped}'\norder by table_name;`
-				: `select tablename as table_name\nfrom pg_catalog.pg_tables\nwhere schemaname = '${escaped}'\norder by tablename;`;
+				: databaseType === 'mssql'
+					? `select table_name\nfrom information_schema.tables\nwhere table_schema = '${escaped}'\norder by table_name;`
+					: `select tablename as table_name\nfrom pg_catalog.pg_tables\nwhere schemaname = '${escaped}'\norder by tablename;`;
 	return { kind: 'run_query', query, title: `${schema} [tables]` };
 }
 
@@ -165,9 +174,22 @@ export function buildRenameTableSql(params: {
 	nextName: string;
 }): string {
 	const quote = (name: string) => quoteSqlIdentifier(params.databaseType, name);
+	if (params.databaseType === 'mssql') {
+		const current = `${params.schema}.${params.table}`.replaceAll("'", "''");
+		const nextName = params.nextName.replaceAll("'", "''");
+		return `exec sp_rename N'${current}', N'${nextName}', N'OBJECT';`;
+	}
 	return `alter table ${quote(params.schema)}.${quote(params.table)} rename to ${quote(params.nextName)};`;
 }
 
-export function buildCreateDatabaseSql(name: string, encoding: string): string {
-	return `create database ${quoteIdent(name)} encoding '${encoding}';`;
+export function buildCreateDatabaseSql(
+	databaseType: DatabaseType,
+	name: string,
+	encoding = 'UTF8',
+): string {
+	const ident = quoteSqlIdentifier(databaseType, name);
+	if (databaseType === 'mssql') {
+		return `create database ${ident};`;
+	}
+	return `create database ${ident} encoding '${encoding}';`;
 }

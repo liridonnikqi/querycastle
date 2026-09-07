@@ -46,7 +46,14 @@
 		valuesForInsert,
 		type GridColumnMeta,
 	} from '$lib/utils/grid-editors';
-	import { HIDDEN_ROW_ID_COLUMN } from '$lib/utils/dialect';
+	import { HIDDEN_ROW_ID_COLUMN, dialectCapabilities } from '$lib/utils/dialect';
+	import {
+		explorerTableColumnNames,
+		isCommandQueryResult,
+		isGridEditable,
+		queryOutcomeMessage,
+		visibleGridColumns,
+	} from '$lib/utils/result-grid';
 	import { quoteSqlIdentifier } from '$lib/utils/sql';
 	import { buildTableSelect } from '$lib/utils/table-select';
 	import { copyTextToClipboard } from '$lib/utils/clipboard';
@@ -185,12 +192,38 @@
 	let lastBrowseSourceKey = $state('');
 	let filterTimer: ReturnType<typeof setTimeout> | null = null;
 
-	let editable = $derived.by(
-		() =>
-			!!resultContext && displayResult.columns.includes(HIDDEN_ROW_ID_COLUMN),
+	let explorerColumns = $derived(
+		explorerTableColumnNames(explorer ?? null, resultContext),
 	);
-	let visibleColumns = $derived.by(() =>
-		displayResult.columns.filter((column) => !isHiddenRowIdColumn(column)),
+	let visibleColumns = $derived(
+		visibleGridColumns(displayResult.columns, explorerColumns),
+	);
+	let editable = $derived(
+		isGridEditable({
+			databaseType,
+			explorer: explorer ?? null,
+			context: resultContext,
+			resultColumns: displayResult.columns,
+			rowCount: displayResult.rows.length,
+			visibleColumns,
+		}),
+	);
+	let isCommandResult = $derived(
+		isCommandQueryResult({
+			loading,
+			sqlError,
+			resultColumns: displayResult.columns,
+			visibleColumns,
+			lastRunSql: refreshSql,
+		}),
+	);
+	let outcomeMessage = $derived(
+		queryOutcomeMessage({
+			durationMs,
+			rowCount: displayResult.rowCount,
+			truncated: displayResult.truncated,
+			columns: displayResult.columns,
+		}),
 	);
 	let visibleRows = $derived(displayResult.rows);
 	let columnMetas = $derived.by(() =>
@@ -227,10 +260,7 @@
 			databaseType,
 			schema: resultContext.schema,
 			table: resultContext.table,
-			updates: Array.from(grid.pendingUpdates.entries()).map(([rowId, values]) => ({
-				rowId,
-				values,
-			})),
+			updates: grid.toUpdates(),
 			deletes: Array.from(grid.pendingDeletes),
 			inserts: grid.pendingInserts.map((row) => row.values),
 			rows: displayResult.rows,
@@ -359,15 +389,11 @@
 	}
 
 	function resetDraftState() {
-		grid.selectedRows = new Set();
-		grid.pendingUpdates = new Map();
-		grid.pendingDeletes = new Set();
-		grid.pendingInserts = [];
+		grid.clearDrafts();
 		rowContextMenu = null;
 		relatedSubmenuOpen = false;
 		editingCell = null;
 		editDraft = '';
-		grid.deletedSnapshots = new Map();
 		keepDraftsOnNextResult = false;
 		pendingPanelOpen = false;
 		userCollapsedPending = false;
@@ -383,7 +409,7 @@
 				schema: resultContext.schema,
 				table: resultContext.table,
 				orderClause: firstVisibleColumn
-					? ` order by ${quoteSqlIdentifier(databaseType, firstVisibleColumn)} asc${databaseType === 'mysql' ? '' : ' nulls last'}`
+					? ` order by ${quoteSqlIdentifier(databaseType, firstVisibleColumn)} asc${dialectCapabilities(databaseType).supportsNullsLast ? ' nulls last' : ''}`
 					: '',
 				limit: 100,
 			}) ?? ''
@@ -450,9 +476,7 @@
 	) {
 		const key = `${fkCacheKey(fk)}::${search.trim().toLowerCase()}`;
 		if (grid.fkOptionCache.has(key) || grid.fkLoadingKeys.has(key)) return;
-		const nextLoading = new Set(grid.fkLoadingKeys);
-		nextLoading.add(key);
-		grid.fkLoadingKeys = nextLoading;
+		grid.beginFkLoad(key);
 		try {
 			const options = await loadFkOptions({
 				runQuery,
@@ -461,26 +485,20 @@
 				fk,
 				search,
 			});
-			const nextCache = new Map(grid.fkOptionCache);
-			nextCache.set(key, options);
+			grid.setFkOptions(key, options);
 			const baseKey = fkCacheKey(fk);
-			const existing = nextCache.get(baseKey) ?? [];
+			const existing = grid.fkOptions(baseKey);
 			const merged = [...existing];
 			for (const option of options) {
 				if (!merged.some((item) => String(item.id) === String(option.id))) {
 					merged.push(option);
 				}
 			}
-			nextCache.set(baseKey, merged);
-			grid.fkOptionCache = nextCache;
+			grid.setFkOptions(baseKey, merged);
 		} catch {
-			const nextCache = new Map(grid.fkOptionCache);
-			if (!nextCache.has(fkCacheKey(fk))) nextCache.set(fkCacheKey(fk), []);
-			grid.fkOptionCache = nextCache;
+			if (!grid.fkOptionCache.has(fkCacheKey(fk))) grid.setFkOptions(fkCacheKey(fk), []);
 		} finally {
-			const done = new Set(grid.fkLoadingKeys);
-			done.delete(key);
-			grid.fkLoadingKeys = done;
+			grid.endFkLoad(key);
 		}
 	}
 
@@ -489,11 +507,7 @@
 		referencedTable: string;
 		referencedColumn: string;
 	}) {
-		const prefix = fkCacheKey(fk);
-		for (const key of grid.fkLoadingKeys) {
-			if (key === prefix || key.startsWith(`${prefix}::`)) return true;
-		}
-		return false;
+		return grid.isFkLoading(fkCacheKey(fk));
 	}
 
 	function optionsForFk(
@@ -504,7 +518,7 @@
 		} | null,
 	) {
 		if (!fk) return [];
-		return grid.fkOptionCache.get(fkCacheKey(fk)) ?? [];
+		return grid.fkOptions(fkCacheKey(fk));
 	}
 
 	function draftFromValue(column: string, value: unknown): string {
@@ -536,11 +550,7 @@
 		rowId: string,
 		column: string,
 	): unknown {
-		const pending = grid.pendingUpdates.get(rowId);
-		if (pending && Object.prototype.hasOwnProperty.call(pending, column)) {
-			return pending[column];
-		}
-		return row[column];
+		return grid.cellValue(row, rowId, column);
 	}
 
 	function getRowValueByName(
@@ -550,7 +560,7 @@
 	): unknown {
 		if (
 			Object.prototype.hasOwnProperty.call(row, column) ||
-			grid.pendingUpdates.get(rowId)?.[column] !== undefined
+			grid.hasPendingCell(rowId, column)
 		) {
 			return getRowValue(row, rowId, column);
 		}
@@ -800,25 +810,8 @@
 	}
 
 	function applyCellValue(rowId: string, column: string, nextValue: unknown) {
-		const map = new Map(grid.pendingUpdates);
-		const row = displayResult.rows.find(
-			(item) => rowIdOf(item) === rowId,
-		);
-		const baseValue = row ? row[column] : undefined;
-		const prev = { ...(grid.pendingUpdates.get(rowId) ?? {}) };
-
-		if (valuesEqual(nextValue, baseValue)) {
-			delete prev[column];
-		} else {
-			prev[column] = nextValue;
-		}
-
-		if (Object.keys(prev).length === 0) {
-			map.delete(rowId);
-		} else {
-			map.set(rowId, prev);
-		}
-		grid.pendingUpdates = map;
+		const row = displayResult.rows.find((item) => rowIdOf(item) === rowId);
+		grid.setCellValue(rowId, column, nextValue, row ? row[column] : undefined);
 		if (!userCollapsedPending) pendingPanelOpen = true;
 	}
 
@@ -962,42 +955,17 @@
 	}
 
 	function toggleRowSelected(rowId: string) {
-		const next = new Set(grid.selectedRows);
-		if (next.has(rowId)) next.delete(rowId);
-		else next.add(rowId);
-		grid.selectedRows = next;
-		grid.activeRowId = rowId;
+		grid.toggleRowSelected(rowId);
 	}
 
 	function toggleSelectAllVisible() {
-		const ids = pageRows
-			.map((row) => rowIdOf(row))
-			.filter((id) => id.length > 0);
-		const allSelected =
-			ids.length > 0 && ids.every((id) => grid.selectedRows.has(id));
-		grid.selectedRows = allSelected ? new Set() : new Set(ids);
+		grid.toggleSelectAll(
+			pageRows.map((row) => rowIdOf(row)).filter((id) => id.length > 0),
+		);
 	}
 
 	function queueDeleteRows(rowIds: string[]) {
-		const nextDeletes = new Set(grid.pendingDeletes);
-		const nextUpdates = new Map(grid.pendingUpdates);
-		const nextSelected = new Set(grid.selectedRows);
-		for (const rowId of rowIds) {
-			const row = displayResult.rows.find(
-				(item) => rowIdOf(item) === rowId,
-			);
-			if (row) {
-				const nextSnapshots = new Map(grid.deletedSnapshots);
-				nextSnapshots.set(rowId, { ...row });
-				grid.deletedSnapshots = nextSnapshots;
-			}
-			nextDeletes.add(rowId);
-			nextUpdates.delete(rowId);
-			nextSelected.delete(rowId);
-		}
-		grid.pendingDeletes = nextDeletes;
-		grid.pendingUpdates = nextUpdates;
-		grid.selectedRows = nextSelected;
+		grid.deleteRows(rowIds, displayResult.rows);
 		rowContextMenu = null;
 		if (!userCollapsedPending) pendingPanelOpen = true;
 	}
@@ -1017,8 +985,7 @@
 
 	function startInsertRow() {
 		if (!editable) return;
-		const values: Record<string, unknown> = {};
-		grid.pendingInserts = [...grid.pendingInserts, { id: crypto.randomUUID(), values }];
+		grid.startInsert();
 		if (!userCollapsedPending) pendingPanelOpen = true;
 		for (const column of columnMetas) {
 			if (column.fk) void ensureFkOptions(column.fk);
@@ -1026,17 +993,11 @@
 	}
 
 	function setInsertValue(id: string, column: string, raw: string) {
-		grid.pendingInserts = grid.pendingInserts.map((row) => {
-			if (row.id !== id) return row;
-			return {
-				...row,
-				values: { ...row.values, [column]: coerceValue(raw, column) },
-			};
-		});
+		grid.setInsertValue(id, column, coerceValue(raw, column));
 	}
 
 	function removePendingInsert(id: string) {
-		grid.pendingInserts = grid.pendingInserts.filter((row) => row.id !== id);
+		grid.removeInsert(id);
 	}
 
 	async function refreshCount() {
@@ -1117,15 +1078,14 @@
 	}
 
 	function clearFilters() {
-		grid.columnFilters = {};
-		grid.showFilterRow = false;
+		grid.clearFilters();
 		page = 1;
 		if (filterTimer) clearTimeout(filterTimer);
 		void applyBrowse();
 	}
 
 	function setPageSize(next: PageSize) {
-		grid.pageSize = next;
+		grid.setPageSize(next);
 		page = 1;
 		void applyBrowse();
 	}
@@ -1157,6 +1117,7 @@
 	});
 
 	async function runExplain() {
+		if (!dialectCapabilities(databaseType).supportsExplain) return;
 		const sourceSql =
 			refreshSql.trim().length > 0 ? refreshSql : buildDefaultContextSql();
 		if (!sourceSql) return;
@@ -1193,10 +1154,7 @@
 		syncingChanges = true;
 		try {
 			const payload: TableChangesPayload = {
-				updates: Array.from(grid.pendingUpdates.entries()).map(([rowId, values]) => ({
-					rowId,
-					values,
-				})),
+				updates: grid.toUpdates(),
 				deletes: Array.from(grid.pendingDeletes),
 				inserts: grid.pendingInserts
 					.map((row) =>
@@ -1562,7 +1520,7 @@
 			</button>
 			<button
 				type="button"
-				onclick={() => (grid.selectedRows = new Set())}
+				onclick={() => grid.clearSelection()}
 				class="h-7 px-1.5 text-[11px] text-qc-muted hover:text-qc-subtle inline-flex items-center gap-1 shrink-0"
 				title="Clear selection"
 			>
@@ -1586,13 +1544,15 @@
 			>
 				Messages
 			</button>
-			<button
-				type="button"
-				class={`h-7 px-2 rounded ${activeView === 'explain' ? 'text-qc-fg' : 'text-qc-muted hover:text-qc-subtle'}`}
-				onclick={() => (activeView = 'explain')}
-			>
-				Explain
-			</button>
+			{#if dialectCapabilities(databaseType).supportsExplain}
+				<button
+					type="button"
+					class={`h-7 px-2 rounded ${activeView === 'explain' ? 'text-qc-fg' : 'text-qc-muted hover:text-qc-subtle'}`}
+					onclick={() => (activeView = 'explain')}
+				>
+					Explain
+				</button>
+			{/if}
 		</div>
 		<div class="w-px h-4 bg-qc-border mx-1 shrink-0"></div>
 		<div class="flex items-center gap-1 text-[12px] text-qc-muted shrink-0">
@@ -1688,8 +1648,7 @@
 						<div
 							class="rounded border border-qc-border bg-qc-elevated px-3 py-2"
 						>
-							Last query executed successfully in {durationMs}ms and returned {displayResult.rowCount}
-							rows{displayResult.truncated ? ' (capped)' : ''}.
+							{outcomeMessage}
 						</div>
 					{/if}
 				</div>
@@ -1721,6 +1680,14 @@
 							Run a query first to generate an explain plan.
 						</div>
 					{/if}
+				</div>
+			{:else if isCommandResult}
+				<div class="h-full p-4 text-xs text-qc-subtle">
+					<div
+						class="rounded border border-qc-border bg-qc-elevated px-3 py-2"
+					>
+						{outcomeMessage}
+					</div>
 				</div>
 			{:else if loading}
 				<div class="min-w-full min-h-full">
@@ -1871,10 +1838,7 @@
 														const value = (
 															event.currentTarget as HTMLInputElement
 														).value;
-														grid.columnFilters = {
-															...grid.columnFilters,
-															[column]: value,
-														};
+														grid.setColumnFilter(column, value);
 														scheduleFilterBrowse();
 													}}
 													placeholder="Contains…"
@@ -1985,7 +1949,7 @@
 										{@const canFollowFk =
 											isFkColumn && isFollowableValue(currentValue)}
 										{@const isPendingEdit =
-											grid.pendingUpdates.get(rowId)?.[column] !== undefined}
+											grid.hasPendingCell(rowId, column)}
 										<td
 											class={`grid-cell text-[12px] overflow-hidden whitespace-nowrap max-w-0 font-mono tabular-nums text-qc-data ${editable && !meta?.isAuto && !meta?.isPrimary && !isPendingDelete ? 'cursor-cell' : ''} ${isEditing ? 'p-0 outline outline-1 -outline-offset-1 outline-qc-cell bg-qc-bg' : 'px-2.5 py-0'} ${isPendingEdit && !isEditing && !isPendingDelete ? 'cell-dirty' : ''} ${meta?.kind === 'number' ? 'text-right' : ''}`}
 											style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;max-width:${getColumnWidth(column)}px;`}

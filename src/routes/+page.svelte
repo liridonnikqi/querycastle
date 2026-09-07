@@ -79,7 +79,7 @@
 				<ConnectionTabsBar
 					embedded
 					sessions={workspace.openSessions}
-					activeSessionId={workspace.activeSessionId}
+					activeSessionId={workspace.sessionId}
 					savedConnections={workspace.savedConnections}
 					onSelect={(id) => void workspace.switchOpenSession(id)}
 					onClose={(id) => void workspace.closeOpenSession(id)}

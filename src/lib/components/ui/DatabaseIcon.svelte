@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { DatabaseType } from '$lib/rpc';
+	import MssqlIcon from './MssqlIcon.svelte';
 	import MysqlIcon from './MysqlIcon.svelte';
 	import PostgresqlIcon from './PostgresqlIcon.svelte';
 	import SqliteIcon from './SqliteIcon.svelte';
@@ -35,6 +36,8 @@
 		<MysqlIcon {size} />
 	{:else if type === 'sqlite'}
 		<SqliteIcon {size} {mono} />
+	{:else if type === 'mssql'}
+		<MssqlIcon {size} {mono} />
 	{:else}
 		<PostgresqlIcon {size} {mono} />
 	{/if}

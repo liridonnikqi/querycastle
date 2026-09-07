@@ -37,6 +37,22 @@ describe('table browse sql', () => {
 		);
 	});
 
+	it('pages a SQL Server table with offset/fetch and convert filters', () => {
+		expect(
+			buildTableBrowseSql({
+				databaseType: 'mssql',
+				explorer: shopExplorer(),
+				schema: 'dbo',
+				table: 'users',
+				baseWhere: '[id] = 9',
+				filters: [{ column: 'email', value: 'ada' }],
+				sort: { column: 'email', dir: 'desc' },
+				limit: 50,
+				offset: 50,
+			}),
+		).toContain('offset 50 rows fetch next 50 rows only');
+	});
+
 	it('builds a count query without row ids', () => {
 		expect(
 			buildTableCountSql({
@@ -58,6 +74,9 @@ describe('table browse sql', () => {
 		expect(nextSortState({ column: 'email', dir: 'desc' }, 'email')).toBeNull();
 		expect(totalPages(160, 50)).toBe(4);
 		expect(buildLimitClause(50, 0)).toBe(' limit 50');
+		expect(buildLimitClause(50, 0, 'mssql')).toBe(
+			' offset 0 rows fetch next 50 rows only',
+		);
 		expect(parseCountResult([{ count: '160' }])).toBe(160);
 	});
 });

@@ -133,7 +133,9 @@
 	let refreshingDatabases = $state(false);
 	let refreshingTables = $state(false);
 
-	const postgresEncodings = ['UTF8', 'LATIN1', 'LATIN2', 'WIN1252'];
+	let createDatabaseEncodings = $derived(
+		dialectCapabilities(connectionStatus.databaseType).createDatabaseEncodings,
+	);
 
 	function openContextMenu(
 		event: MouseEvent,
@@ -990,14 +992,16 @@
 							placeholder="Database Name"
 							class="ui-input w-full h-9 text-sm px-2"
 						/>
-						<select
-							bind:value={newDatabaseEncoding}
-							class="w-full h-9 px-2 rounded-md border border-qc-border bg-qc-panel text-sm text-qc-fg outline-none"
-						>
-							{#each postgresEncodings as encoding}
-								<option value={encoding}>{encoding}</option>
-							{/each}
-						</select>
+						{#if createDatabaseEncodings.length > 0}
+							<select
+								bind:value={newDatabaseEncoding}
+								class="w-full h-9 px-2 rounded-md border border-qc-border bg-qc-panel text-sm text-qc-fg outline-none"
+							>
+								{#each createDatabaseEncodings as encoding}
+									<option value={encoding}>{encoding}</option>
+								{/each}
+							</select>
+						{/if}
 					</div>
 					<div
 						class="h-12 px-4 border-t border-qc-border flex items-center justify-end gap-2 bg-qc-elevated"

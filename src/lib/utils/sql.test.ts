@@ -1,9 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import {
+	commandSuccessMessage,
 	quoteCatalogIdentifiersInSql,
+	quoteSqlIdentifier,
 	quoteSqlIdentifierIfNeeded,
+	sqlCommandVerb,
 	unquoteIdent,
 } from '$lib/utils/sql';
+
+describe('commandSuccessMessage', () => {
+	it('toasts DML and DDL verbs and ignores selects', () => {
+		expect(sqlCommandVerb('CREATE TABLE t (id int)')).toBe('create');
+		expect(commandSuccessMessage('create table t (id int)')).toBe('Create succeeded');
+		expect(commandSuccessMessage('  DROP DATABASE demo')).toBe('Drop succeeded');
+		expect(commandSuccessMessage('insert into t values (1)')).toBe('Insert succeeded');
+		expect(commandSuccessMessage('truncate table t')).toBe('Table truncated');
+		expect(commandSuccessMessage('select 1')).toBeNull();
+	});
+});
 
 describe('unquoteIdent', () => {
 	it('preserves mixed-case unquoted names', () => {
@@ -16,6 +30,12 @@ describe('quoteSqlIdentifierIfNeeded', () => {
 	it('quotes postgres names that would be folded', () => {
 		expect(quoteSqlIdentifierIfNeeded('postgres', 'users')).toBe('users');
 		expect(quoteSqlIdentifierIfNeeded('postgres', 'User')).toBe('"User"');
+	});
+
+	it('uses brackets for SQL Server and escapes closing brackets', () => {
+		expect(quoteSqlIdentifier('mssql', 'users')).toBe('[users]');
+		expect(quoteSqlIdentifier('mssql', 'my]table')).toBe('[my]]table]');
+		expect(unquoteIdent('[my]]table]')).toBe('my]table');
 	});
 });
 

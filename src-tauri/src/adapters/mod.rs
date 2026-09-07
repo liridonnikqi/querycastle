@@ -1,3 +1,4 @@
+pub mod mssql;
 pub mod mysql;
 pub mod postgres;
 pub mod sqlite;
@@ -11,6 +12,7 @@ pub async fn run_query(pool: &Pool, sql: &str) -> Result<QueryResultPayload, DbE
         Pool::Postgres(p) => postgres::run_query(p, sql).await,
         Pool::Mysql(p) => mysql::run_query(p, sql).await,
         Pool::Sqlite(p) => sqlite::run_query(p, sql).await,
+        Pool::Mssql(p) => mssql::run_query(p, sql).await,
     }
 }
 
@@ -19,6 +21,7 @@ pub async fn get_database_explorer(pool: &Pool) -> Result<DatabaseExplorer, DbEr
         Pool::Postgres(p) => postgres::get_database_explorer(p).await,
         Pool::Mysql(p) => mysql::get_database_explorer(p).await,
         Pool::Sqlite(p) => sqlite::get_database_explorer(p).await,
+        Pool::Mssql(p) => mssql::get_database_explorer(p).await,
     }
 }
 
@@ -30,6 +33,7 @@ pub async fn get_object_definition(
         Pool::Postgres(p) => postgres::get_object_definition(p, params).await,
         Pool::Mysql(p) => mysql::get_object_definition(p, params).await,
         Pool::Sqlite(p) => sqlite::get_object_definition(p, params).await,
+        Pool::Mssql(p) => mssql::get_object_definition(p, params).await,
     }
 }
 
@@ -38,6 +42,7 @@ pub async fn list_databases(pool: &Pool) -> Result<Vec<String>, DbError> {
         Pool::Postgres(p) => postgres::list_databases(p).await,
         Pool::Mysql(p) => mysql::list_databases(p).await,
         Pool::Sqlite(p) => sqlite::list_databases(p).await,
+        Pool::Mssql(p) => mssql::list_databases(p).await,
     }
 }
 
@@ -49,6 +54,7 @@ pub async fn apply_table_changes(
         Pool::Postgres(p) => postgres::apply_table_changes(p, params).await,
         Pool::Mysql(p) => mysql::apply_table_changes(p, params).await,
         Pool::Sqlite(p) => sqlite::apply_table_changes(p, params).await,
+        Pool::Mssql(p) => mssql::apply_table_changes(p, params).await,
     }
 }
 
@@ -57,6 +63,7 @@ pub async fn server_version(pool: &Pool) -> Result<Option<String>, DbError> {
         Pool::Postgres(p) => postgres::server_version(p).await,
         Pool::Mysql(p) => mysql::server_version(p).await,
         Pool::Sqlite(p) => sqlite::server_version(p).await,
+        Pool::Mssql(p) => mssql::server_version(p).await,
     }
 }
 

@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::core::error::DbError;
-use crate::core::limits::{apply_select_row_cap, MAX_QUERY_ROWS, QUERY_TIMEOUT_MS};
+use crate::core::limits::{MAX_QUERY_ROWS, QUERY_TIMEOUT_MS};
 use crate::core::sql;
 use crate::core::types::{
     ApplyTableChangesParams, ApplyTableChangesResponse, DatabaseColumn, DatabaseExplorer,
@@ -79,7 +79,7 @@ pub async fn server_version(pool: &SqlitePool) -> Result<Option<String>, DbError
 }
 
 pub async fn run_query(pool: &SqlitePool, sql: &str) -> Result<QueryResultPayload, DbError> {
-    let sql = apply_select_row_cap(sql).into_owned();
+    let sql = sql.to_string();
     let fut = with_pool(pool, move |pool| {
         let conn = pool.get()?;
         let started = std::time::Instant::now();

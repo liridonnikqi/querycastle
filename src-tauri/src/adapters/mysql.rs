@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::core::error::DbError;
-use crate::core::limits::{apply_select_row_cap, MAX_QUERY_ROWS, QUERY_TIMEOUT_MS};
+use crate::core::limits::{MAX_QUERY_ROWS, QUERY_TIMEOUT_MS};
 use crate::core::sql;
 use crate::core::types::{
     ApplyTableChangesParams, ApplyTableChangesResponse, DatabaseColumn, DatabaseExplorer,
@@ -84,11 +84,15 @@ pub async fn run_query(pool: &mysql_async::Pool, sql: &str) -> Result<QueryResul
     }
 
     let started = std::time::Instant::now();
-    let sql = apply_select_row_cap(sql).into_owned();
+    let sql = sql.to_string();
     let fut = async {
         let mut result = conn.query_iter(sql).await?;
 
-        let mut columns: Vec<String> = Vec::new();
+        let mut columns: Vec<String> = result
+            .columns_ref()
+            .iter()
+            .map(|column| column.name_str().to_string())
+            .collect();
         let mut mapped_rows: Vec<HashMap<String, Value>> = Vec::new();
         let mut truncated = false;
 
@@ -112,7 +116,11 @@ pub async fn run_query(pool: &mysql_async::Pool, sql: &str) -> Result<QueryResul
             mapped_rows.push(mapped);
         }
 
-        let row_count = mapped_rows.len();
+        let row_count = if columns.is_empty() {
+            result.affected_rows() as usize
+        } else {
+            mapped_rows.len()
+        };
         Ok(QueryResultPayload {
             columns,
             rows: mapped_rows,

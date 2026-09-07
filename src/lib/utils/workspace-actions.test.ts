@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { shopExplorer } from '$lib/utils/relation-fixtures';
-import { buildRenameTableSql, buildTableActionPlan } from '$lib/utils/workspace-actions';
+import {
+	buildPkHashExpression,
+	dialectCapabilities,
+	primaryKeyColumns,
+} from '$lib/utils/dialect';
+import { canEditTable } from '$lib/utils/table-select';
+import {
+	buildCreateDatabaseSql,
+	buildRenameTableSql,
+	buildTableActionPlan,
+} from '$lib/utils/workspace-actions';
+import type { DatabaseExplorer } from '$lib/rpc';
 
 const explorer = shopExplorer();
 
@@ -99,5 +110,86 @@ describe('buildTableActionPlan', () => {
 				nextName: 'orders_v2',
 			}),
 		).toBe('alter table `shop`.`orders` rename to `orders_v2`;');
+		expect(
+			buildRenameTableSql({
+				databaseType: 'mssql',
+				schema: 'dbo',
+				table: 'users',
+				nextName: 'members',
+			}),
+		).toBe("exec sp_rename N'dbo.users', N'members', N'OBJECT';");
+	});
+
+	it('treats a SQL Server PK index as editable when column flags are missing', () => {
+		const explorer: DatabaseExplorer = {
+			database: 'testing',
+			schemas: [
+				{
+					name: 'dbo',
+					tables: [
+						{
+							schema: 'dbo',
+							name: 'Persons',
+							kind: 'table',
+							columns: [
+								{
+									name: 'PersonID',
+									dataType: 'int',
+									notNull: true,
+									isPrimary: false,
+								},
+								{
+									name: 'LastName',
+									dataType: 'varchar',
+									notNull: true,
+									isPrimary: false,
+								},
+							],
+							foreignKeys: [],
+							indexes: [
+								{
+									name: 'PK_Persons',
+									columns: 'PersonID',
+									unique: true,
+									isPrimary: true,
+									definition: null,
+								},
+							],
+							triggers: [],
+						},
+					],
+				},
+			],
+		};
+		expect(primaryKeyColumns(explorer.schemas[0]!.tables[0]!)).toEqual(['PersonID']);
+		expect(canEditTable('mssql', explorer, 'dbo', 'Persons')).toBe(true);
+		const hash = buildPkHashExpression('mssql', explorer, 'dbo', 'Persons');
+		expect(hash).toContain('hashbytes');
+		expect(hash).not.toContain('concat_ws');
+	});
+
+	it('builds create database SQL per dialect', () => {
+		expect(buildCreateDatabaseSql('postgres', 'analytics', 'UTF8')).toBe(
+			'create database "analytics" encoding \'UTF8\';',
+		);
+		expect(buildCreateDatabaseSql('mssql', 'analytics')).toBe(
+			'create database [analytics];',
+		);
+		expect(dialectCapabilities('mssql').canCreateDatabase).toBe(true);
+		expect(dialectCapabilities('mssql').createDatabaseEncodings).toEqual([]);
+		expect(dialectCapabilities('postgres').createDatabaseEncodings).toContain('UTF8');
+	});
+
+	it('duplicates SQL Server tables with SELECT INTO', () => {
+		const plan = buildTableActionPlan({
+			action: 'duplicate',
+			databaseType: 'mssql',
+			explorer,
+			schema: 'dbo',
+			table: 'users',
+		});
+		expect(plan.kind).toBe('run_query');
+		if (plan.kind !== 'run_query') return;
+		expect(plan.query).toBe('select * into [dbo].[users_copy] from [dbo].[users];');
 	});
 });

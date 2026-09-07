@@ -7,7 +7,6 @@
 		ArrowRight,
 		Check,
 		CircleAlert,
-		FolderOpen,
 		Loader2,
 		MoreVertical,
 		Plus,
@@ -15,7 +14,6 @@
 		SquarePen,
 		Trash2,
 	} from '@lucide/svelte';
-	import { open } from '@tauri-apps/plugin-dialog';
 	import { getVersion } from '@tauri-apps/api/app';
 	import { isTauri } from '@tauri-apps/api/core';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -25,15 +23,19 @@
 	import QueryCastleLogo from '$lib/components/ui/QueryCastleLogo.svelte';
 	import ThemeToggle from '$lib/components/ui/ThemeToggle.svelte';
 	import WindowControls from '$lib/components/ui/WindowControls.svelte';
+	import ConnectionFields from '$lib/components/connection/ConnectionFields.svelte';
 	import {
+		DATABASE_ENGINES,
 		connectionMetaLine,
+		connectionStringPlaceholder,
 		defaultsForType,
 		generateConnectionString,
 		loadRecentConnectionNames,
-		normalizeConnectionInput,
-		parseConnectionString,
 		rememberRecentConnection,
+		withDatabaseType,
+		withParsedConnectionString,
 	} from '$lib/utils/connection';
+	import { engineDisplayName } from '$lib/utils/dialect';
 
 	let {
 		savedConnections,
@@ -73,17 +75,11 @@
 
 	const engineFilters: Array<{ value: 'all' | DatabaseType; label: string }> = [
 		{ value: 'all', label: 'All' },
-		{ value: 'postgres', label: 'PostgreSQL' },
-		{ value: 'mysql', label: 'MySQL' },
-		{ value: 'sqlite', label: 'SQLite' },
+		...DATABASE_ENGINES.map((engine) => ({
+			value: engine.value,
+			label: engine.label,
+		})),
 	];
-
-	const providers: Array<{ value: DatabaseType; label: string }> = [
-		{ value: 'postgres', label: 'PostgreSQL' },
-		{ value: 'mysql', label: 'MySQL' },
-		{ value: 'sqlite', label: 'SQLite' },
-	];
-	const isSqlite = $derived(form.databaseType === 'sqlite');
 
 	let query = $derived((hubSearch || searchQuery).trim().toLowerCase());
 
@@ -155,28 +151,19 @@
 	}
 
 	function selectProvider(next: DatabaseType) {
-		form = defaultsForType(next);
+		form = withDatabaseType(form, next);
 		connectionString = generateConnectionString(form);
 		useString = false;
 		picked = true;
 		clearTest();
 	}
 
-	function updateField<K extends keyof ConnectionInput>(
-		key: K,
-		value: ConnectionInput[K],
-	) {
-		form = { ...form, [key]: value };
-		connectionString = generateConnectionString(form);
-		clearTest();
-	}
-
 	function applyString(value: string) {
 		connectionString = value;
 		clearTest();
-		const parsed = parseConnectionString(value, form);
+		const parsed = withParsedConnectionString(form, value);
 		if (parsed) {
-			form = normalizeConnectionInput({ ...form, ...parsed });
+			form = parsed;
 			useString = true;
 			picked = true;
 		} else {
@@ -184,24 +171,9 @@
 		}
 	}
 
-	async function chooseSqliteFile() {
-		const selected = await open({
-			multiple: false,
-			directory: false,
-			filters: [
-				{ name: 'SQLite Database', extensions: ['db', 'sqlite', 'sqlite3'] },
-				{ name: 'All Files', extensions: ['*'] },
-			],
-		});
-		if (!selected || Array.isArray(selected)) return;
-		const normalized = selected.replaceAll('\\', '/');
-		const fileName = normalized.split('/').pop() ?? '';
-		const nextName =
-			!form.name.trim() || form.name === 'local_sqlite'
-				? fileName.replace(/\.(sqlite|sqlite3|db)$/i, '') || form.name
-				: form.name;
-		form = { ...form, database: selected, name: nextName };
-		connectionString = generateConnectionString(form);
+	function handleFormChange(next: ConnectionInput) {
+		form = next;
+		clearTest();
 	}
 
 	function connectSaved(connection: ConnectionInput) {
@@ -228,17 +200,11 @@
 		testMessage = '';
 		try {
 			const payload = connectionPayload();
-			const engineLabel =
-				payload.databaseType === 'mysql'
-					? 'MySQL'
-					: payload.databaseType === 'sqlite'
-						? 'SQLite'
-						: 'PostgreSQL';
 			const response = await rpc.testConnection(payload);
 			testOk = response.ok;
 			testMessage = response.ok
 				? response.serverVersion
-					? `${engineLabel} ${response.serverVersion}`
+					? `${engineDisplayName(payload.databaseType)} ${response.serverVersion}`
 					: 'Connection succeeded'
 				: response.message;
 		} catch (error) {
@@ -520,7 +486,7 @@
 							value={connectionString}
 							oninput={(event) => applyString(event.currentTarget.value)}
 							class="field-input w-full h-11 px-3.5 mt-2 text-[13px] font-mono placeholder:text-qc-muted"
-							placeholder="protocol://user:password@host:port/database"
+							placeholder={connectionStringPlaceholder(form.databaseType)}
 						/>
 						<p class="mt-2 text-[12px] text-qc-muted">
 							Paste your connection string to auto-detect database type
@@ -534,7 +500,7 @@
 					</div>
 
 					<div class="grid grid-cols-2 gap-2.5">
-						{#each providers as provider}
+						{#each DATABASE_ENGINES as provider (provider.value)}
 							<button
 								type="button"
 								onclick={() => selectProvider(provider.value)}
@@ -556,140 +522,14 @@
 								submit();
 							}}
 						>
-							<div class={isSqlite ? '' : 'grid grid-cols-2 gap-3'}>
-								<div>
-									<div class="text-[11px] font-medium text-qc-subtle mb-1.5">
-										Name
-									</div>
-									<input
-										value={form.name}
-										oninput={(event) =>
-											updateField('name', event.currentTarget.value)}
-										class="field-input w-full h-9 px-3 text-[13px] placeholder:text-qc-muted"
-										placeholder="My database"
-									/>
-								</div>
-								{#if !isSqlite}
-									<div>
-										<div class="text-[11px] font-medium text-qc-subtle mb-1.5">
-											Host
-										</div>
-										<input
-											value={form.host}
-											oninput={(event) =>
-												updateField('host', event.currentTarget.value)}
-											class="field-input w-full h-9 px-3 text-[13px] placeholder:text-qc-muted"
-											placeholder="localhost"
-										/>
-									</div>
-								{/if}
-							</div>
-							{#if isSqlite}
-								<div>
-									<div class="text-[11px] font-medium text-qc-subtle mb-1.5">
-										Database file
-									</div>
-									<div class="flex gap-2">
-										<input
-											value={form.database}
-											oninput={(event) =>
-												updateField('database', event.currentTarget.value)}
-											class="field-input w-full h-9 px-3 text-[13px] placeholder:text-qc-muted font-mono"
-											placeholder="C:/data/analytics.db"
-										/>
-										<button
-											type="button"
-											onclick={chooseSqliteFile}
-											class="h-9 px-3 rounded-md border border-qc-border bg-qc-elevated text-qc-subtle text-[12px] inline-flex items-center gap-1.5 hover:bg-qc-hover"
-										>
-											<FolderOpen size={14} /> Open
-										</button>
-									</div>
-								</div>
-							{:else}
-								<div class="grid grid-cols-2 gap-3">
-									<div>
-										<div class="text-[11px] font-medium text-qc-subtle mb-1.5">
-											Port
-										</div>
-										<input
-											value={String(form.port)}
-											oninput={(event) =>
-												updateField(
-													'port',
-													Number(event.currentTarget.value) ||
-														(form.databaseType === 'mysql' ? 3306 : 5432),
-												)}
-											class="field-input w-full h-9 px-3 text-[13px] font-mono"
-										/>
-									</div>
-									<div>
-										<div class="text-[11px] font-medium text-qc-subtle mb-1.5">
-											Database
-										</div>
-										<input
-											value={form.database}
-											oninput={(event) =>
-												updateField('database', event.currentTarget.value)}
-											class="field-input w-full h-9 px-3 text-[13px]"
-										/>
-									</div>
-								</div>
-								<div class="grid grid-cols-2 gap-3">
-									<div>
-										<div class="text-[11px] font-medium text-qc-subtle mb-1.5">
-											User
-										</div>
-										<input
-											value={form.user}
-											oninput={(event) =>
-												updateField('user', event.currentTarget.value)}
-											class="field-input w-full h-9 px-3 text-[13px]"
-										/>
-									</div>
-									<div>
-										<div class="text-[11px] font-medium text-qc-subtle mb-1.5">
-											Password
-										</div>
-										<input
-											type="password"
-											value={form.password}
-											oninput={(event) =>
-												updateField('password', event.currentTarget.value)}
-											class="field-input w-full h-9 px-3 text-[13px] placeholder:text-qc-muted"
-											placeholder="••••••••"
-										/>
-									</div>
-								</div>
-								<label
-									class="flex items-center gap-2 text-[12px] text-qc-subtle"
-								>
-									<input
-										type="checkbox"
-										class="qc-check"
-										checked={form.ssl}
-										onchange={(event) => {
-											const checked = event.currentTarget.checked;
-											updateField('ssl', checked);
-											if (!checked) updateField('sslInsecure', false);
-										}}
-									/>
-									Use SSL
-								</label>
-								<label
-									class="flex items-center gap-2 text-[12px] text-qc-subtle"
-								>
-									<input
-										type="checkbox"
-										class="qc-check"
-										checked={form.sslInsecure ?? false}
-										disabled={!form.ssl}
-										onchange={(event) =>
-											updateField('sslInsecure', event.currentTarget.checked)}
-									/>
-									Allow insecure TLS (self-signed)
-								</label>
-							{/if}
+							<ConnectionFields
+								variant="hub"
+								{form}
+								{connectionString}
+								showString={false}
+								onFormChange={handleFormChange}
+								onStringChange={(value) => (connectionString = value)}
+							/>
 
 							<div class="flex flex-row items-center justify-end gap-2 pt-2">
 								{#if connectError || testMessage}

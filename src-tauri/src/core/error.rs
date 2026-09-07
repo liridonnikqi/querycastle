@@ -137,6 +137,24 @@ pub fn sanitize_mysql_error_to_db_error(err: mysql_async::Error) -> DbError {
     DbError::Query { message: msg, code: None }
 }
 
+pub fn sanitize_mssql_error_to_db_error(err: tiberius::error::Error) -> DbError {
+    let msg = err.to_string();
+    let lower = msg.to_lowercase();
+    if lower.contains("login failed") || lower.contains("authentication") || lower.contains("login is from an untrusted") {
+        return DbError::Auth { message: msg };
+    }
+    if lower.contains("timeout") || lower.contains("timed out") {
+        return DbError::Timeout { message: msg };
+    }
+    if lower.contains("cannot open database") || lower.contains("not found") {
+        return DbError::NotFound(msg);
+    }
+    if lower.contains("unable to complete login") || lower.contains("connection") {
+        return DbError::Connection { message: msg, code: None };
+    }
+    DbError::Query { message: msg, code: None }
+}
+
 pub fn sanitize_sqlite_error_to_db_error(err: rusqlite::Error) -> DbError {
     let msg = err.to_string();
     let lower = msg.to_lowercase();
@@ -164,9 +182,24 @@ impl From<rusqlite::Error> for DbError {
     }
 }
 
+impl From<tiberius::error::Error> for DbError {
+    fn from(err: tiberius::error::Error) -> Self {
+        sanitize_mssql_error_to_db_error(err)
+    }
+}
+
 impl From<deadpool_postgres::PoolError> for DbError {
     fn from(err: deadpool_postgres::PoolError) -> Self {
         DbError::connection(format!("Pool get failed: {err}"))
+    }
+}
+
+impl From<deadpool::managed::PoolError<DbError>> for DbError {
+    fn from(err: deadpool::managed::PoolError<DbError>) -> Self {
+        match err {
+            deadpool::managed::PoolError::Backend(err) => err,
+            other => DbError::connection(format!("SQL Server pool get failed: {other}")),
+        }
     }
 }
 

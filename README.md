@@ -2,7 +2,9 @@
 
 # QueryCastle
 
-A desktop SQL client for PostgreSQL, MySQL, and SQLite.
+A desktop SQL client for PostgreSQL, Microsoft SQL Server, MySQL, and SQLite.
+
+> This is still a early preview. Expect bugs and missing features. Feedback is welcome!
 
 ![Connection list](main-page.png)
 
@@ -15,8 +17,7 @@ Open a connection, browse the schema, run queries, and edit rows in the grid.
 - SQL editor with autocomplete and formatting (`Ctrl+Enter` to run)
 - Results grid you can edit in place
 - Query tabs, saved queries, and per-connection history
-
-Windows is the supported desktop build right now.
+- Uses native OS keychains to store credentials securely
 
 ## Run locally
 
@@ -27,7 +28,7 @@ npm install
 npm run tauri dev
 ```
 
-To build an installer:
+To build an installer for your machine:
 
 ```bash
 npm run tauri build

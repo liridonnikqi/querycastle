@@ -5,6 +5,7 @@
 	import ResultsPane from '$lib/components/query/ResultsPane.svelte';
 	import SqlEditor from '$lib/components/query/SqlEditor.svelte';
 	import type { Workspace } from '$lib/workspace/controller.svelte';
+	import type { WorkspaceTab } from '$lib/utils/workspace';
 
 	let { workspace }: { workspace: Workspace } = $props();
 
@@ -25,6 +26,32 @@
 		workspace.sqlSplitContainer = splitContainer;
 	});
 </script>
+
+{#snippet resultsPane(tab: WorkspaceTab)}
+	<ResultsPane
+		result={tab.result}
+		sqlError={tab.sqlError || workspace.globalError}
+		databaseType={workspace.connectionStatus.databaseType}
+		resultContext={tab.resultContext}
+		explorer={workspace.explorer}
+		relationTrail={tab.relationTrail ?? []}
+		loading={workspace.isRunningQuery}
+		refreshSql={tab.lastRunSql}
+		resultKey={`${tab.id}:${tab.lastRunSql}:${tab.result.durationMs}:${tab.result.rowCount}`}
+		runQuery={(sql) => workspace.runSessionQuery(sql)}
+		onRunSql={(query) =>
+			workspace.executeQuery(query, {
+				pushToHistory: false,
+				targetTabId: tab.id,
+				context: tab.resultContext,
+			})}
+		onApplyTableChanges={(context, changes) =>
+			workspace.applyTableChanges(context, changes)}
+		onFollowRelation={(hop) => workspace.followRelation(hop)}
+		onActivateRelationTrail={(index) => workspace.activateRelationTrail(index)}
+		durationMs={tab.result.durationMs || workspace.queryDurationMs}
+	/>
+{/snippet}
 
 <ExplorerSidebar
 	connectionStatus={workspace.connectionStatus}
@@ -102,31 +129,7 @@
 					style={`height:${workspace.resultsPaneHeight}px;`}
 					class="flex flex-col bg-qc-bg shrink-0 min-h-0"
 				>
-					<ResultsPane
-						result={activeTab.result}
-						sqlError={activeTab.sqlError || workspace.globalError}
-						databaseType={workspace.connectionStatus.databaseType}
-						resultContext={activeTab.resultContext}
-						explorer={workspace.explorer}
-						relationTrail={activeTab.relationTrail ?? []}
-						loading={workspace.isRunningQuery}
-						refreshSql={activeTab.lastRunSql}
-						resultKey={`${activeTab.id}:${activeTab.lastRunSql}:${activeTab.result.durationMs}:${activeTab.result.rowCount}`}
-						runQuery={(sql) => workspace.runSessionQuery(sql)}
-						onRunSql={(query) =>
-							workspace.executeQuery(query, {
-								pushToHistory: false,
-								targetTabId: activeTab.id,
-								context: activeTab.resultContext,
-							})}
-						onApplyTableChanges={(context, changes) =>
-							workspace.applyTableChanges(context, changes)}
-						onFollowRelation={(hop) => workspace.followRelation(hop)}
-						onActivateRelationTrail={(index) =>
-							workspace.activateRelationTrail(index)}
-						durationMs={activeTab.result.durationMs ||
-							workspace.queryDurationMs}
-					/>
+					{@render resultsPane(activeTab)}
 				</div>
 			{/if}
 		</div>
@@ -144,30 +147,7 @@
 		</div>
 	{:else if activeTab}
 		<div class="flex-1 min-w-0 min-h-0 flex flex-col">
-			<ResultsPane
-				result={activeTab.result}
-				sqlError={activeTab.sqlError || workspace.globalError}
-				databaseType={workspace.connectionStatus.databaseType}
-				resultContext={activeTab.resultContext}
-				explorer={workspace.explorer}
-				relationTrail={activeTab.relationTrail ?? []}
-				loading={workspace.isRunningQuery}
-				refreshSql={activeTab.lastRunSql}
-				resultKey={`${activeTab.id}:${activeTab.lastRunSql}:${activeTab.result.durationMs}:${activeTab.result.rowCount}`}
-				runQuery={(sql) => workspace.runSessionQuery(sql)}
-				onRunSql={(query) =>
-					workspace.executeQuery(query, {
-						pushToHistory: false,
-						targetTabId: activeTab.id,
-						context: activeTab.resultContext,
-					})}
-				onApplyTableChanges={(context, changes) =>
-					workspace.applyTableChanges(context, changes)}
-				onFollowRelation={(hop) => workspace.followRelation(hop)}
-				onActivateRelationTrail={(index) =>
-					workspace.activateRelationTrail(index)}
-				durationMs={activeTab.result.durationMs || workspace.queryDurationMs}
-			/>
+			{@render resultsPane(activeTab)}
 		</div>
 	{:else}
 		<div class="flex-1 flex items-center justify-center p-8 bg-qc-bg">

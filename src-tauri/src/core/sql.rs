@@ -10,9 +10,14 @@ pub(crate) fn quote_ident_mysql(value: &str) -> String {
     format!("`{}`", value.replace('`', "``"))
 }
 
+pub(crate) fn quote_ident_mssql(value: &str) -> String {
+    format!("[{}]", value.replace(']', "]]"))
+}
+
 pub(crate) fn quote_ident_for(dialect: DatabaseType, value: &str) -> String {
     match dialect {
         DatabaseType::Mysql => quote_ident_mysql(value),
+        DatabaseType::Mssql => quote_ident_mssql(value),
         DatabaseType::Postgres | DatabaseType::Sqlite => quote_ident(value),
     }
 }

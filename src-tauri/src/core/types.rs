@@ -9,6 +9,7 @@ pub enum DatabaseType {
     Postgres,
     Mysql,
     Sqlite,
+    Mssql,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

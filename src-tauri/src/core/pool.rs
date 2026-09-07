@@ -8,6 +8,7 @@ pub enum Pool {
     Postgres(deadpool_postgres::Pool),
     Mysql(mysql_async::Pool),
     Sqlite(r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>),
+    Mssql(crate::adapters::mssql::MssqlPool),
 }
 
 pub fn create_pool(connection: &ConnectionInput) -> Result<Pool, DbError> {
@@ -15,6 +16,7 @@ pub fn create_pool(connection: &ConnectionInput) -> Result<Pool, DbError> {
         DatabaseType::Postgres => create_postgres_pool(connection).map(Pool::Postgres),
         DatabaseType::Mysql => create_mysql_pool(connection).map(Pool::Mysql),
         DatabaseType::Sqlite => create_sqlite_pool(connection).map(Pool::Sqlite),
+        DatabaseType::Mssql => crate::adapters::mssql::pool_from_input(connection).map(Pool::Mssql),
     }
 }
 
