@@ -3,6 +3,8 @@ mod commands;
 mod core;
 
 use crate::core::state::AppState;
+use tauri::Manager;
+
 pub fn run() {
     // Initialize tracing for core DB diagnostics
     let _ = tracing_subscriber::fmt()
@@ -22,6 +24,22 @@ pub fn run() {
 
     builder
         .manage(AppState::default())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(3000));
+                if let Some(window) = handle.get_webview_window("main") {
+                    let _ = window.show();
+                }
+            });
+            Ok(())
+        })
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                let _ = webview.show();
+                let _ = webview.set_focus();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::connection::connection_status,
             commands::connection::test_connection,

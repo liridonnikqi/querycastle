@@ -1,12 +1,32 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { EditorView } from 'codemirror';
-	import { Compartment, EditorState } from '@codemirror/state';
-	import { keymap, lineNumbers } from '@codemirror/view';
+	import { untrack } from 'svelte';
+	import {
+		autocompletion,
+		closeBrackets,
+		closeBracketsKeymap,
+		completionKeymap,
+	} from '@codemirror/autocomplete';
+	import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 	import { MSSQL, MySQL, PostgreSQL, SQLite, sql } from '@codemirror/lang-sql';
-	import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+	import {
+		HighlightStyle,
+		bracketMatching,
+		defaultHighlightStyle,
+		indentOnInput,
+		syntaxHighlighting,
+	} from '@codemirror/language';
+	import { Compartment, EditorState } from '@codemirror/state';
+	import {
+		EditorView,
+		drawSelection,
+		highlightActiveLine,
+		highlightActiveLineGutter,
+		highlightSpecialChars,
+		keymap,
+		lineNumbers,
+	} from '@codemirror/view';
 	import { tags } from '@lezer/highlight';
-	import { Play, Save, WandSparkles } from '@lucide/svelte';
+	import { Play, Save, WandSparkles } from '$lib/icons';
 	import { theme } from '$lib/theme.svelte';
 	import type { DatabaseExplorer, DatabaseType } from '$lib/rpc';
 	import { explorerToSqlSchema } from '$lib/utils/schema-objects';
@@ -33,9 +53,13 @@
 		databaseType?: DatabaseType;
 	} = $props();
 
-	let editorContainer = $state<HTMLDivElement | null>(null);
-	let editorView = $state<EditorView | null>(null);
+	let editorContainer = $state<HTMLDivElement | undefined>();
+	let editorView = $state.raw<EditorView | null>(null);
 	let applyingExternalUpdate = false;
+	let skipNextLanguageSync = true;
+	let skipNextThemeSync = true;
+	let selectedQuery = $state('');
+	const hasSelection = $derived(selectedQuery.length > 0);
 	const languageCompartment = new Compartment();
 	const themeCompartment = new Compartment();
 	const highlightCompartment = new Compartment();
@@ -100,13 +124,10 @@
 		});
 	}
 
-	function getSelectedQuery() {
-		if (!editorView) return '';
-		const selection = editorView.state.selection.main;
+	function selectedQueryFrom(state: EditorState) {
+		const selection = state.selection.main;
 		if (selection.from === selection.to) return '';
-		return editorView.state.doc
-			.sliceString(selection.from, selection.to)
-			.trim();
+		return state.doc.sliceString(selection.from, selection.to).trim();
 	}
 
 	function lightEditorTheme() {
@@ -118,11 +139,15 @@
 					color: '#18181b',
 					fontSize: '13px',
 				},
+				'.cm-scroller': { backgroundColor: '#ffffff' },
 				'.cm-content': {
-					fontFamily: '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace',
+					fontFamily:
+						'"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace',
 					fontSize: '13px',
 					lineHeight: '1.6',
 					padding: '10px 0',
+					caretColor: '#18181b',
+					backgroundColor: 'transparent',
 				},
 				'.cm-gutters': {
 					backgroundColor: '#ffffff',
@@ -139,9 +164,20 @@
 					minWidth: '2.4rem',
 					padding: '0 10px 0 8px',
 				},
-				'.cm-activeLineGutter': { backgroundColor: '#f4f4f5', color: '#18181b' },
-				'.cm-activeLine': { backgroundColor: '#f4f4f5' },
+				'.cm-activeLine': { backgroundColor: 'rgba(24, 24, 27, 0.045)' },
+				'.cm-activeLineGutter': {
+					backgroundColor: 'rgba(24, 24, 27, 0.045)',
+					color: '#18181b',
+				},
 				'.cm-cursor': { borderLeftColor: '#18181b', borderLeftWidth: '2px' },
+				'.cm-selectionBackground': {
+					backgroundColor: 'rgba(37, 99, 235, 0.22)',
+				},
+				'&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground':
+					{
+						backgroundColor: 'rgba(37, 99, 235, 0.28)',
+					},
+				'.cm-content ::selection': { backgroundColor: 'transparent' },
 				'.cm-tooltip': {
 					backgroundColor: '#ffffff',
 					border: '1px solid #e4e4e7',
@@ -169,7 +205,7 @@
 					lineHeight: '1.6',
 					padding: '10px 0',
 					caretColor: 'var(--qc-fg)',
-					backgroundColor: 'var(--qc-bg)',
+					backgroundColor: 'transparent',
 				},
 				'.cm-gutters': {
 					backgroundColor: 'var(--qc-bg)',
@@ -186,18 +222,25 @@
 					minWidth: '2.4rem',
 					padding: '0 10px 0 8px',
 				},
-				'.cm-activeLine': { backgroundColor: 'var(--qc-panel)' },
+				'.cm-activeLine': {
+					backgroundColor: 'color-mix(in srgb, var(--qc-fg) 4.5%, transparent)',
+				},
 				'.cm-activeLineGutter': {
-					backgroundColor: 'var(--qc-panel)',
+					backgroundColor: 'color-mix(in srgb, var(--qc-fg) 4.5%, transparent)',
 					color: 'var(--qc-fg)',
 				},
 				'.cm-cursor': {
 					borderLeftColor: 'var(--qc-fg)',
 					borderLeftWidth: '2px',
 				},
-				'.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
+				'.cm-selectionBackground': {
 					backgroundColor: 'var(--qc-select-row)',
 				},
+				'&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground':
+					{
+						backgroundColor: 'var(--qc-select-row)',
+					},
+				'.cm-content ::selection': { backgroundColor: 'transparent' },
 				'.cm-tooltip': {
 					backgroundColor: 'var(--qc-elevated)',
 					border: '1px solid var(--qc-border)',
@@ -219,110 +262,216 @@
 
 	function runEditorAction() {
 		if (disabled || running) return;
-		const selected = getSelectedQuery();
-		if (selected.length > 0) {
-			onRun(selected);
+		if (selectedQuery.length > 0) {
+			onRun(selectedQuery);
 			return;
 		}
 		onRun();
 	}
 
-	onMount(() => {
-		if (!editorContainer) return;
-		const isDark = theme.value === 'dark';
+	$effect(() => {
+		const parent = editorContainer;
+		if (!parent) return;
 
-		const state = EditorState.create({
-			doc: value,
-			extensions: [
-				EditorView.lineWrapping,
-				lineNumbers({
-					formatNumber: (lineNo) => lineNo.toString(),
-				}),
-				languageCompartment.of(sqlLanguageExtension()),
-				highlightCompartment.of(editorHighlight(isDark)),
-				themeCompartment.of(editorThemeExtensions(isDark)),
-				keymap.of([
-					{ key: 'Mod-Enter', run: () => (runEditorAction(), true) },
-					{ key: 'Mod-s', run: () => (onSaveQuery(), true) },
-					{ key: 'Shift-Alt-f', run: () => (onFormatQuery(), true) },
-				]),
-				EditorView.updateListener.of((update) => {
-					if (!update.docChanged || applyingExternalUpdate) return;
-					onChange(update.state.doc.toString());
-				}),
-			],
+		const view = untrack(() => {
+			const isDark = theme.value === 'dark';
+			const state = EditorState.create({
+				doc: value,
+				extensions: [
+					EditorView.lineWrapping,
+					lineNumbers(),
+					highlightSpecialChars(),
+					history(),
+					drawSelection(),
+					highlightActiveLine(),
+					highlightActiveLineGutter(),
+					indentOnInput(),
+					bracketMatching(),
+					closeBrackets(),
+					autocompletion(),
+					syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+					languageCompartment.of(sqlLanguageExtension()),
+					highlightCompartment.of(editorHighlight(isDark)),
+					themeCompartment.of(editorThemeExtensions(isDark)),
+					keymap.of([
+						{ key: 'Mod-Enter', run: () => (runEditorAction(), true) },
+						{ key: 'Mod-s', run: () => (onSaveQuery(), true) },
+						{ key: 'Shift-Alt-f', run: () => (onFormatQuery(), true) },
+						indentWithTab,
+						...closeBracketsKeymap,
+						...defaultKeymap,
+						...historyKeymap,
+						...completionKeymap,
+					]),
+					EditorView.updateListener.of((update) => {
+						if (update.selectionSet || update.docChanged) {
+							selectedQuery = selectedQueryFrom(update.state);
+						}
+						if (!update.docChanged || applyingExternalUpdate) return;
+						onChange(update.state.doc.toString());
+					}),
+				],
+			});
+			return new EditorView({ state, parent });
 		});
 
-		editorView = new EditorView({ state, parent: editorContainer });
+		skipNextLanguageSync = true;
+		skipNextThemeSync = true;
+		editorView = view;
+		selectedQuery = selectedQueryFrom(view.state);
 		return () => {
-			editorView?.destroy();
-			editorView = null;
+			view.destroy();
+			if (editorView === view) editorView = null;
+			selectedQuery = '';
 		};
 	});
 
 	$effect(() => {
-		if (!editorView) return;
-		const current = editorView.state.doc.toString();
-		if (current === value) return;
-
-		applyingExternalUpdate = true;
-		editorView.dispatch({
-			changes: { from: 0, to: current.length, insert: value },
+		const view = editorView;
+		if (!view) return;
+		const next = value;
+		untrack(() => {
+			const current = view.state.doc.toString();
+			if (current === next) return;
+			applyingExternalUpdate = true;
+			try {
+				view.dispatch({
+					changes: { from: 0, to: current.length, insert: next },
+				});
+			} finally {
+				applyingExternalUpdate = false;
+			}
 		});
-		applyingExternalUpdate = false;
 	});
 
 	$effect(() => {
-		if (!editorView) return;
 		explorer;
 		databaseType;
-		editorView.dispatch({
-			effects: languageCompartment.reconfigure(sqlLanguageExtension()),
+		const view = editorView;
+		if (!view) return;
+		if (skipNextLanguageSync) {
+			skipNextLanguageSync = false;
+			return;
+		}
+		untrack(() => {
+			view.dispatch({
+				effects: languageCompartment.reconfigure(sqlLanguageExtension()),
+			});
 		});
 	});
 
 	$effect(() => {
-		if (!editorView) return;
 		const isDark = theme.value === 'dark';
-		editorView.dispatch({
-			effects: [
-				themeCompartment.reconfigure(editorThemeExtensions(isDark)),
-				highlightCompartment.reconfigure(editorHighlight(isDark)),
-			],
+		const view = editorView;
+		if (!view) return;
+		if (skipNextThemeSync) {
+			skipNextThemeSync = false;
+			return;
+		}
+		untrack(() => {
+			view.dispatch({
+				effects: [
+					themeCompartment.reconfigure(editorThemeExtensions(isDark)),
+					highlightCompartment.reconfigure(editorHighlight(isDark)),
+				],
+			});
 		});
 	});
 </script>
 
 <div class="flex-1 flex flex-col min-h-0 bg-qc-bg">
 	<div
-		class="flex items-center justify-between px-3 h-10 border-b border-qc-border bg-qc-bg shrink-0"
+		class="h-10 px-2 border-b border-qc-border bg-qc-bg shrink-0 flex items-center"
 	>
-		<div class="flex items-center gap-1.5">
+		<button
+			onclick={runEditorAction}
+			disabled={disabled || running}
+			title={hasSelection
+				? 'Run the selected SQL only (Ctrl+Enter)'
+				: running
+					? 'Running'
+					: 'Run query (Ctrl+Enter)'}
+			class="btn-primary h-6 px-2 text-[12px] font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1 shrink-0"
+		>
+			<Play size={14} />Run
+		</button>
+		<div class="ml-auto flex items-center gap-0.5">
 			<button
-				onclick={runEditorAction}
-				disabled={disabled || running}
-				class="flex items-center gap-1.5 btn-primary disabled:opacity-60 h-7 px-2.5 text-[12px] font-medium"
-			>
-				<Play size={14} />
-				<span>{running ? 'Running...' : 'Run'}</span>
-			</button>
-			<button
+				type="button"
 				onclick={onFormatQuery}
-				class="flex items-center gap-1.5 btn-secondary h-7 px-2.5 text-[12px] font-medium"
+				class="toolbar-icon"
+				title="Format SQL (Shift+Alt+F)"
+				aria-label="Format SQL"
 			>
 				<WandSparkles size={14} />
-				<span>Format</span>
+			</button>
+			<button
+				type="button"
+				onclick={onSaveQuery}
+				class="toolbar-icon"
+				title="Save (Ctrl+S)"
+				aria-label="Save query"
+			>
+				<Save size={14} />
 			</button>
 		</div>
-		<button
-			onclick={onSaveQuery}
-			class="w-7 h-7 text-qc-muted hover:text-qc-fg hover:bg-qc-hover rounded-md flex items-center justify-center"
-			title="Save (Ctrl+S)"
-		>
-			<Save size={16} />
-		</button>
 	</div>
-	<div class="flex-1 min-h-0 overflow-hidden">
-		<div bind:this={editorContainer} class="h-full"></div>
+	<div class="flex-1 min-h-0 overflow-hidden relative">
+		<div bind:this={editorContainer} class="h-full min-h-0"></div>
+		<div
+			class={`qc-run-sel ${hasSelection ? 'is-on' : ''}`}
+			aria-hidden={!hasSelection}
+		>
+			<button
+				type="button"
+				onclick={runEditorAction}
+				disabled={disabled || running}
+				tabindex={hasSelection ? 0 : -1}
+				class="qc-run-sel-btn btn-secondary h-7 px-2.5 text-[12px] font-medium flex items-center gap-1.5"
+			>
+				<Play size={14} />
+				<span>Run selection</span>
+				<span class="font-mono text-[10px] text-qc-muted tracking-wide">Ctrl+Enter</span>
+			</button>
+		</div>
 	</div>
 </div>
+
+<style>
+	.qc-run-sel {
+		position: absolute;
+		left: 10px;
+		bottom: 10px;
+		z-index: 6;
+		opacity: 0;
+		transform: translateY(8px) scale(0.96);
+		pointer-events: none;
+		transition:
+			opacity 180ms cubic-bezier(0.16, 1, 0.3, 1),
+			transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+	}
+
+	.qc-run-sel.is-on {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+		pointer-events: auto;
+	}
+
+	.qc-run-sel-btn {
+		box-shadow:
+			inset 0 1px 0 0 var(--qc-btn-highlight),
+			0 0 0 1px var(--qc-btn-ring),
+			0 8px 20px rgba(0, 0, 0, 0.28);
+	}
+
+	.qc-run-sel-btn:not(:disabled):active {
+		transform: none;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.qc-run-sel {
+			transition: opacity 80ms linear;
+			transform: none;
+		}
+	}
+</style>

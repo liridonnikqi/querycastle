@@ -2,6 +2,7 @@
   import "../app.css";
   import { onMount } from 'svelte';
   import type { Snippet } from 'svelte';
+  import IconContext from 'phosphor-svelte/lib/IconContext';
 
   let { children }: { children: Snippet } = $props();
 
@@ -50,4 +51,6 @@
   });
 </script>
 
-{@render children()}
+<IconContext values={{ weight: 'bold', color: 'currentColor' }}>
+  {@render children()}
+</IconContext>

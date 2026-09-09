@@ -9,7 +9,7 @@
 		Link2,
 		ToggleLeft,
 		Type,
-	} from '@lucide/svelte';
+	} from '$lib/icons';
 	import type { GridColumnMeta } from '$lib/utils/grid-editors';
 
 	let { meta }: { meta: GridColumnMeta | undefined } = $props();
@@ -35,5 +35,5 @@
 </script>
 
 <span class="inline-flex items-center" title={label}>
-	<Icon size={11} strokeWidth={1.75} class="shrink-0 text-qc-muted" />
+	<Icon size={12} class="shrink-0 text-qc-muted" />
 </span>

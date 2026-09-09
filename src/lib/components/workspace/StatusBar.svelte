@@ -4,7 +4,7 @@
 	import { getVersion } from '@tauri-apps/api/app';
 	import { check } from '@tauri-apps/plugin-updater';
 	import { openUrl } from '@tauri-apps/plugin-opener';
-	import { Download, RefreshCw, Check, AlertCircle, Loader2 } from '@lucide/svelte';
+	import { Download, RefreshCw, Check, AlertCircle, Loader2 } from '$lib/icons';
 	import GithubIcon from '$lib/components/ui/GithubIcon.svelte';
 	import { downloadAndInstallUpdate } from '$lib/updater';
 	import { toast } from '$lib/stores/toast.svelte';

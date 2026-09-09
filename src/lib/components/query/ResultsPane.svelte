@@ -15,7 +15,7 @@
 		Timer,
 		Trash2,
 		X,
-	} from '@lucide/svelte';
+	} from '$lib/icons';
 	import type {
 		ApplyTableChangesResult,
 		DatabaseExplorer,

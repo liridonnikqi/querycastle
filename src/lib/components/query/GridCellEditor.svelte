@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Check, ChevronsUpDown, Search } from '@lucide/svelte';
+	import { Check, ChevronsUpDown, Search } from '$lib/icons';
 	import type { FkOption } from '$lib/utils/fk-lookup';
 	import type { GridColumnKind } from '$lib/utils/grid-editors';
 

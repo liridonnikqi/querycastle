@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Search, Table2, Columns2, KeyRound, ChevronRight, X, Braces, Hash, Play, Eye, Layers, Zap } from '@lucide/svelte';
+	import { Search, Table2, Columns2, KeyRound, ChevronRight, X, Braces, Hash, Play, Eye, Layers, Zap } from '$lib/icons';
 	import type { DatabaseExplorer, DatabaseRoutine, DatabaseSequence } from '$lib/rpc';
 	import { routineSignature, schemaRoutines, schemaSequences, tableIndexes, tableTriggers } from '$lib/utils/schema-objects';
 

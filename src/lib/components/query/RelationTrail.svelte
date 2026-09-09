@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ChevronRight } from '@lucide/svelte';
+	import { ChevronRight } from '$lib/icons';
 	import { buildTrailCrumbs } from '$lib/utils/relation-sql';
 	import type { RelationHop } from '$lib/utils/workspace';
 

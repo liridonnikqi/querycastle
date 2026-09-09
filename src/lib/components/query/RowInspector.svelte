@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Trash2, X } from '@lucide/svelte';
+	import { Trash2, X } from '$lib/icons';
 	import type { GridColumnMeta } from '$lib/utils/grid-editors';
 	import { displayCellText } from '$lib/utils/grid-editors';
 	import { HIDDEN_ROW_ID_COLUMN } from '$lib/utils/dialect';

@@ -511,6 +511,14 @@ html[data-theme='light'] .hub-keep-ember {
 	transform: none;
 }
 
+svg[viewBox='0 0 256 256'],
+svg[viewBox='0 0 24 24'] {
+	display: block;
+	overflow: visible;
+	flex-shrink: 0;
+	shape-rendering: geometricPrecision;
+}
+
 .btn-cluster {
 	--qc-btn-base: var(--qc-btn-neutral);
 	--qc-btn-from: var(--qc-btn-neutral-from);
@@ -1140,7 +1148,29 @@ button.rail-btn:not(:disabled):active {
 .cm-editor,
 .cm-editor .cm-scroller,
 .cm-editor .cm-gutters {
+	height: 100%;
 	background-color: var(--qc-bg);
+}
+
+.cm-editor {
+	outline: none;
+}
+
+.cm-editor .cm-scroller {
+	overflow: auto;
+	font-family: var(--font-mono);
+}
+
+.cm-editor .cm-content {
+	background-color: transparent;
+}
+
+.cm-editor .cm-content ::selection {
+	background: transparent;
+}
+
+.cm-editor .cm-selectionLayer .cm-selectionBackground {
+	background-color: var(--qc-select-row);
 }
 
 .cm-editor .cm-lineNumbers .cm-gutterElement {

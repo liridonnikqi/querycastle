@@ -10,7 +10,7 @@
 		Search,
 		Table2,
 		X,
-	} from '@lucide/svelte';
+	} from '$lib/icons';
 	import type { ConnectionStatus, DatabaseExplorer } from '$lib/rpc';
 	import type { TableAction } from '$lib/utils/workspace';
 	import { theme } from '$lib/theme.svelte';	import {

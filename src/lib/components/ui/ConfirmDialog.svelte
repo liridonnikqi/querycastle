@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { fade, scale } from 'svelte/transition';
-	import { X, AlertTriangle } from '@lucide/svelte';
+	import { X, AlertTriangle } from '$lib/icons';
 
 	let {
 		open,

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { LogOut, Search } from '@lucide/svelte';
+	import { LogOut, Search } from '$lib/icons';
 	import { isTauri } from '@tauri-apps/api/core';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import type { ConnectionStatus } from '$lib/rpc';

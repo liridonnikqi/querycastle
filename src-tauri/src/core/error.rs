@@ -77,29 +77,42 @@ impl From<DbError> for StructuredDbError {
     }
 }
 
+fn missing_database_message(server_message: &str) -> String {
+    format!(
+        "{server_message}\nIt may have been dropped. Edit this connection and choose a database that still exists on the server."
+    )
+}
+
+fn from_pg_db_error(db_err: &tokio_postgres::error::DbError) -> DbError {
+    let code_str = db_err.code().code();
+    let mut lines = vec![format!("{} (SQLSTATE {})", db_err.message(), code_str)];
+    if let Some(detail) = db_err.detail() {
+        lines.push(format!("Detail: {detail}"));
+    }
+    if let Some(hint) = db_err.hint() {
+        lines.push(format!("Hint: {hint}"));
+    }
+    if let Some(pos) = db_err.position() {
+        lines.push(format!("Position: {pos:?}"));
+    }
+    let msg = lines.join("\n");
+    let code = Some(code_str.to_string());
+    if code_str == "28P01" || code_str == "28000" || code_str == "28P00" {
+        return DbError::Auth { message: msg };
+    }
+    if code_str == "3D000" {
+        return DbError::NotFound(missing_database_message(&msg));
+    }
+    if code_str.starts_with("08") {
+        return DbError::Connection { message: msg, code };
+    }
+    DbError::Query { message: msg, code }
+}
+
 pub fn sanitize_pg_error_to_db_error(err: tokio_postgres::Error) -> DbError {
     use std::error::Error;
     if let Some(db_err) = err.as_db_error() {
-        let mut lines = vec![format!("{} (SQLSTATE {})", db_err.message(), db_err.code().code())];
-        if let Some(detail) = db_err.detail() {
-            lines.push(format!("Detail: {detail}"));
-        }
-        if let Some(hint) = db_err.hint() {
-            lines.push(format!("Hint: {hint}"));
-        }
-        if let Some(pos) = db_err.position() {
-            lines.push(format!("Position: {pos:?}"));
-        }
-        let msg = lines.join("\n");
-        let code = Some(db_err.code().code().to_string());
-        let code_str = db_err.code().code();
-        if code_str == "28P01" || code_str == "28000" || code_str == "28P00" {
-            return DbError::Auth { message: msg };
-        }
-        if code_str.starts_with("08") {
-            return DbError::Connection { message: msg, code };
-        }
-        return DbError::Query { message: msg, code };
+        return from_pg_db_error(db_err);
     }
     let base = err.to_string();
     if base.trim().eq_ignore_ascii_case("db error") {
@@ -110,6 +123,10 @@ pub fn sanitize_pg_error_to_db_error(err: tokio_postgres::Error) -> DbError {
             source = cause.source();
         }
         if !causes.is_empty() {
+            let joined = causes.join("\n");
+            if joined.to_lowercase().contains("does not exist") {
+                return DbError::NotFound(missing_database_message(&joined));
+            }
             return DbError::Internal(format!("Database error\nCaused by: {}", causes.join("\nCaused by: ")));
         }
     }
@@ -129,7 +146,7 @@ pub fn sanitize_mysql_error_to_db_error(err: mysql_async::Error) -> DbError {
         return DbError::Timeout { message: msg };
     }
     if lower.contains("unknown database") || lower.contains("doesn't exist") {
-        return DbError::NotFound(msg);
+        return DbError::NotFound(missing_database_message(&msg));
     }
     if lower.contains("connection") || lower.contains("can't connect") {
         return DbError::Connection { message: msg.clone(), code: None };
@@ -147,7 +164,7 @@ pub fn sanitize_mssql_error_to_db_error(err: tiberius::error::Error) -> DbError 
         return DbError::Timeout { message: msg };
     }
     if lower.contains("cannot open database") || lower.contains("not found") {
-        return DbError::NotFound(msg);
+        return DbError::NotFound(missing_database_message(&msg));
     }
     if lower.contains("unable to complete login") || lower.contains("connection") {
         return DbError::Connection { message: msg, code: None };
@@ -190,7 +207,39 @@ impl From<tiberius::error::Error> for DbError {
 
 impl From<deadpool_postgres::PoolError> for DbError {
     fn from(err: deadpool_postgres::PoolError) -> Self {
-        DbError::connection(format!("Pool get failed: {err}"))
+        match err {
+            deadpool_postgres::PoolError::Backend(pg_err) => sanitize_pg_error_to_db_error(pg_err),
+            deadpool_postgres::PoolError::Timeout(kind) => {
+                let when = match kind {
+                    deadpool::managed::TimeoutType::Wait => {
+                        "waiting for a free PostgreSQL connection"
+                    }
+                    deadpool::managed::TimeoutType::Create => "connecting to PostgreSQL",
+                    deadpool::managed::TimeoutType::Recycle => {
+                        "reusing a PostgreSQL connection"
+                    }
+                };
+                DbError::Timeout {
+                    message: format!("Timed out while {when}"),
+                }
+            }
+            deadpool_postgres::PoolError::Closed => {
+                DbError::connection("The PostgreSQL connection pool is closed")
+            }
+            deadpool_postgres::PoolError::NoRuntimeSpecified => {
+                DbError::internal("PostgreSQL pool is missing a runtime")
+            }
+            other => {
+                if let Some(source) = std::error::Error::source(&other) {
+                    if let Some(pg_err) = source.downcast_ref::<tokio_postgres::Error>() {
+                        if let Some(db_err) = pg_err.as_db_error() {
+                            return from_pg_db_error(db_err);
+                        }
+                    }
+                }
+                DbError::connection(other.to_string())
+            }
+        }
     }
 }
 
@@ -212,5 +261,18 @@ impl From<r2d2::Error> for DbError {
 impl From<tokio::task::JoinError> for DbError {
     fn from(err: tokio::task::JoinError) -> Self {
         DbError::internal(format!("SQLite task failed: {err}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_database_message_explains_the_drop() {
+        let msg = missing_database_message("database \"app\" does not exist (SQLSTATE 3D000)");
+        assert!(msg.contains("app"));
+        assert!(msg.contains("dropped"));
+        assert!(msg.contains("choose a database"));
     }
 }

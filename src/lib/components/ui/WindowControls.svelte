@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Maximize2, Minimize2, Minus, X } from '@lucide/svelte';
+	import { Maximize2, Minimize2, Minus, X } from '$lib/icons';
 	import { isTauri } from '@tauri-apps/api/core';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 

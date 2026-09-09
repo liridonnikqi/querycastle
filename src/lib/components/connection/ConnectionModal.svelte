@@ -1,13 +1,18 @@
 <script lang="ts">
-	import { X } from '@lucide/svelte';
+	import { fade, scale } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
+	import { Loader2, X } from '$lib/icons';
 	import type { ConnectionInput } from '$lib/rpc';
 	import DatabaseIcon from '$lib/components/ui/DatabaseIcon.svelte';
 	import ConnectionFields from '$lib/components/connection/ConnectionFields.svelte';
+	import ConnectionStatusBanner from '$lib/components/connection/ConnectionStatusBanner.svelte';
 	import {
 		DATABASE_ENGINES,
+		connectionStringPlaceholder,
 		defaultsForType,
 		generateConnectionString,
 		withDatabaseType,
+		withParsedConnectionString,
 	} from '$lib/utils/connection';
 	import { engineDisplayName } from '$lib/utils/dialect';
 
@@ -44,15 +49,13 @@
 	} = $props();
 
 	const engineLabel = $derived(engineDisplayName(connectionForm.databaseType));
-	const isSqlite = $derived(connectionForm.databaseType === 'sqlite');
+	const busy = $derived(isTestingConnection || isConnecting);
 
-	let step = $state(1);
 	let wasVisible = $state(false);
 	let nameInput: HTMLInputElement | null = $state(null);
 
 	$effect(() => {
 		if (visible && !wasVisible) {
-			step = editing ? 2 : 1;
 			if (!editing) {
 				const freshForm = defaultsForType('postgres');
 				onConnectionFormChange(freshForm);
@@ -63,16 +66,16 @@
 	});
 
 	$effect(() => {
-		if (visible && step === 2) {
-			const node = nameInput;
-			if (node) queueMicrotask(() => node.focus());
-		}
+		if (!visible) return;
+		const node = nameInput;
+		if (node) queueMicrotask(() => node.focus());
 	});
 
 	function changeDatabaseType(nextType: ConnectionInput['databaseType']) {
 		const nextForm = withDatabaseType(connectionForm, nextType);
 		onConnectionFormChange(nextForm);
 		onConnectionStringChange(generateConnectionString(nextForm));
+		onModeChange('fields');
 	}
 
 	function handleFormChange(next: ConnectionInput) {
@@ -81,16 +84,25 @@
 
 	function handleStringChange(value: string) {
 		onConnectionStringChange(value);
+		const parsed = withParsedConnectionString(connectionForm, value);
+		if (parsed) onConnectionFormChange(parsed);
 		onModeChange(value.trim() ? 'string' : 'fields');
 	}
 
 	function handleBackdropClick(event: MouseEvent) {
+		if (busy) return;
 		if (event.target === event.currentTarget) onClose();
 	}
 
 	function handleWindowKeydown(event: KeyboardEvent) {
 		if (!visible) return;
-		if (event.key === 'Escape') onClose();
+		if (event.key === 'Escape' && !busy) onClose();
+	}
+
+	function handleSubmit(event: SubmitEvent) {
+		event.preventDefault();
+		if (busy) return;
+		onSaveAndConnect();
 	}
 </script>
 
@@ -100,81 +112,58 @@
 	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions: backdrop click mirrors Cancel; Escape is handled globally above -->
 	<div
 		role="presentation"
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[2px] p-4 cursor-default"
+		class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-[1px] p-4 cursor-default"
 		onclick={handleBackdropClick}
+		transition:fade={{ duration: 120 }}
 	>
 		<div
-			class="w-full max-w-[560px] overflow-hidden rounded-lg border border-qc-border bg-qc-elevated shadow-[0_24px_60px_rgba(0,0,0,0.35)]"
+			class="w-full max-w-[520px] max-h-[min(720px,90vh)] flex flex-col overflow-hidden rounded-xl border border-qc-border bg-qc-elevated shadow-[0_24px_60px_rgba(0,0,0,0.35)]"
 			role="dialog"
 			aria-modal="true"
-			aria-label={editing ? `Edit ${engineLabel} connection` : `New ${engineLabel} connection`}
+			aria-label={editing ? `Edit ${engineLabel} connection` : 'New connection'}
+			transition:scale={{ start: 0.98, duration: 160, easing: cubicOut }}
 		>
-			<div class="border-b border-qc-border bg-qc-elevated px-4 py-3 text-qc-fg">
-				<div class="flex items-center justify-between gap-3">
-					<div class="flex min-w-0 items-center gap-2.5">
-						<span
-							class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-qc-hover text-qc-subtle"
-						>
-							<DatabaseIcon type={connectionForm.databaseType} size={18} />
-						</span>
-						<div class="min-w-0">
-							<h3 class="truncate text-[13px] font-semibold text-qc-fg">
-								{editing
-									? `Edit ${engineLabel} Connection`
-									: `New ${engineLabel} Connection`}
-							</h3>
-							<div class="mt-1 flex items-center gap-1 text-[11px]">
-								<span
-									class={`rounded-full px-2 py-0.5 ${step === 1 ? 'bg-qc-hover font-medium text-qc-fg' : 'text-qc-muted'}`}
-									>1. Database</span
-								>
-								<span
-									class={`rounded-full px-2 py-0.5 ${step === 2 ? 'bg-qc-hover font-medium text-qc-fg' : 'text-qc-muted'}`}
-									>2. Details</span
-								>
-							</div>
-						</div>
-					</div>
-					<button
-						aria-label="Close modal"
-						title="Close"
-						onclick={onClose}
-						class="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-qc-muted hover:bg-qc-hover hover:text-qc-fg"
-					>
-						<X size={16} />
-					</button>
+			<div
+				class="h-10 px-4 border-b border-qc-border flex items-center justify-between gap-3 bg-qc-panel shrink-0"
+			>
+				<div class="flex min-w-0 items-center gap-2.5">
+					<DatabaseIcon type={connectionForm.databaseType} size={16} />
+					<h3 class="truncate text-[13px] font-semibold text-qc-fg">
+						{editing ? `Edit ${connectionForm.name || engineLabel}` : 'New connection'}
+					</h3>
 				</div>
+				<button
+					type="button"
+					aria-label="Close modal"
+					title="Close"
+					onclick={onClose}
+					disabled={busy}
+					class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-qc-muted hover:bg-qc-hover hover:text-qc-fg disabled:opacity-50"
+				>
+					<X size={16} />
+				</button>
 			</div>
 
-			<div class="space-y-3 p-4 text-[13px] bg-qc-elevated text-qc-fg">
-				{#if step === 1}
+			<form
+				class="flex min-h-0 flex-1 flex-col"
+				onsubmit={handleSubmit}
+			>
+				<div class="min-h-0 flex-1 overflow-y-auto px-4 py-4 space-y-4">
 					<div>
-						<div class="mb-2 flex items-center justify-between">
-							<span
-								class="text-[10px] font-semibold uppercase tracking-wider text-qc-muted"
-								>Database Type</span
-							>
-							<span class="text-[11px] text-qc-muted">Choose an engine</span>
-						</div>
-						<div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
+						<div class="text-[11px] font-medium text-qc-subtle mb-2">Database</div>
+						<div class="grid grid-cols-2 gap-2">
 							{#each DATABASE_ENGINES as database (database.value)}
 								<button
 									type="button"
 									title={database.label}
 									onclick={() => changeDatabaseType(database.value)}
-									class={`relative flex min-w-0 flex-col items-center justify-center gap-1 rounded-md border px-2 py-2 text-center transition-colors ${
-										connectionForm.databaseType === database.value
-											? 'border-qc-fg bg-qc-hover text-qc-fg'
-											: 'border-qc-border bg-qc-panel text-qc-subtle hover:border-qc-muted hover:bg-qc-hover'
+									class={`provider-tile h-11 px-3 rounded-sm border border-qc-border bg-qc-panel flex items-center gap-2.5 text-left ${
+										connectionForm.databaseType === database.value ? 'selected' : ''
 									}`}
 								>
-									<span
-										class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-qc-elevated"
-									>
-										<DatabaseIcon type={database.value} size={20} />
-									</span>
+									<DatabaseIcon type={database.value} size={18} />
 									<span class="min-w-0">
-										<span class="block truncate text-[12px] font-semibold"
+										<span class="block truncate text-[12px] font-medium"
 											>{database.label}</span
 										>
 										<span class="block text-[10px] text-qc-muted"
@@ -185,95 +174,78 @@
 							{/each}
 						</div>
 					</div>
-				{:else}
-					<div
-						class="flex items-center gap-3 rounded-md border border-qc-border bg-qc-panel px-3 py-2"
-					>
-						<DatabaseIcon type={connectionForm.databaseType} size={22} />
-						<div class="min-w-0">
-							<div class="text-[12px] font-semibold text-qc-fg">{engineLabel}</div>
-							<div class="text-[11px] text-qc-muted">
-								{isSqlite
-									? 'Connect to a local database file'
-									: 'Connect to a database server'}
-							</div>
-						</div>
-						<button
-							type="button"
-							onclick={() => (step = 1)}
-							class="ml-auto text-[11px] font-medium text-qc-muted hover:text-qc-fg"
-							>Change</button
+
+					<div>
+						<label class="text-[11px] font-medium text-qc-subtle" for="modal-connection-string"
+							>Connection string</label
 						>
+						<input
+							id="modal-connection-string"
+							value={connectionStringInput}
+							oninput={(event) => handleStringChange(event.currentTarget.value)}
+							class="field-input w-full h-9 px-3 mt-1.5 text-[13px] font-mono placeholder:text-qc-muted"
+							placeholder={connectionStringPlaceholder(connectionForm.databaseType)}
+						/>
+						<p class="mt-1.5 text-[11px] text-qc-muted">
+							Paste a string to auto-fill, or enter the details below.
+						</p>
 					</div>
 
 					<ConnectionFields
+						variant="hub"
 						form={connectionForm}
 						connectionString={connectionStringInput}
+						showString={false}
+						passwordStored={editing}
 						bind:nameInput
 						onFormChange={handleFormChange}
 						onStringChange={handleStringChange}
 					/>
-				{/if}
 
-				{#if testConnectionMessage}
-					<div
-						class={`rounded-md border px-3 py-2 text-xs ${
-							testConnectionOk
-								? 'border-qc-border bg-qc-panel text-qc-subtle'
-								: 'border-qc-danger/30 bg-qc-danger/10 text-qc-danger'
-						}`}
-					>
-						{testConnectionMessage}
-					</div>
-				{/if}
-			</div>
+					<ConnectionStatusBanner
+						message={testConnectionMessage}
+						ok={testConnectionOk}
+					/>
+				</div>
 
-			<div
-				class="flex flex-wrap items-center justify-between gap-2 border-t border-qc-border bg-qc-panel px-4 py-3"
-			>
-				{#if step === 2}
+				<div
+					class="flex items-center justify-end gap-2 border-t border-qc-border bg-qc-panel px-4 py-3 shrink-0"
+				>
 					<button
 						type="button"
-						onclick={() => (step = 1)}
-						class="btn-secondary h-8 px-3 text-[13px] font-medium">Back</button
+						onclick={onClose}
+						disabled={busy}
+						class="btn-secondary h-8 px-3 text-[12px] font-medium disabled:opacity-60"
 					>
-				{:else}
-					<span></span>
-				{/if}
-				<div class="flex flex-wrap items-center justify-end gap-2">
-					<button onclick={onClose} class="btn-secondary h-8 px-3 text-[13px] font-medium">
 						Cancel
 					</button>
-					{#if step === 1}
-						<button
-							type="button"
-							onclick={() => (step = 2)}
-							class="h-8 btn-primary px-3 text-[13px] font-medium"
-						>
-							Next
-						</button>
-					{:else}
-						<button
-							onclick={onTest}
-							disabled={isTestingConnection || isConnecting}
-							class="btn-secondary h-8 px-3 text-[13px] font-medium disabled:opacity-60"
-						>
-							{isTestingConnection ? 'Testing...' : 'Test'}
-						</button>
-						<button
-							onclick={onSaveAndConnect}
-							disabled={isTestingConnection || isConnecting}
-							class="h-8 btn-primary px-3 text-[13px] font-medium disabled:opacity-60"
-						>
-							{isConnecting
-								? 'Connecting...'
-								: editing
-									? 'Save Changes and Connect'
-									: 'Save and Connect'}
-						</button>
-					{/if}
+					<button
+						type="button"
+						onclick={onTest}
+						disabled={busy}
+						class="btn-secondary h-8 px-3 text-[12px] font-medium inline-flex items-center gap-1.5 disabled:opacity-60"
+					>
+						{#if isTestingConnection}
+							<Loader2 size={13} class="animate-spin" />
+							Testing…
+						{:else}
+							Test
+						{/if}
+					</button>
+					<button
+						type="submit"
+						disabled={busy}
+						class="btn-primary h-8 px-3 text-[12px] font-medium inline-flex items-center gap-1.5 disabled:opacity-60"
+					>
+						{#if isConnecting}
+							<Loader2 size={13} class="animate-spin" />
+							Connecting…
+						{:else}
+							Save and connect
+						{/if}
+					</button>
 				</div>
-			</div>
+			</form>
 		</div>
 	</div>
 {/if}

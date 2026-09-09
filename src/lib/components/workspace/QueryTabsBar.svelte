@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ChevronLeft, ChevronRight, FileCode2, GitFork, Plus, ScrollText, Table2, Terminal, X } from '@lucide/svelte';
+	import { ChevronLeft, ChevronRight, FileCode2, GitFork, Plus, ScrollText, Table2, Terminal, X } from '$lib/icons';
 	import type { TabContextMenu, WorkspaceTab } from '$lib/utils/workspace';
 
 	let {

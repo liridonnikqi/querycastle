@@ -5,15 +5,13 @@
 	import {
 		ArrowLeft,
 		ArrowRight,
-		Check,
-		CircleAlert,
 		Loader2,
 		MoreVertical,
 		Plus,
 		Search,
 		SquarePen,
 		Trash2,
-	} from '@lucide/svelte';
+	} from '$lib/icons';
 	import { getVersion } from '@tauri-apps/api/app';
 	import { isTauri } from '@tauri-apps/api/core';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -24,6 +22,7 @@
 	import ThemeToggle from '$lib/components/ui/ThemeToggle.svelte';
 	import WindowControls from '$lib/components/ui/WindowControls.svelte';
 	import ConnectionFields from '$lib/components/connection/ConnectionFields.svelte';
+	import ConnectionStatusBanner from '$lib/components/connection/ConnectionStatusBanner.svelte';
 	import {
 		DATABASE_ENGINES,
 		connectionMetaLine,
@@ -286,6 +285,12 @@
 						/>
 					</label>
 
+					{#if connectError}
+						<div class="mt-4">
+							<ConnectionStatusBanner message={connectError} />
+						</div>
+					{/if}
+
 					{#if !query}
 						<section class="mt-8 mb-8">
 							<h2
@@ -531,24 +536,16 @@
 								onStringChange={(value) => (connectionString = value)}
 							/>
 
+							{#if connectError || testMessage}
+								<div class="pt-1">
+									<ConnectionStatusBanner
+										message={connectError || testMessage}
+										ok={!connectError && testOk}
+									/>
+								</div>
+							{/if}
+
 							<div class="flex flex-row items-center justify-end gap-2 pt-2">
-								{#if connectError || testMessage}
-									<div
-										class={`mr-auto min-w-0 flex items-center gap-1.5 text-[12px] ${
-											connectError || !testOk ? 'text-qc-danger' : 'text-qc-muted'
-										}`}
-										in:fly={{ y: 4, duration: 160, easing: cubicOut }}
-										out:fade={{ duration: 120 }}
-									>
-										{#if connectError || !testOk}
-											<CircleAlert size={14} class="shrink-0" />
-											<span class="truncate">{connectError || testMessage}</span>
-										{:else}
-											<Check size={14} class="shrink-0 text-qc-subtle" />
-											<span class="truncate">{testMessage}</span>
-										{/if}
-									</div>
-								{/if}
 								<button
 									type="button"
 									onclick={testConnection}

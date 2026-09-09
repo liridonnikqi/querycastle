@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { FolderOpen } from '@lucide/svelte';
+	import { FolderOpen } from '$lib/icons';
 	import { open } from '@tauri-apps/plugin-dialog';
 	import type { ConnectionInput } from '$lib/rpc';
 	import {
@@ -15,6 +15,7 @@
 		connectionString,
 		variant = 'dialog',
 		showString = true,
+		passwordStored = false,
 		nameInput = $bindable(null),
 		onFormChange,
 		onStringChange,
@@ -23,6 +24,7 @@
 		connectionString: string;
 		variant?: 'hub' | 'dialog';
 		showString?: boolean;
+		passwordStored?: boolean;
 		nameInput?: HTMLInputElement | null;
 		onFormChange: (next: ConnectionInput) => void;
 		onStringChange: (value: string) => void;
@@ -30,6 +32,9 @@
 
 	const isSqlite = $derived(form.databaseType === 'sqlite');
 	const hub = $derived(variant === 'hub');
+	const passwordPlaceholder = $derived(
+		passwordStored ? 'Saved — leave blank to keep' : undefined,
+	);
 	const inputClass = $derived(
 		hub
 			? 'field-input w-full h-9 px-3 text-[13px] placeholder:text-qc-muted'
@@ -174,7 +179,12 @@
 					value={form.password}
 					oninput={(event) => updateField('password', event.currentTarget.value)}
 					class={inputClass}
+					placeholder={passwordPlaceholder}
+					autocomplete="off"
 				/>
+				{#if passwordStored && !form.password}
+					<span class="text-[11px] text-qc-muted">Using the saved password</span>
+				{/if}
 			</label>
 		{:else}
 			<div class="grid grid-cols-2 gap-3">
@@ -216,8 +226,12 @@
 						value={form.password}
 						oninput={(event) => updateField('password', event.currentTarget.value)}
 						class={inputClass}
-						placeholder="••••••••"
+						placeholder={passwordPlaceholder}
+						autocomplete="off"
 					/>
+					{#if passwordStored && !form.password}
+						<div class="mt-1 text-[11px] text-qc-muted">Using the saved password</div>
+					{/if}
 				</div>
 			</div>
 		{/if}

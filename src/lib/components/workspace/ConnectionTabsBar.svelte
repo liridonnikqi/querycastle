@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Plus, X } from '@lucide/svelte';
+	import { Plus, X } from '$lib/icons';
 	import type { ConnectionInput, ConnectionStatus } from '$lib/rpc';
 	import DatabaseIcon from '$lib/components/ui/DatabaseIcon.svelte';
 	import { connectionMetaLine } from '$lib/utils/connection';

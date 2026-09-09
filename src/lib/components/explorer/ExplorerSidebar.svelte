@@ -18,7 +18,7 @@
 		Trash2,
 		Database,
 		Network,
-	} from '@lucide/svelte';
+	} from '$lib/icons';
 	import type {
 		ConnectionStatus,
 		DatabaseExplorer,
@@ -410,7 +410,7 @@
 				onclick={() => selectExplorerPane('tables')}
 				class={`rail-btn ${!diagramRail && explorerPane === 'tables' ? 'active' : ''}`}
 			>
-				<Database size={18} strokeWidth={1.75} />
+				<Database size={18} />
 			</button>
 			<button
 				type="button"
@@ -419,7 +419,7 @@
 				onclick={() => selectExplorerPane('saved')}
 				class={`rail-btn ${!diagramRail && explorerPane === 'saved' ? 'active' : ''}`}
 			>
-				<Star size={18} strokeWidth={1.75} />
+				<Star size={18} />
 			</button>
 			<button
 				type="button"
@@ -428,7 +428,7 @@
 				onclick={() => selectExplorerPane('history')}
 				class={`rail-btn ${!diagramRail && explorerPane === 'history' ? 'active' : ''}`}
 			>
-				<History size={18} strokeWidth={1.75} />
+				<History size={18} />
 			</button>
 			<button
 				type="button"
@@ -437,7 +437,7 @@
 				onclick={selectDiagramRail}
 				class={`rail-btn ${diagramRail ? 'active' : ''}`}
 			>
-				<Network size={18} strokeWidth={1.75} />
+				<Network size={18} />
 			</button>
 		</div>
 	</nav>
@@ -498,7 +498,6 @@
 				>
 					<RefreshCw
 						size={14}
-						strokeWidth={2}
 						class={refreshingTables || refreshingDatabases
 							? 'animate-spin'
 							: ''}
@@ -513,7 +512,7 @@
 					aria-label="New query"
 					title="New query"
 				>
-					<Plus size={15} strokeWidth={2} />
+					<Plus size={15} />
 				</button>
 			{/if}
 			<button
@@ -523,7 +522,7 @@
 				aria-label="Search schema"
 				title="Search"
 			>
-				<Search size={14} strokeWidth={2} />
+				<Search size={14} />
 			</button>
 			{#if showDatabaseMenu}
 				<button
@@ -631,7 +630,6 @@
 							>
 								<Star
 									size={14}
-									strokeWidth={2}
 									class="text-qc-muted shrink-0"
 								/>
 								<span class="truncate">{item.title}</span>
@@ -657,7 +655,6 @@
 							>
 								<History
 									size={14}
-									strokeWidth={2}
 									class="text-qc-muted shrink-0"
 								/>
 								<span class="truncate font-mono text-[11px]">{item.sql}</span>
@@ -690,9 +687,9 @@
 							class={`sidebar-item w-full flex items-center gap-1.5 text-[12px] text-left ${active ? 'active' : ''}`}
 						>
 							{#if table.kind === 'view'}
-								<Eye size={14} strokeWidth={1.5} class="shrink-0" />
+								<Eye size={14} class="shrink-0" />
 							{:else}
-								<Table2 size={14} strokeWidth={1.5} class="shrink-0" />
+								<Table2 size={14} class="shrink-0" />
 							{/if}
 							<span class="truncate">{table.name}</span>
 						</button>
@@ -747,7 +744,7 @@
 									? `${routineSignature(routine)} → ${routine.returnType}`
 									: routineSignature(routine)}
 							>
-								<Braces size={14} strokeWidth={1.5} class="shrink-0" />
+								<Braces size={14} class="shrink-0" />
 								<span class="truncate">{routineSignature(routine)}</span>
 							</button>
 						{/each}
@@ -776,7 +773,7 @@
 								class="sidebar-item w-full flex items-center gap-1.5 text-[12px] text-left"
 								title={routineSignature(routine)}
 							>
-								<Play size={14} strokeWidth={1.5} class="shrink-0" />
+								<Play size={14} class="shrink-0" />
 								<span class="truncate">{routineSignature(routine)}</span>
 							</button>
 						{/each}
@@ -806,7 +803,7 @@
 									? `${sequence.name} (${sequence.dataType})`
 									: sequence.name}
 							>
-								<Hash size={14} strokeWidth={1.5} class="shrink-0" />
+								<Hash size={14} class="shrink-0" />
 								<span class="truncate">{sequence.name}</span>
 							</button>
 						{/each}

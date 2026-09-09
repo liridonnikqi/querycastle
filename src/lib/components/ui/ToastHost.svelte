@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check, CircleAlert, X } from '@lucide/svelte';
+	import { Check, CircleAlert, X } from '$lib/icons';
 	import { toast } from '$lib/stores/toast.svelte';
 </script>
 
