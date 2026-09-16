@@ -80,6 +80,13 @@
 		})),
 	];
 
+	const ENGINE_KEY: Record<DatabaseType, string> = {
+		sqlite: '#0f80cc',
+		postgres: '#336791',
+		mssql: '#cc2927',
+		mysql: '#00758f',
+	};
+
 	let query = $derived((hubSearch || searchQuery).trim().toLowerCase());
 
 	let filteredConnections = $derived(
@@ -108,6 +115,18 @@
 				engineFilter === 'all' || connection.databaseType === engineFilter,
 		),
 	);
+
+	let emptyCopy = $derived.by(() => {
+		if (savedConnections.length === 0) return 'No saved connections yet.';
+		if (query) return 'No connections match search.';
+		if (engineFilter !== 'all') {
+			const label =
+				engineFilters.find((item) => item.value === engineFilter)?.label ??
+				'provider';
+			return `No ${label} connections.`;
+		}
+		return 'No connections match.';
+	});
 
 	onMount(() => {
 		recentNames = loadRecentConnectionNames();
@@ -233,7 +252,7 @@
 
 <div class="h-full w-full flex overflow-hidden bg-qc-hub text-qc-fg">
 	<aside
-		class="hub-keep w-[clamp(300px,42vw,620px)] min-w-[300px] flex flex-col justify-end px-8 pb-10 pt-16"
+		class="hub-keep w-[clamp(280px,34vw,480px)] min-w-[260px] flex flex-col justify-end px-8 pb-10 pt-16"
 		data-tauri-drag-region
 	>
 		<img src="/hero-poster.avif" alt="" class="hub-keep-art" />
@@ -245,18 +264,16 @@
 				QueryCastle
 			</h1>
 			<p class="mt-1.5 text-[13px] text-white/80 leading-snug">
-				Your personal castle for managing and exploring databases.
+				The Swiss Army knife of SQL clients.
 			</p>
 			<p class="mt-4 text-[11px] text-white/50">Version {appVersion}</p>
 		</div>
 	</aside>
 
-	<div
-		class="flex-1 flex flex-col min-w-0 min-h-0 pl-2 sm:pl-4 xl:pl-10 2xl:pl-16"
-	>
+	<div class="flex-1 flex flex-col min-w-0 min-h-0">
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
-			class="relative z-20 flex items-center justify-end px-2 h-10 shrink-0"
+			class="relative z-20 flex items-center justify-end px-3 h-10 shrink-0"
 			data-tauri-drag-region
 			ondblclick={handleTitlebarDoubleClick}
 		>
@@ -270,54 +287,65 @@
 
 		<main class="flex-1 overflow-y-auto min-w-0">
 			{#if view === 'home'}
-				<div
-					class="w-full max-w-[720px] mx-auto px-8 pb-16 pt-8 animate-in fade-in slide-in-from-bottom-1 duration-200"
-				>
-					<label
-						class="w-full h-11 rounded-sm border border-qc-border bg-qc-panel flex items-center gap-2.5 px-4"
+				<div class="hub-stage">
+					<div
+						class="w-full max-w-[720px] px-8 py-8 animate-in fade-in slide-in-from-bottom-1 duration-200"
 					>
-						<Search size={16} class="text-qc-muted shrink-0" />
-						<input
-							value={hubSearch}
-							oninput={(event) => (hubSearch = event.currentTarget.value)}
-							placeholder="Search connections..."
-							class="flex-1 bg-transparent text-[13px] text-qc-fg placeholder:text-qc-muted outline-none"
-						/>
-					</label>
-
-					{#if connectError}
-						<div class="mt-4">
-							<ConnectionStatusBanner message={connectError} />
-						</div>
-					{/if}
-
-					{#if !query}
-						<section class="mt-8 mb-8">
-							<h2
-								class="text-[13px] font-semibold tracking-wide uppercase text-qc-muted mb-3"
+						<div class="hub-toolbar">
+							<label class="hub-search">
+								<Search size={15} class="text-qc-muted shrink-0" />
+								<input
+									value={hubSearch}
+									oninput={(event) => (hubSearch = event.currentTarget.value)}
+									placeholder="Search connections..."
+									class="flex-1 bg-transparent text-[13px] text-qc-fg placeholder:text-qc-muted outline-none"
+								/>
+							</label>
+							<button
+								type="button"
+								onclick={openNew}
+								class="btn-primary hub-new-btn"
 							>
-								Recents
-							</h2>
-							<div>
+								New <Plus size={14} />
+							</button>
+						</div>
+
+						{#if connectError}
+							<div class="mt-3">
+								<ConnectionStatusBanner message={connectError} />
+							</div>
+						{/if}
+
+						{#if !query}
+							<section class="mt-6">
+								<h2
+									class="text-[11px] font-semibold tracking-wide uppercase text-qc-muted mb-2.5"
+								>
+									Recents
+								</h2>
+								<div class="hub-recents-row">
 									{#if filteredRecents.length > 0}
-										<div class="flex flex-wrap gap-2">
-											{#each filteredRecents as connection (connection.name)}
-												<button
-													type="button"
-													onclick={() => connectSaved(connection)}
-													class="h-8 pl-2 pr-3 rounded-sm border border-qc-border bg-qc-panel hover:bg-qc-hover inline-flex items-center gap-2 text-[12px] text-qc-subtle active:scale-[0.97] transition-transform duration-100"
+										{#each filteredRecents as connection (connection.name)}
+											<button
+												type="button"
+												onclick={() => connectSaved(connection)}
+												class="hub-recent-chip"
+											>
+												<div
+													class="hub-engine-mark hub-engine-mark-xs"
+													style="--bg: {ENGINE_KEY[connection.databaseType]}"
 												>
-												<DatabaseIcon
-													type={connection.databaseType}
-													size={14}
-													tone={connection.databaseType === 'sqlite' ? 'ink' : 'brand'}
-												/>
-													<span class="truncate max-w-[160px]"
-														>{connection.name}</span
-													>
-												</button>
-											{/each}
-										</div>
+													<DatabaseIcon
+														type={connection.databaseType}
+														size={11}
+														tone="white"
+													/>
+												</div>
+												<span class="truncate max-w-[160px]"
+													>{connection.name}</span
+												>
+											</button>
+										{/each}
 									{:else}
 										<p class="text-[13px] text-qc-muted">
 											{engineFilter === 'all'
@@ -326,27 +354,27 @@
 										</p>
 									{/if}
 								</div>
-						</section>
-					{:else}
-						<div class="h-8"></div>
-					{/if}
+							</section>
+						{/if}
 
-					<section>
-						<div class="flex flex-wrap items-center gap-2 mb-4">
+						<div
+							class="hub-filters mt-5"
+							role="tablist"
+							aria-label="Filter by engine"
+						>
 							{#each engineFilters as filter}
 								<button
 									type="button"
+									role="tab"
+									aria-selected={engineFilter === filter.value}
 									onclick={() => (engineFilter = filter.value)}
-									class={`h-8 px-3 rounded-sm text-[12px] font-medium transition-colors duration-150 inline-flex items-center gap-1.5 ${
-										engineFilter === filter.value
-											? 'border border-qc-cell bg-qc-cell text-white'
-											: 'border border-qc-border bg-qc-panel text-qc-subtle hover:bg-qc-hover'
-									}`}
+									class="hub-filter"
+									class:active={engineFilter === filter.value}
 								>
 									{#if filter.value !== 'all'}
 										<DatabaseIcon
 											type={filter.value}
-											size={13}
+											size={12}
 											tone={engineFilter === filter.value ? 'white' : 'ink'}
 										/>
 									{/if}
@@ -355,171 +383,178 @@
 							{/each}
 						</div>
 
-						<div class="flex items-center justify-between gap-3 mb-3">
-							<h2 class="text-[15px] font-semibold">Saved Connections</h2>
-							<button
-								type="button"
-								onclick={openNew}
-								class="btn-primary h-8 px-3.5 text-[12px] font-medium inline-flex items-center gap-1.5"
-							>
-								New <Plus size={14} />
-							</button>
-						</div>
-
-							<div class="space-y-2">
-								{#if filteredConnections.length === 0}
-									<div
-										class="rounded-sm border border-qc-border bg-qc-panel px-4 py-10 text-center text-[13px] text-qc-muted"
+						{#if filteredConnections.length === 0}
+							<div class="hub-empty mt-5">
+								<p class="text-[13px] text-qc-muted">{emptyCopy}</p>
+								{#if savedConnections.length === 0}
+									<button
+										type="button"
+										onclick={openNew}
+										class="btn-secondary h-8 px-3 text-[12px] font-medium inline-flex items-center gap-1.5 mt-3"
 									>
-										{savedConnections.length === 0
-											? 'No saved connections yet.'
-											: 'No connections match search.'}
-									</div>
-								{:else}
-									{#each filteredConnections as connection, i (connection.name)}
-										{@const isBusy = connectingName === connection.name}
-										{@const menuOpen = activeMenuName === connection.name}
-										<div
-											class={`relative animate-in fade-in slide-in-from-bottom-1 duration-200 ${menuOpen ? 'z-30' : ''}`}
-											style="animation-delay: {i * 18}ms; animation-fill-mode: both"
-										>
-											<button
-												type="button"
-												onclick={() => {
-													if (isBusy) return;
-													connectSaved(connection);
-												}}
-												class="conn-card w-full flex items-center gap-3 rounded-sm border border-qc-border bg-qc-panel px-3.5 py-3 text-left"
-											>
-												<div
-													class="w-9 h-9 rounded-sm bg-qc-elevated border border-qc-border flex items-center justify-center shrink-0"
-												>
-												<DatabaseIcon
-													type={connection.databaseType}
-													size={18}
-													tone={connection.databaseType === 'sqlite' ? 'ink' : 'brand'}
-												/>
-												</div>
-												<div class="min-w-0 flex-1">
-													<div class="text-[13px] font-medium truncate">
-														{connection.name}
-													</div>
-													<div class="text-[11px] text-qc-muted truncate">
-														{connectionMetaLine(connection)}
-													</div>
-												</div>
-												{#if isBusy}
-													<div
-														class="w-3.5 h-3.5 border-2 border-qc-muted border-t-transparent rounded-full animate-spin mr-8"
-													></div>
-												{/if}
-											</button>
-											<button
-												type="button"
-												onclick={(event) => {
-													event.stopPropagation();
-													activeMenuName =
-														activeMenuName === connection.name
-															? null
-															: connection.name;
-												}}
-												class="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-sm text-qc-muted hover:bg-qc-hover hover:text-qc-fg inline-flex items-center justify-center"
-												aria-label="Connection options"
-											>
-												<MoreVertical size={15} />
-											</button>
-											{#if menuOpen}
-												<button
-													type="button"
-													class="fixed inset-0 z-40 cursor-default"
-													aria-label="Close menu"
-													onclick={() => (activeMenuName = null)}
-												></button>
-												<div
-													class="ctx-menu absolute right-3 top-12 z-50 origin-top-right"
-													transition:scale={{ start: 0.96, duration: 140, easing: cubicOut }}
-												>
-													<button
-														type="button"
-														class="ctx-item"
-														onclick={() => {
-															activeMenuName = null;
-															onEdit(connection);
-														}}
-													>
-														<SquarePen size={12} class="text-qc-muted" />
-														Edit
-													</button>
-													<div class="ctx-separator"></div>
-													<button
-														type="button"
-														class="ctx-item ctx-item-danger"
-														onclick={() => handleDeleteConnection(connection)}
-													>
-														<Trash2 size={12} />
-														Delete
-													</button>
-												</div>
-											{/if}
-										</div>
-									{/each}
+										<Plus size={13} />
+										New connection
+									</button>
 								{/if}
 							</div>
-					</section>
+						{:else}
+							<div class="hub-conn-grid mt-5">
+								{#each filteredConnections as connection, i (connection.name)}
+									{@const isBusy = connectingName === connection.name}
+									{@const menuOpen = activeMenuName === connection.name}
+									{@const keyBg = ENGINE_KEY[connection.databaseType]}
+									<div
+										class={`relative ${menuOpen ? 'z-30' : ''}`}
+										style="animation-delay: {i * 18}ms"
+									>
+										<button
+											type="button"
+											onclick={() => {
+												if (isBusy) return;
+												connectSaved(connection);
+											}}
+											class="hub-card"
+										>
+											<div class="hub-engine-mark" style="--bg: {keyBg}">
+												<DatabaseIcon
+													type={connection.databaseType}
+													size={16}
+													tone="white"
+												/>
+											</div>
+											<div class="min-w-0 flex-1 text-left">
+												<div
+													class="text-[13px] font-medium truncate leading-tight"
+												>
+													{connection.name}
+												</div>
+												<div class="mt-0.5 text-[11px] text-qc-muted truncate">
+													{connectionMetaLine(connection)}
+												</div>
+											</div>
+											{#if isBusy}
+												<Loader2
+													size={14}
+													class="animate-spin text-qc-muted mr-6 shrink-0"
+												/>
+											{/if}
+										</button>
+										<button
+											type="button"
+											onclick={(event) => {
+												event.stopPropagation();
+												activeMenuName =
+													activeMenuName === connection.name
+														? null
+														: connection.name;
+											}}
+											class="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-md text-qc-muted hover:bg-qc-hover hover:text-qc-fg inline-flex items-center justify-center"
+											aria-label="Connection options"
+										>
+											<MoreVertical size={15} />
+										</button>
+										{#if menuOpen}
+											<button
+												type="button"
+												class="fixed inset-0 z-40 cursor-default"
+												aria-label="Close menu"
+												onclick={() => (activeMenuName = null)}
+											></button>
+											<div
+												class="ctx-menu absolute right-2 top-[calc(100%-6px)] z-50 origin-top-right"
+												transition:scale={{
+													start: 0.96,
+													duration: 140,
+													easing: cubicOut,
+												}}
+											>
+												<button
+													type="button"
+													class="ctx-item"
+													onclick={() => {
+														activeMenuName = null;
+														onEdit(connection);
+													}}
+												>
+													<SquarePen size={12} class="text-qc-muted" />
+													Edit
+												</button>
+												<div class="ctx-separator"></div>
+												<button
+													type="button"
+													class="ctx-item ctx-item-danger"
+													onclick={() => handleDeleteConnection(connection)}
+												>
+													<Trash2 size={12} />
+													Delete
+												</button>
+											</div>
+										{/if}
+									</div>
+								{/each}
+							</div>
+						{/if}
+					</div>
 				</div>
 			{:else}
 				<div
-					class="w-full max-w-[640px] mx-auto px-8 pb-16 pt-6 animate-in fade-in slide-in-from-bottom-1 duration-200"
+					class="hub-new w-full px-8 pb-16 pt-4 animate-in fade-in slide-in-from-bottom-1 duration-200"
 				>
 					<button
 						type="button"
 						onclick={backHome}
-						class="inline-flex items-center gap-2 text-[15px] font-semibold mb-8 hover:text-qc-subtle"
+						class="inline-flex items-center gap-2 text-[13px] mb-8 hover:text-qc-subtle"
 					>
-						<ArrowLeft size={16} class="text-qc-muted" />
-						<span class="text-qc-muted font-medium">Back</span>
-						<span>New Connection</span>
+						<ArrowLeft size={15} class="text-qc-muted" />
+						<span class="text-qc-muted">Back</span>
+						<span class="font-semibold">New Connection</span>
 					</button>
 
-					<div class="mb-8">
-						<label
-							class="text-[13px] font-medium text-qc-fg"
-							for="hub-connection-string">Connection String</label
-						>
-						<input
-							id="hub-connection-string"
-							value={connectionString}
-							oninput={(event) => applyString(event.currentTarget.value)}
-							class="field-input w-full h-11 px-3.5 mt-2 text-[13px] font-mono placeholder:text-qc-muted"
-							placeholder={connectionStringPlaceholder(form.databaseType)}
-						/>
-						<p class="mt-2 text-[12px] text-qc-muted">
-							Paste your connection string to auto-detect database type
-						</p>
-					</div>
-
-					<div class="flex items-center gap-3 mb-5">
-						<div class="flex-1 h-px bg-qc-border"></div>
-						<span class="text-[11px] text-qc-muted">or select database</span>
-						<div class="flex-1 h-px bg-qc-border"></div>
-					</div>
-
-					<div class="grid grid-cols-2 gap-2.5">
+					<div class="hub-provider-grid mb-6">
 						{#each DATABASE_ENGINES as provider (provider.value)}
+							{@const selected =
+								form.databaseType === provider.value && picked}
 							<button
 								type="button"
 								onclick={() => selectProvider(provider.value)}
-								class={`provider-tile h-12 px-3 rounded-sm border border-qc-border bg-qc-panel flex items-center gap-3 text-left ${form.databaseType === provider.value && picked ? 'selected' : ''}`}
+								class="hub-provider"
+								class:selected
 							>
-								<DatabaseIcon type={provider.value} size={22} />
+								<div
+									class="hub-engine-mark hub-engine-mark-sm"
+									style="--bg: {ENGINE_KEY[provider.value]}"
+								>
+									<DatabaseIcon
+										type={provider.value}
+										size={14}
+										tone="white"
+									/>
+								</div>
 								<span class="text-[13px] font-medium">{provider.label}</span>
 							</button>
 						{/each}
 					</div>
 
+					<div class="mb-6">
+						<label
+							class="text-[12px] font-medium text-qc-subtle"
+							for="hub-connection-string">Connection string</label
+						>
+						<input
+							id="hub-connection-string"
+							value={connectionString}
+							oninput={(event) => applyString(event.currentTarget.value)}
+							class="field-input w-full h-10 px-3.5 mt-1.5 text-[13px] font-mono placeholder:text-qc-muted"
+							placeholder={connectionStringPlaceholder(form.databaseType)}
+						/>
+						<p class="mt-1.5 text-[12px] text-qc-muted">
+							Paste a URL to auto-detect the database type
+						</p>
+					</div>
+
 					{#if picked}
 						<form
-							class="mt-8 space-y-3.5"
+							class="space-y-3.5"
 							in:fly={{ y: 6, duration: 200, easing: cubicOut }}
 							out:fade={{ duration: 120 }}
 							onsubmit={(event) => {
@@ -545,7 +580,7 @@
 								</div>
 							{/if}
 
-							<div class="flex flex-row items-center justify-end gap-2 pt-2">
+							<div class="flex flex-row items-center justify-end gap-2 pt-1">
 								<button
 									type="button"
 									onclick={testConnection}
@@ -580,3 +615,219 @@
 		</main>
 	</div>
 </div>
+
+<style>
+	.hub-stage {
+		min-height: 100%;
+	}
+
+	.hub-toolbar {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		height: 40px;
+	}
+
+	.hub-search,
+	.hub-new-btn {
+		height: 40px;
+		min-height: 40px;
+		max-height: 40px;
+		box-sizing: border-box;
+		border-radius: 10px;
+	}
+
+	.hub-search {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 0 14px;
+		border: 1px solid var(--qc-border);
+		background: var(--qc-panel);
+	}
+
+	.hub-search:focus-within {
+		border-color: var(--qc-focus-border);
+		box-shadow: 0 0 0 3px var(--qc-focus-ring);
+	}
+
+	.hub-new-btn {
+		padding: 0 14px;
+		font-size: 13px;
+		font-weight: 500;
+		line-height: 1;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		flex-shrink: 0;
+		overflow: hidden;
+		border: 1px solid var(--qc-btn-emphasis-ring);
+		box-shadow: inset 0 1px 0 0 var(--qc-btn-highlight);
+	}
+
+	.hub-new {
+		max-width: 36rem;
+		margin-inline: auto;
+	}
+
+	.hub-provider-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 8px;
+	}
+
+	.hub-recent-chip {
+		height: 32px;
+		padding: 0 10px 0 6px;
+		border-radius: 8px;
+		border: 1px solid var(--qc-border);
+		background: var(--qc-panel);
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 12px;
+		color: var(--qc-subtle);
+		transition:
+			border-color 140ms ease,
+			background-color 140ms ease;
+	}
+
+	.hub-recent-chip:hover {
+		background: var(--qc-hover);
+		border-color: var(--qc-conn-hover-border);
+	}
+
+	.hub-recents-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px;
+		min-height: 32px;
+	}
+
+	.hub-filters {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 2px;
+		width: fit-content;
+		padding: 3px;
+		border: 1px solid var(--qc-border);
+		border-radius: 10px;
+		background: var(--qc-panel);
+	}
+
+	.hub-filter {
+		height: 28px;
+		padding: 0 10px;
+		border-radius: 7px;
+		border: 0;
+		background: transparent;
+		color: var(--qc-muted);
+		font-size: 12px;
+		font-weight: 500;
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		transition:
+			background-color 140ms ease,
+			color 140ms ease;
+	}
+
+	.hub-filter:hover {
+		color: var(--qc-fg);
+		background: var(--qc-sidebar-active);
+	}
+
+	.hub-filter.active {
+		background: var(--qc-sidebar-active);
+		color: var(--qc-fg);
+	}
+
+	.hub-conn-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+		gap: 8px;
+	}
+
+	.hub-card {
+		width: 100%;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 12px 36px 12px 12px;
+		border-radius: 10px;
+		border: 1px solid var(--qc-border);
+		background: var(--qc-panel);
+		text-align: left;
+		transition:
+			border-color 160ms ease,
+			background-color 160ms ease;
+	}
+
+	.hub-card:hover {
+		border-color: var(--qc-conn-hover-border);
+		background: var(--qc-conn-hover-bg);
+	}
+
+	.hub-engine-mark {
+		display: grid;
+		place-items: center;
+		width: 2.25rem;
+		height: 2.25rem;
+		flex-shrink: 0;
+		border-radius: 8px;
+		background: var(--bg);
+	}
+
+	.hub-engine-mark-sm {
+		width: 1.75rem;
+		height: 1.75rem;
+		border-radius: 7px;
+	}
+
+	.hub-engine-mark-xs {
+		width: 1.25rem;
+		height: 1.25rem;
+		border-radius: 5px;
+	}
+
+	.hub-empty {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		min-height: 4.75rem;
+		padding: 1rem;
+		border-radius: 10px;
+		border: 1px dashed var(--qc-border);
+		background: color-mix(in srgb, var(--qc-panel) 70%, transparent);
+		text-align: center;
+	}
+
+	.hub-provider {
+		height: 3rem;
+		padding: 0 12px;
+		border-radius: 10px;
+		border: 1px solid var(--qc-border);
+		background: var(--qc-panel);
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		text-align: left;
+		transition:
+			border-color 160ms ease,
+			background-color 160ms ease;
+	}
+
+	.hub-provider:hover {
+		border-color: var(--qc-tile-hover-border);
+		background: var(--qc-tile-hover-bg);
+	}
+
+	.hub-provider.selected {
+		border-color: var(--qc-cell);
+		background: color-mix(in srgb, var(--qc-cell) 14%, var(--qc-panel));
+	}
+</style>
