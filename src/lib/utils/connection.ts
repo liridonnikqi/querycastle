@@ -87,6 +87,13 @@ export const DATABASE_ENGINES: Array<{
 	{ value: 'sqlite', label: 'SQLite', detail: 'Local file' },
 ];
 
+export const ENGINE_KEY: Record<DatabaseType, string> = {
+	sqlite: '#0f80cc',
+	postgres: '#336791',
+	mssql: '#cc2927',
+	mysql: '#00758f',
+};
+
 function looksLikeAdoNet(value: string): boolean {
 	return /(?:^|;)\s*(server|data source|initial catalog|database|user id|uid|password|pwd|encrypt|trustservercertificate)\s*=/i.test(
 		value,

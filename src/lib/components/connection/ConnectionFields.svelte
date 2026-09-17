@@ -33,7 +33,7 @@
 	const isSqlite = $derived(form.databaseType === 'sqlite');
 	const hub = $derived(variant === 'hub');
 	const passwordPlaceholder = $derived(
-		passwordStored ? 'Saved — leave blank to keep' : undefined,
+		passwordStored ? 'Stored in Keychain (Leave blank to keep)' : undefined,
 	);
 	const inputClass = $derived(
 		hub
@@ -51,7 +51,10 @@
 		onStringChange(generateConnectionString(next));
 	}
 
-	function updateField<K extends keyof ConnectionInput>(key: K, value: ConnectionInput[K]) {
+	function updateField<K extends keyof ConnectionInput>(
+		key: K,
+		value: ConnectionInput[K],
+	) {
 		const next: ConnectionInput = { ...form, [key]: value };
 		if (key === 'ssl' && value === false) next.sslInsecure = false;
 		commit(next);
@@ -77,8 +80,14 @@
 	}
 </script>
 
-<div class={hub ? 'space-y-3.5' : 'grid content-start grid-cols-1 gap-2.5 sm:grid-cols-2'}>
-	<div class={hub ? (isSqlite ? '' : 'grid grid-cols-2 gap-3') : 'sm:col-span-2'}>
+<div
+	class={hub
+		? 'space-y-3.5'
+		: 'grid content-start grid-cols-1 gap-2.5 sm:grid-cols-2'}
+>
+	<div
+		class={hub ? (isSqlite ? '' : 'grid grid-cols-2 gap-3') : 'sm:col-span-2'}
+	>
 		<label class={hub ? 'block' : 'flex flex-col gap-1 text-qc-subtle'}>
 			<span class={labelClass}>{hub ? 'Name' : 'Connection Name'}</span>
 			<input
@@ -103,12 +112,15 @@
 	</div>
 
 	{#if isSqlite}
-		<label class={hub ? 'block' : 'sm:col-span-2 flex flex-col gap-1 text-qc-subtle'}>
+		<label
+			class={hub ? 'block' : 'sm:col-span-2 flex flex-col gap-1 text-qc-subtle'}
+		>
 			<span class={labelClass}>{hub ? 'Database file' : 'Database Path'}</span>
 			<div class="flex items-center gap-2">
 				<input
 					value={form.database}
-					oninput={(event) => updateField('database', event.currentTarget.value)}
+					oninput={(event) =>
+						updateField('database', event.currentTarget.value)}
 					placeholder="C:/data/mydb.sqlite"
 					class={`${inputClass} ${hub ? 'font-mono' : ''}`}
 				/>
@@ -155,7 +167,8 @@
 				>
 				<input
 					value={form.database}
-					oninput={(event) => updateField('database', event.currentTarget.value)}
+					oninput={(event) =>
+						updateField('database', event.currentTarget.value)}
 					placeholder={form.databaseType === 'postgres'
 						? 'postgres (default)'
 						: form.databaseType === 'mysql'
@@ -177,13 +190,15 @@
 				<input
 					type="password"
 					value={form.password}
-					oninput={(event) => updateField('password', event.currentTarget.value)}
+					oninput={(event) =>
+						updateField('password', event.currentTarget.value)}
 					class={inputClass}
 					placeholder={passwordPlaceholder}
 					autocomplete="off"
 				/>
 				{#if passwordStored && !form.password}
-					<span class="text-[11px] text-qc-muted">Using the saved password</span>
+					<span class="text-[11px] text-qc-muted">Using the saved password</span
+					>
 				{/if}
 			</label>
 		{:else}
@@ -205,7 +220,8 @@
 					<div class={labelClass}>Database</div>
 					<input
 						value={form.database}
-						oninput={(event) => updateField('database', event.currentTarget.value)}
+						oninput={(event) =>
+							updateField('database', event.currentTarget.value)}
 						class={inputClass}
 					/>
 				</div>
@@ -224,13 +240,16 @@
 					<input
 						type="password"
 						value={form.password}
-						oninput={(event) => updateField('password', event.currentTarget.value)}
+						oninput={(event) =>
+							updateField('password', event.currentTarget.value)}
 						class={inputClass}
 						placeholder={passwordPlaceholder}
 						autocomplete="off"
 					/>
 					{#if passwordStored && !form.password}
-						<div class="mt-1 text-[11px] text-qc-muted">Using the saved password</div>
+						<div class="mt-1 text-[11px] text-qc-muted">
+							Using the saved password
+						</div>
 					{/if}
 				</div>
 			</div>
@@ -251,7 +270,8 @@
 					class="qc-check"
 					checked={form.sslInsecure ?? false}
 					disabled={!form.ssl}
-					onchange={(event) => updateField('sslInsecure', event.currentTarget.checked)}
+					onchange={(event) =>
+						updateField('sslInsecure', event.currentTarget.checked)}
 				/>
 				Allow insecure TLS (self-signed)
 			</label>

@@ -25,6 +25,7 @@
 	import ConnectionStatusBanner from '$lib/components/connection/ConnectionStatusBanner.svelte';
 	import {
 		DATABASE_ENGINES,
+		ENGINE_KEY,
 		connectionMetaLine,
 		connectionStringPlaceholder,
 		defaultsForType,
@@ -79,13 +80,6 @@
 			label: engine.label,
 		})),
 	];
-
-	const ENGINE_KEY: Record<DatabaseType, string> = {
-		sqlite: '#0f80cc',
-		postgres: '#336791',
-		mssql: '#cc2927',
-		mysql: '#00758f',
-	};
 
 	let query = $derived((hubSearch || searchQuery).trim().toLowerCase());
 
@@ -304,7 +298,7 @@
 							<button
 								type="button"
 								onclick={openNew}
-								class="btn-primary hub-new-btn"
+								class="btn-primary hub-action-btn shrink-0"
 							>
 								New <Plus size={14} />
 							</button>
@@ -507,7 +501,7 @@
 					>
 						<ArrowLeft size={15} class="text-qc-muted" />
 						<span class="text-qc-muted">Back</span>
-						<span class="font-semibold">New Connection</span>
+						
 					</button>
 
 					<div class="hub-provider-grid mb-6">
@@ -572,20 +566,18 @@
 							/>
 
 							{#if connectError || testMessage}
-								<div class="pt-1">
-									<ConnectionStatusBanner
-										message={connectError || testMessage}
-										ok={!connectError && testOk}
-									/>
-								</div>
+								<ConnectionStatusBanner
+									message={connectError || testMessage}
+									ok={!connectError && testOk}
+								/>
 							{/if}
 
-							<div class="flex flex-row items-center justify-end gap-2 pt-1">
+							<div class="flex flex-row items-center justify-end gap-2">
 								<button
 									type="button"
 									onclick={testConnection}
 									disabled={isTesting || isConnecting}
-									class="btn-secondary h-9 px-4 text-[13px] font-medium inline-flex items-center justify-center gap-2 disabled:opacity-60 box-border min-w-[88px]"
+									class="btn-secondary hub-action-btn disabled:opacity-60 min-w-[88px]"
 								>
 									{#if isTesting}
 										<Loader2 size={14} class="animate-spin" />
@@ -597,7 +589,7 @@
 								<button
 									type="submit"
 									disabled={isConnecting || isTesting}
-									class="btn-primary h-9 px-4 text-[13px] font-medium inline-flex items-center justify-center gap-2 disabled:opacity-60 box-border"
+									class="btn-primary hub-action-btn disabled:opacity-60"
 								>
 									{#if isConnecting}
 										<Loader2 size={14} class="animate-spin" />
@@ -628,17 +620,13 @@
 		height: 40px;
 	}
 
-	.hub-search,
-	.hub-new-btn {
+	.hub-search {
+		flex: 1;
 		height: 40px;
 		min-height: 40px;
 		max-height: 40px;
 		box-sizing: border-box;
 		border-radius: 10px;
-	}
-
-	.hub-search {
-		flex: 1;
 		display: flex;
 		align-items: center;
 		gap: 10px;
@@ -652,30 +640,9 @@
 		box-shadow: 0 0 0 3px var(--qc-focus-ring);
 	}
 
-	.hub-new-btn {
-		padding: 0 14px;
-		font-size: 13px;
-		font-weight: 500;
-		line-height: 1;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 6px;
-		flex-shrink: 0;
-		overflow: hidden;
-		border: 1px solid var(--qc-btn-emphasis-ring);
-		box-shadow: inset 0 1px 0 0 var(--qc-btn-highlight);
-	}
-
 	.hub-new {
 		max-width: 36rem;
 		margin-inline: auto;
-	}
-
-	.hub-provider-grid {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 8px;
 	}
 
 	.hub-recent-chip {
@@ -771,28 +738,6 @@
 		background: var(--qc-conn-hover-bg);
 	}
 
-	.hub-engine-mark {
-		display: grid;
-		place-items: center;
-		width: 2.25rem;
-		height: 2.25rem;
-		flex-shrink: 0;
-		border-radius: 8px;
-		background: var(--bg);
-	}
-
-	.hub-engine-mark-sm {
-		width: 1.75rem;
-		height: 1.75rem;
-		border-radius: 7px;
-	}
-
-	.hub-engine-mark-xs {
-		width: 1.25rem;
-		height: 1.25rem;
-		border-radius: 5px;
-	}
-
 	.hub-empty {
 		display: flex;
 		flex-direction: column;
@@ -804,30 +749,5 @@
 		border: 1px dashed var(--qc-border);
 		background: color-mix(in srgb, var(--qc-panel) 70%, transparent);
 		text-align: center;
-	}
-
-	.hub-provider {
-		height: 3rem;
-		padding: 0 12px;
-		border-radius: 10px;
-		border: 1px solid var(--qc-border);
-		background: var(--qc-panel);
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		text-align: left;
-		transition:
-			border-color 160ms ease,
-			background-color 160ms ease;
-	}
-
-	.hub-provider:hover {
-		border-color: var(--qc-tile-hover-border);
-		background: var(--qc-tile-hover-bg);
-	}
-
-	.hub-provider.selected {
-		border-color: var(--qc-cell);
-		background: color-mix(in srgb, var(--qc-cell) 14%, var(--qc-panel));
 	}
 </style>
