@@ -69,6 +69,20 @@ describe('isGridEditable', () => {
 			}),
 		).toBe(false);
 	});
+
+	it('blocks edits on a read-only connection', () => {
+		expect(
+			isGridEditable({
+				databaseType: 'mssql',
+				explorer: personsExplorer,
+				context: { schema: 'dbo', table: 'Persons' },
+				resultColumns: [],
+				rowCount: 0,
+				visibleColumns: ['PersonID', 'LastName'],
+				readOnly: true,
+			}),
+		).toBe(false);
+	});
 });
 
 describe('isCommandQueryResult', () => {

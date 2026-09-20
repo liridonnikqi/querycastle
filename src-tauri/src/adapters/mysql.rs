@@ -11,6 +11,7 @@ use crate::core::types::{
     DatabaseForeignKey, DatabaseIndex, DatabaseRoutine, DatabaseSchema, DatabaseTable,
     DatabaseTrigger, ObjectDefinition, ObjectDefinitionParams, QueryResultPayload, UpdatedRow,
 };
+use tokio_util::sync::CancellationToken;
 
 fn json_to_mysql_value(value: &Value) -> MySqlValue {
     match value {
@@ -74,7 +75,11 @@ pub async fn server_version(pool: &mysql_async::Pool) -> Result<Option<String>, 
     Ok(conn.query_first("select version()").await?)
 }
 
-pub async fn run_query(pool: &mysql_async::Pool, sql: &str) -> Result<QueryResultPayload, DbError> {
+pub async fn run_query(
+    pool: &mysql_async::Pool,
+    sql: &str,
+    cancel: CancellationToken,
+) -> Result<QueryResultPayload, DbError> {
     let mut conn = pool.get_conn().await?;
     if let Err(error) = conn
         .query_drop(format!("SET SESSION max_execution_time = {QUERY_TIMEOUT_MS}"))
@@ -130,11 +135,20 @@ pub async fn run_query(pool: &mysql_async::Pool, sql: &str) -> Result<QueryResul
         })
     };
 
-    match tokio::time::timeout(std::time::Duration::from_millis(QUERY_TIMEOUT_MS), fut).await {
-        Ok(result) => result,
-        Err(_) => Err(DbError::Timeout {
-            message: format!("Query exceeded {QUERY_TIMEOUT_MS}ms"),
-        }),
+    match tokio::select! {
+        _ = cancel.cancelled() => Err(DbError::cancelled()),
+        result = tokio::time::timeout(std::time::Duration::from_millis(QUERY_TIMEOUT_MS), fut) => {
+            match result {
+                Ok(result) => result,
+                Err(_) => Err(DbError::Timeout {
+                    message: format!("Query exceeded {QUERY_TIMEOUT_MS}ms"),
+                }),
+            }
+        }
+    } {
+        Ok(payload) => Ok(payload),
+        Err(_) if cancel.is_cancelled() => Err(DbError::cancelled()),
+        Err(err) => Err(err),
     }
 }
 

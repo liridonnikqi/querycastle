@@ -28,6 +28,7 @@
 	} from '$lib/rpc';
 	import type { QueryHistoryItem, SavedQueryItem } from '$lib/types';
 	import { copyTextToClipboard } from '$lib/utils/clipboard';
+	import { fitToViewport } from '$lib/utils/viewport';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { dialectCapabilities } from '$lib/utils/dialect';
 	import type { SchemaAction, TableAction } from '$lib/utils/workspace';
@@ -144,14 +145,7 @@
 		kind: string,
 	) {
 		event.preventDefault();
-		const menuWidth = 170;
-		const menuHeight = 250;
-		const margin = 8;
-		const maxX = window.innerWidth - menuWidth - margin;
-		const maxY = window.innerHeight - menuHeight - margin;
-		const x = Math.max(margin, Math.min(event.clientX, maxX));
-		const y = Math.max(margin, Math.min(event.clientY, maxY));
-		contextMenu = { x, y, schema, table, kind };
+		contextMenu = { x: event.clientX, y: event.clientY, schema, table, kind };
 		objectContextMenu = null;
 	}
 
@@ -163,14 +157,7 @@
 
 	function openSchemaContextMenu(event: MouseEvent, schema: string) {
 		event.preventDefault();
-		const menuWidth = 170;
-		const menuHeight = 120;
-		const margin = 8;
-		const maxX = window.innerWidth - menuWidth - margin;
-		const maxY = window.innerHeight - menuHeight - margin;
-		const x = Math.max(margin, Math.min(event.clientX, maxX));
-		const y = Math.max(margin, Math.min(event.clientY, maxY));
-		schemaContextMenu = { x, y, schema };
+		schemaContextMenu = { x: event.clientX, y: event.clientY, schema };
 		contextMenu = null;
 		objectContextMenu = null;
 	}
@@ -243,15 +230,10 @@
 	) {
 		event.preventDefault();
 		event.stopPropagation();
-		const menuWidth = 170;
-		const menuHeight = 110;
-		const margin = 8;
-		const maxX = window.innerWidth - menuWidth - margin;
-		const maxY = window.innerHeight - menuHeight - margin;
 		objectContextMenu = {
 			...item,
-			x: Math.max(margin, Math.min(event.clientX, maxX)),
-			y: Math.max(margin, Math.min(event.clientY, maxY)),
+			x: event.clientX,
+			y: event.clientY,
 		};
 		contextMenu = null;
 		schemaContextMenu = null;
@@ -352,6 +334,7 @@
 		}
 		if (
 			connectionStatus.connected &&
+			!connectionStatus.readOnly &&
 			dialectCapabilities(connectionStatus.databaseType).canCreateDatabase
 		) {
 			openCreateDatabaseModal();
@@ -405,7 +388,7 @@
 		<div class="flex flex-col items-center gap-0.5">
 			<button
 				type="button"
-				title="Tables"
+				data-tip="Tables"
 				aria-label="Tables"
 				onclick={() => selectExplorerPane('tables')}
 				class={`rail-btn ${!diagramRail && explorerPane === 'tables' ? 'active' : ''}`}
@@ -414,7 +397,7 @@
 			</button>
 			<button
 				type="button"
-				title="Saved queries"
+				data-tip="Saved queries"
 				aria-label="Saved queries"
 				onclick={() => selectExplorerPane('saved')}
 				class={`rail-btn ${!diagramRail && explorerPane === 'saved' ? 'active' : ''}`}
@@ -423,7 +406,7 @@
 			</button>
 			<button
 				type="button"
-				title="History"
+				data-tip="History"
 				aria-label="History"
 				onclick={() => selectExplorerPane('history')}
 				class={`rail-btn ${!diagramRail && explorerPane === 'history' ? 'active' : ''}`}
@@ -432,7 +415,7 @@
 			</button>
 			<button
 				type="button"
-				title="Schema diagram"
+				data-tip="Schema diagram"
 				aria-label="Schema diagram"
 				onclick={selectDiagramRail}
 				class={`rail-btn ${diagramRail ? 'active' : ''}`}
@@ -456,7 +439,7 @@
 						onclick={toggleDatabaseMenu}
 						oncontextmenu={(event) =>
 							currentSchema && openSchemaContextMenu(event, currentSchema.name)}
-						title={`Switch database (${selectedDatabaseLabel})`}
+						data-tip={`Switch database (${selectedDatabaseLabel})`}
 						aria-haspopup="listbox"
 						aria-expanded={showDatabaseMenu}
 					>
@@ -474,7 +457,7 @@
 						}}
 						oncontextmenu={(event) =>
 							currentSchema && openSchemaContextMenu(event, currentSchema.name)}
-						title={`Switch schema (${currentSchema?.name ?? 'schema'})`}
+						data-tip={`Switch schema (${currentSchema?.name ?? 'schema'})`}
 						aria-haspopup="listbox"
 						aria-expanded={showSchemaMenu}
 					>
@@ -494,7 +477,7 @@
 					class="w-7 h-7 rounded flex items-center justify-center text-qc-muted hover:bg-qc-hover"
 					onclick={() => void refreshEntities()}
 					aria-label="Refresh schema"
-					title="Refresh"
+					data-tip="Refresh"
 				>
 					<RefreshCw
 						size={14}
@@ -510,7 +493,7 @@
 					class="w-7 h-7 rounded flex items-center justify-center text-qc-muted hover:bg-qc-hover"
 					onclick={handleHeaderPlus}
 					aria-label="New query"
-					title="New query"
+					data-tip="New query"
 				>
 					<Plus size={15} />
 				</button>
@@ -520,7 +503,7 @@
 				class="w-7 h-7 rounded flex items-center justify-center text-qc-muted hover:bg-qc-hover"
 				onclick={() => (showSearch = !showSearch)}
 				aria-label="Search schema"
-				title="Search"
+				data-tip="Search"
 			>
 				<Search size={14} />
 			</button>
@@ -546,7 +529,7 @@
 							{/if}
 						</button>
 					{/each}
-					{#if connectionStatus.connected && dialectCapabilities(connectionStatus.databaseType).canCreateDatabase}
+					{#if connectionStatus.connected && !connectionStatus.readOnly && dialectCapabilities(connectionStatus.databaseType).canCreateDatabase}
 						<div class="my-1 border-t border-qc-border-subtle"></div>
 						<button
 							type="button"
@@ -626,7 +609,7 @@
 								type="button"
 								class="sidebar-item w-full flex items-center gap-2 text-[12px] text-left"
 								onclick={() => openSaved(item.sql)}
-								title={item.title}
+								data-tip={item.title}
 							>
 								<Star
 									size={14}
@@ -651,7 +634,7 @@
 									onOpenHistory?.(index);
 									onOpenSavedQuery?.(item.sql);
 								}}
-								title={item.sql}
+								data-tip={item.sql}
 							>
 								<History
 									size={14}
@@ -740,7 +723,7 @@
 										identityArgs: routine.identityArgs,
 									})}
 								class="sidebar-item w-full flex items-center gap-1.5 text-[12px] text-left"
-								title={routine.returnType
+								data-tip={routine.returnType
 									? `${routineSignature(routine)} → ${routine.returnType}`
 									: routineSignature(routine)}
 							>
@@ -771,7 +754,7 @@
 										identityArgs: routine.identityArgs,
 									})}
 								class="sidebar-item w-full flex items-center gap-1.5 text-[12px] text-left"
-								title={routineSignature(routine)}
+								data-tip={routineSignature(routine)}
 							>
 								<Play size={14} class="shrink-0" />
 								<span class="truncate">{routineSignature(routine)}</span>
@@ -799,7 +782,7 @@
 										canViewData: true,
 									})}
 								class="sidebar-item w-full flex items-center gap-1.5 text-[12px] text-left"
-								title={sequence.dataType
+								data-tip={sequence.dataType
 									? `${sequence.name} (${sequence.dataType})`
 									: sequence.name}
 							>
@@ -821,6 +804,7 @@
 			<div
 				class="ctx-menu fixed z-[75]"
 				style={`left:${contextMenu.x}px;top:${contextMenu.y}px;`}
+				use:fitToViewport={{ x: contextMenu.x, y: contextMenu.y }}
 			>
 				<button
 					onclick={() => runMenuAction('view_data')}
@@ -891,6 +875,7 @@
 			<div
 				class="ctx-menu fixed z-[75]"
 				style={`left:${objectContextMenu.x}px;top:${objectContextMenu.y}px;`}
+				use:fitToViewport={{ x: objectContextMenu.x, y: objectContextMenu.y }}
 			>
 				{#if objectContextMenu.canViewData}
 					<button
@@ -946,6 +931,7 @@
 			<div
 				class="ctx-menu fixed z-[75]"
 				style={`left:${schemaContextMenu.x}px;top:${schemaContextMenu.y}px;`}
+				use:fitToViewport={{ x: schemaContextMenu.x, y: schemaContextMenu.y }}
 			>
 				<button
 					onclick={() => runSchemaMenuAction('copy_name')}

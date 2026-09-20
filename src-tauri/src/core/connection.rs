@@ -30,7 +30,99 @@ fn default_database(database_type: DatabaseType) -> &'static str {
     }
 }
 
+fn overlay_session_flags(
+    mut built: ConnectionInput,
+    source: &ConnectionInput,
+) -> Result<ConnectionInput, DbError> {
+    built.read_only = source.read_only;
+    if built.database_type == DatabaseType::Sqlite {
+        built.ssh_enabled = false;
+        built.ssh_host = String::new();
+        built.ssh_port = 22;
+        built.ssh_user = String::new();
+        built.ssh_password = String::new();
+        built.ssh_private_key_path = String::new();
+        built.ssh_key_passphrase = String::new();
+        return Ok(built);
+    }
+    built.ssh_enabled = source.ssh_enabled;
+    built.ssh_host = source.ssh_host.trim().to_string();
+    built.ssh_port = if source.ssh_port == 0 { 22 } else { source.ssh_port };
+    built.ssh_user = source.ssh_user.trim().to_string();
+    built.ssh_password = source.ssh_password.clone();
+    built.ssh_private_key_path = source.ssh_private_key_path.trim().to_string();
+    built.ssh_key_passphrase = source.ssh_key_passphrase.clone();
+    if built.ssh_enabled {
+        if built.ssh_host.is_empty() || built.ssh_user.is_empty() {
+            return Err(DbError::validation("SSH host and user are required"));
+        }
+        if built.ssh_password.is_empty() && built.ssh_private_key_path.is_empty() {
+            return Err(DbError::validation(
+                "SSH password or private key is required",
+            ));
+        }
+    }
+    Ok(built)
+}
+
+pub(crate) fn rewrite_for_local_tunnel(input: &ConnectionInput, local_port: u16) -> ConnectionInput {
+    let mut next = input.clone();
+    next.host = "127.0.0.1".to_string();
+    next.port = local_port;
+    if next.use_connection_string && !next.connection_string.trim().is_empty() {
+        next.connection_string = rewrite_endpoint(&next.connection_string, local_port);
+    }
+    next
+}
+
+fn rewrite_endpoint(raw: &str, local_port: u16) -> String {
+    let trimmed = raw.trim();
+    if let Some(rest) = trimmed
+        .strip_prefix("jdbc:sqlserver://")
+        .or_else(|| trimmed.strip_prefix("jdbc:SQLServer://"))
+    {
+        let (hostport, params) = rest.split_once(';').unwrap_or((rest, ""));
+        let _ = hostport;
+        return if params.is_empty() {
+            format!("jdbc:sqlserver://127.0.0.1:{local_port}")
+        } else {
+            format!("jdbc:sqlserver://127.0.0.1:{local_port};{params}")
+        };
+    }
+    if let Ok(mut url) = Url::parse(trimmed) {
+        if url.host_str().is_some() {
+            let _ = url.set_host(Some("127.0.0.1"));
+            let _ = url.set_port(Some(local_port));
+            return url.to_string();
+        }
+    }
+    let mut parts: Vec<String> = Vec::new();
+    let mut replaced = false;
+    for part in trimmed.split(';') {
+        let item = part.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let Some((key, _)) = item.split_once('=') else {
+            parts.push(item.to_string());
+            continue;
+        };
+        if key.eq_ignore_ascii_case("server") || key.eq_ignore_ascii_case("data source") {
+            parts.push(format!("{}=127.0.0.1,{local_port}", key.trim()));
+            replaced = true;
+        } else {
+            parts.push(item.to_string());
+        }
+    }
+    if replaced {
+        parts.join(";")
+    } else {
+        trimmed.to_string()
+    }
+}
+
 pub(crate) fn normalize_connection_input(input: ConnectionInput) -> Result<ConnectionInput, DbError> {
+    let source = input.clone();
     let database_type = input.database_type;
 
     if input.use_connection_string {
@@ -95,7 +187,7 @@ pub(crate) fn normalize_connection_input(input: ConnectionInput) -> Result<Conne
             }
         });
 
-        return Ok(ConnectionInput {
+        return overlay_session_flags(ConnectionInput {
             database_type,
             name: if input.name.trim().is_empty() {
                 database.clone()
@@ -131,7 +223,8 @@ pub(crate) fn normalize_connection_input(input: ConnectionInput) -> Result<Conne
             },
             use_connection_string: true,
             connection_string: raw,
-        });
+            ..ConnectionInput::default()
+        }, &source);
     }
 
     if database_type == DatabaseType::Sqlite {
@@ -142,7 +235,7 @@ pub(crate) fn normalize_connection_input(input: ConnectionInput) -> Result<Conne
         return Err(DbError::validation("Host and user are required"));
     }
 
-    Ok(ConnectionInput {
+    overlay_session_flags(ConnectionInput {
         database_type,
         name: if input.name.trim().is_empty() {
             if !input.database.trim().is_empty() {
@@ -184,7 +277,8 @@ pub(crate) fn normalize_connection_input(input: ConnectionInput) -> Result<Conne
         },
         use_connection_string: false,
         connection_string: String::new(),
-    })
+        ..ConnectionInput::default()
+    }, &source)
 }
 
 pub(crate) fn with_new_database(connection: &ConnectionInput, new_database: &str) -> ConnectionInput {
@@ -244,6 +338,7 @@ fn normalize_mssql_ado_string(
     input: ConnectionInput,
     raw: String,
 ) -> Result<ConnectionInput, DbError> {
+    let source = input.clone();
     let mut host = input.host;
     let mut port = if input.port == 0 {
         default_port(DatabaseType::Mssql)
@@ -304,7 +399,7 @@ fn normalize_mssql_ado_string(
         host = "localhost".to_string();
     }
 
-    Ok(ConnectionInput {
+    overlay_session_flags(ConnectionInput {
         database_type: DatabaseType::Mssql,
         name: if input.name.trim().is_empty() {
             database.clone()
@@ -320,7 +415,8 @@ fn normalize_mssql_ado_string(
         ssl_insecure,
         use_connection_string: true,
         connection_string: raw,
-    })
+        ..ConnectionInput::default()
+    }, &source)
 }
 
 #[cfg(test)]
@@ -340,6 +436,7 @@ mod tests {
             ssl_insecure: true,
             use_connection_string: false,
             connection_string: String::new(),
+            ..ConnectionInput::default()
         }
     }
 
@@ -382,5 +479,24 @@ mod tests {
         assert_eq!(ado.database, "shop");
         assert!(ado.ssl);
         assert!(ado.ssl_insecure);
+    }
+
+    #[test]
+    fn preserves_read_only_and_rewrites_tunnel_endpoint() {
+        let mut input = sample();
+        input.read_only = true;
+        input.ssh_enabled = true;
+        input.ssh_host = "bastion".into();
+        input.ssh_user = "ubuntu".into();
+        input.ssh_password = "pw".into();
+        let out = normalize_connection_input(input).unwrap();
+        assert!(out.read_only);
+        assert!(out.ssh_enabled);
+        assert_eq!(out.ssh_port, 22);
+
+        let tunneled = rewrite_for_local_tunnel(&out, 2345);
+        assert_eq!(tunneled.host, "127.0.0.1");
+        assert_eq!(tunneled.port, 2345);
+        assert_eq!(tunneled.ssh_host, "bastion");
     }
 }

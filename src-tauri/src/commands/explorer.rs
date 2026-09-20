@@ -69,8 +69,13 @@ pub async fn select_database(
     }
 
     let session_id = session.id.clone();
+    let tunnel = session.tunnel.clone();
     let next_connection = crate::core::connection::with_new_database(&session.input, next_database);
-    let pool = create_pool(&next_connection).map_err(StructuredDbError::from)?;
+    let connect_input = match tunnel.as_ref() {
+        Some(tunnel) => crate::core::connection::rewrite_for_local_tunnel(&next_connection, tunnel.local_port),
+        None => next_connection.clone(),
+    };
+    let pool = create_pool(&connect_input).map_err(StructuredDbError::from)?;
     let server_version = crate::adapters::server_version(&pool)
         .await
         .map_err(StructuredDbError::from)?;
@@ -80,6 +85,7 @@ pub async fn select_database(
         input: next_connection,
         server_version,
         pool,
+        tunnel,
     });
     let status = status_from_active(&next);
     let mut guard = state.inner.write().await;

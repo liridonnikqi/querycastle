@@ -17,6 +17,7 @@ use crate::core::types::{
     DatabaseSequence, DatabaseTable, DatabaseTrigger, ObjectDefinition,
     ObjectDefinitionParams, QueryResultPayload, UpdatedRow,
 };
+use tokio_util::sync::CancellationToken;
 
 pub type MssqlClient = Client<Compat<TcpStream>>;
 pub type MssqlPool = Pool<MssqlManager>;
@@ -247,7 +248,11 @@ pub async fn server_version(pool: &MssqlPool) -> Result<Option<String>, DbError>
     Ok(None)
 }
 
-pub async fn run_query(pool: &MssqlPool, sql_text: &str) -> Result<QueryResultPayload, DbError> {
+pub async fn run_query(
+    pool: &MssqlPool,
+    sql_text: &str,
+    cancel: CancellationToken,
+) -> Result<QueryResultPayload, DbError> {
     let mut conn = pool.get().await?;
     let started = std::time::Instant::now();
     let sql_text = sql_text.to_string();
@@ -293,11 +298,20 @@ pub async fn run_query(pool: &MssqlPool, sql_text: &str) -> Result<QueryResultPa
         })
     };
 
-    match tokio::time::timeout(Duration::from_millis(QUERY_TIMEOUT_MS), fut).await {
-        Ok(result) => result,
-        Err(_) => Err(DbError::Timeout {
-            message: format!("Query exceeded {QUERY_TIMEOUT_MS}ms"),
-        }),
+    match tokio::select! {
+        _ = cancel.cancelled() => Err(DbError::cancelled()),
+        result = tokio::time::timeout(Duration::from_millis(QUERY_TIMEOUT_MS), fut) => {
+            match result {
+                Ok(result) => result,
+                Err(_) => Err(DbError::Timeout {
+                    message: format!("Query exceeded {QUERY_TIMEOUT_MS}ms"),
+                }),
+            }
+        }
+    } {
+        Ok(payload) => Ok(payload),
+        Err(_) if cancel.is_cancelled() => Err(DbError::cancelled()),
+        Err(err) => Err(err),
     }
 }
 

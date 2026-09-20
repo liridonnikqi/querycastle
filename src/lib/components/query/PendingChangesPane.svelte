@@ -7,8 +7,10 @@
 		cards,
 		sqlPreview,
 		syncing = false,
+		canUndo = false,
 		onClose,
 		onClear,
+		onUndo,
 		onCommit,
 	}: {
 		open?: boolean;
@@ -16,8 +18,10 @@
 		cards: PendingChangeCard[];
 		sqlPreview: string;
 		syncing?: boolean;
+		canUndo?: boolean;
 		onClose: () => void;
 		onClear: () => void;
+		onUndo?: () => void;
 		onCommit: () => void;
 	} = $props();
 
@@ -75,7 +79,7 @@
 							>
 								{card.badge}
 							</span>
-							<div class="truncate text-[11px] text-qc-muted" title={card.title}>{card.title}</div>
+							<div class="truncate text-[11px] text-qc-muted" data-tip={card.title}>{card.title}</div>
 						</div>
 						<div class="pending-diff">
 							{#if card.kind === 'update' && hunks.length > 0}
@@ -103,14 +107,24 @@
 			{/if}
 		</div>
 		<div class="h-12 px-3 border-t border-qc-border flex items-center justify-between gap-2 shrink-0 bg-qc-elevated">
-			<button
-				type="button"
-				class="text-xs text-qc-muted hover:text-qc-fg disabled:opacity-40"
-				disabled={changeCount === 0 || syncing}
-				onclick={onClear}
-			>
-				Clear all
-			</button>
+			<div class="flex items-center gap-2">
+				<button
+					type="button"
+					class="text-xs text-qc-muted hover:text-qc-fg disabled:opacity-40"
+					disabled={!canUndo || syncing}
+					onclick={onUndo}
+				>
+					Undo
+				</button>
+				<button
+					type="button"
+					class="text-xs text-qc-muted hover:text-qc-fg disabled:opacity-40"
+					disabled={changeCount === 0 || syncing}
+					onclick={onClear}
+				>
+					Clear all
+				</button>
+			</div>
 			<button
 				type="button"
 				class="h-8 px-3 btn-primary text-xs font-medium disabled:opacity-60"

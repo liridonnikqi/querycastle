@@ -135,7 +135,7 @@
 					<button
 						type="button"
 						aria-label="Close modal"
-						title="Close"
+						data-tip="Close"
 						onclick={onClose}
 						disabled={busy}
 						class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-qc-muted hover:bg-qc-hover hover:text-qc-fg disabled:opacity-50"
@@ -149,7 +149,7 @@
 						{#each DATABASE_ENGINES as provider (provider.value)}
 							<button
 								type="button"
-								title={provider.label}
+								data-tip={provider.label}
 								onclick={() => changeDatabaseType(provider.value)}
 								class="hub-provider"
 								class:selected={connectionForm.databaseType === provider.value}

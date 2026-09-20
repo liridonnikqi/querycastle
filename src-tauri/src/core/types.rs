@@ -30,6 +30,52 @@ pub struct ConnectionInput {
     pub use_connection_string: bool,
     #[serde(default)]
     pub connection_string: String,
+    #[serde(default)]
+    pub read_only: bool,
+    #[serde(default)]
+    pub ssh_enabled: bool,
+    #[serde(default)]
+    pub ssh_host: String,
+    #[serde(default = "default_ssh_port")]
+    pub ssh_port: u16,
+    #[serde(default)]
+    pub ssh_user: String,
+    #[serde(default)]
+    pub ssh_password: String,
+    #[serde(default)]
+    pub ssh_private_key_path: String,
+    #[serde(default)]
+    pub ssh_key_passphrase: String,
+}
+
+fn default_ssh_port() -> u16 {
+    22
+}
+
+impl Default for ConnectionInput {
+    fn default() -> Self {
+        Self {
+            database_type: DatabaseType::Postgres,
+            name: String::new(),
+            host: String::new(),
+            port: 0,
+            user: String::new(),
+            password: String::new(),
+            database: String::new(),
+            ssl: false,
+            ssl_insecure: false,
+            use_connection_string: false,
+            connection_string: String::new(),
+            read_only: false,
+            ssh_enabled: false,
+            ssh_host: String::new(),
+            ssh_port: 22,
+            ssh_user: String::new(),
+            ssh_password: String::new(),
+            ssh_private_key_path: String::new(),
+            ssh_key_passphrase: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,6 +91,10 @@ pub struct ConnectionStatus {
     pub server_version: Option<String>,
     #[serde(default)]
     pub session_id: String,
+    #[serde(default)]
+    pub read_only: bool,
+    #[serde(default)]
+    pub ssh_tunnel: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -230,6 +280,14 @@ pub struct SessionIdParams {
 pub struct QueryParams {
     pub sql: String,
     pub session_id: String,
+    #[serde(default)]
+    pub query_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelQueryParams {
+    pub query_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -275,5 +333,8 @@ mod tests {
         let input: ConnectionInput = serde_json::from_str(json).unwrap();
         assert!(!input.ssl_insecure);
         assert!(input.ssl);
+        assert!(!input.read_only);
+        assert!(!input.ssh_enabled);
+        assert_eq!(input.ssh_port, 22);
     }
 }

@@ -449,14 +449,14 @@
 				</div>
 				<button
 					onclick={handleRelayout}
-					title="Re-layout"
+					data-tip="Re-layout"
 					class="w-8 h-8 rounded-md border border-qc-border bg-qc-panel flex items-center justify-center text-qc-muted hover:text-qc-fg hover:bg-qc-hover"
 				>
 					<LayoutGrid size={14} />
 				</button>
 				<button
 					onclick={handleRefresh}
-					title="Refresh schema"
+					data-tip="Refresh schema"
 					disabled={isRefreshing || loadingExplorer}
 					class="w-8 h-8 rounded-md border border-qc-border bg-qc-panel flex items-center justify-center text-qc-muted hover:text-qc-fg hover:bg-qc-hover disabled:opacity-50"
 				>
@@ -642,21 +642,21 @@
 			<div class="absolute left-3 bottom-3 z-10 flex flex-col items-center gap-1">
 				<button
 					onclick={() => zoomBy(1.25)}
-					title="Zoom in"
+					data-tip="Zoom in"
 					class="w-7 h-7 flex items-center justify-center bg-qc-panel border border-qc-border rounded-md text-qc-muted hover:text-qc-fg hover:bg-qc-hover"
 				>
 					<Plus size={13} />
 				</button>
 				<button
 					onclick={() => zoomBy(1 / 1.25)}
-					title="Zoom out"
+					data-tip="Zoom out"
 					class="w-7 h-7 flex items-center justify-center bg-qc-panel border border-qc-border rounded-md text-qc-muted hover:text-qc-fg hover:bg-qc-hover"
 				>
 					<Minus size={13} />
 				</button>
 				<button
 					onclick={() => fitToScreen()}
-					title="Fit to screen"
+					data-tip="Fit to screen"
 					class="w-7 h-7 flex items-center justify-center bg-qc-panel border border-qc-border rounded-md text-qc-muted hover:text-qc-fg hover:bg-qc-hover"
 				>
 					<Maximize2 size={13} />

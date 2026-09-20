@@ -12,6 +12,14 @@ export type ConnectionInput = {
   sslInsecure?: boolean;
   useConnectionString?: boolean;
   connectionString?: string;
+  readOnly?: boolean;
+  sshEnabled?: boolean;
+  sshHost?: string;
+  sshPort?: number;
+  sshUser?: string;
+  sshPassword?: string;
+  sshPrivateKeyPath?: string;
+  sshKeyPassphrase?: string;
 };
 
 export type ConnectionStatus = {
@@ -24,6 +32,8 @@ export type ConnectionStatus = {
   user: string;
   serverVersion: string | null;
   sessionId: string;
+  readOnly?: boolean;
+  sshTunnel?: boolean;
 };
 
 export type QueryResultPayload = {

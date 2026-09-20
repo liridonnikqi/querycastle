@@ -14,12 +14,20 @@ class ThemeStore {
 	set(next: Theme) {
 		this.value = next;
 		if (typeof document === 'undefined') return;
-		document.documentElement.setAttribute('data-theme', next);
+		const root = document.documentElement;
+		root.classList.add('theme-switching');
+		void root.offsetWidth;
+		root.setAttribute('data-theme', next);
 		try {
 			localStorage.setItem(THEME_STORAGE_KEY, next);
 		} catch {
 			// ignore quota / private-mode failures
 		}
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				root.classList.remove('theme-switching');
+			});
+		});
 	}
 
 	toggle() {

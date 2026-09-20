@@ -15,7 +15,7 @@
 	const showQueryResults = $derived(
 		Boolean(
 			activeTab?.kind === 'query' &&
-				(workspace.isRunningQuery ||
+				((workspace.runningTabId === activeTab.id) ||
 					(activeTab.lastRunSql?.trim().length ?? 0) > 0 ||
 					(activeTab.sqlError?.trim().length ?? 0) > 0 ||
 					(activeTab.result.columns.length ?? 0) > 0),
@@ -28,29 +28,32 @@
 </script>
 
 {#snippet resultsPane(tab: WorkspaceTab)}
-	<ResultsPane
-		result={tab.result}
-		sqlError={tab.sqlError || workspace.globalError}
-		databaseType={workspace.connectionStatus.databaseType}
-		resultContext={tab.resultContext}
-		explorer={workspace.explorer}
-		relationTrail={tab.relationTrail ?? []}
-		loading={workspace.isRunningQuery}
-		refreshSql={tab.lastRunSql}
-		resultKey={`${tab.id}:${tab.lastRunSql}:${tab.result.durationMs}:${tab.result.rowCount}`}
-		runQuery={(sql) => workspace.runSessionQuery(sql)}
-		onRunSql={(query) =>
-			workspace.executeQuery(query, {
-				pushToHistory: false,
-				targetTabId: tab.id,
-				context: tab.resultContext,
-			})}
-		onApplyTableChanges={(context, changes) =>
-			workspace.applyTableChanges(context, changes)}
-		onFollowRelation={(hop) => workspace.followRelation(hop)}
-		onActivateRelationTrail={(index) => workspace.activateRelationTrail(index)}
-		durationMs={tab.result.durationMs || workspace.queryDurationMs}
-	/>
+	{#key tab.id}
+		<ResultsPane
+			result={tab.result}
+			sqlError={tab.sqlError}
+			databaseType={workspace.connectionStatus.databaseType}
+			resultContext={tab.resultContext}
+			explorer={workspace.explorer}
+			relationTrail={tab.relationTrail ?? []}
+			loading={workspace.runningTabId === tab.id}
+			refreshSql={tab.lastRunSql}
+			resultKey={`${tab.id}:${tab.lastRunSql}:${tab.result.durationMs}:${tab.result.rowCount}`}
+			runQuery={(sql) => workspace.runSessionQuery(sql)}
+			onRunSql={(query) =>
+				workspace.executeQuery(query, {
+					pushToHistory: false,
+					targetTabId: tab.id,
+					context: tab.resultContext,
+				})}
+			onApplyTableChanges={(context, changes) =>
+				workspace.applyTableChanges(context, changes)}
+			onFollowRelation={(hop) => workspace.followRelation(hop)}
+			onActivateRelationTrail={(index) => workspace.activateRelationTrail(index)}
+			durationMs={tab.result.durationMs}
+			readOnly={Boolean(workspace.connectionStatus.readOnly)}
+		/>
+	{/key}
 {/snippet}
 
 <ExplorerSidebar
@@ -105,9 +108,10 @@
 				value={activeTab.sql}
 				onChange={(sql) => workspace.setActiveSql(sql)}
 				onRun={(query) => void workspace.handleRunQuery(query)}
+				onCancel={() => void workspace.cancelRunningQuery()}
 				onSaveQuery={() => workspace.saveActiveQuery()}
 				onFormatQuery={() => workspace.formatActiveQuery()}
-				running={workspace.isRunningQuery}
+				running={workspace.runningTabId === workspace.activeTabId}
 				disabled={!workspace.connectionStatus.connected}
 				explorer={workspace.explorer}
 				databaseType={workspace.connectionStatus.databaseType}

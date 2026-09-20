@@ -16,6 +16,8 @@ pub enum DbError {
     NotFound(String),
     #[error("{0}")]
     Internal(String),
+    #[error("Query cancelled")]
+    Cancelled,
 }
 
 impl DbError {
@@ -28,6 +30,7 @@ impl DbError {
             DbError::Validation(_) => "validation",
             DbError::NotFound(_) => "not_found",
             DbError::Internal(_) => "internal",
+            DbError::Cancelled => "cancelled",
         }
     }
 
@@ -55,8 +58,20 @@ impl DbError {
         DbError::Connection { message: msg.into(), code: None }
     }
 
+    pub fn auth(msg: impl Into<String>) -> Self {
+        DbError::Auth { message: msg.into() }
+    }
+
     pub fn query(msg: impl Into<String>) -> Self {
         DbError::Query { message: msg.into(), code: None }
+    }
+
+    pub fn cancelled() -> Self {
+        DbError::Cancelled
+    }
+
+    pub fn read_only() -> Self {
+        DbError::validation("This connection is read-only. Write queries are blocked.")
     }
 }
 

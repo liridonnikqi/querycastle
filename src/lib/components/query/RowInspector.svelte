@@ -106,7 +106,7 @@
 									disabled={!editable || locked}
 									oninput={(event) => onFieldChange(column, event.currentTarget.value)}
 									class="field-input w-full h-8 px-2.5 text-[12px] font-mono disabled:opacity-60"
-									title={displayCellText(values[column], meta)}
+									data-tip={displayCellText(values[column], meta)}
 								/>
 							{/if}
 						</div>

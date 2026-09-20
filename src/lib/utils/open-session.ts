@@ -39,6 +39,8 @@ export function disconnectedStatus(): ConnectionStatus {
 		user: '',
 		serverVersion: null,
 		sessionId: '',
+		readOnly: false,
+		sshTunnel: false,
 	};
 }
 

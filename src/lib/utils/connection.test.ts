@@ -25,16 +25,31 @@ describe('connectionMetaLine', () => {
 		const connection = { ...defaultsForType('sqlite'), database: 'C:/data/demo.db' };
 		expect(connectionMetaLine(connection)).toBe('sqlite · demo.db');
 	});
+
+	it('annotates read-only and ssh connections', () => {
+		expect(
+			connectionMetaLine({
+				...defaultsForType('postgres'),
+				readOnly: true,
+				sshEnabled: true,
+			}),
+		).toBe('postgres · localhost · read-only · ssh');
+	});
 });
 
 describe('connection form helpers', () => {
-	it('switches engine defaults but keeps a custom name and password', () => {
+	it('keeps read-only and SSH fields when switching engines', () => {
 		const current = {
 			...defaultsForType('postgres'),
 			name: 'prod',
 			password: 's3cret',
 			ssl: true,
 			sslInsecure: true,
+			readOnly: true,
+			sshEnabled: true,
+			sshHost: 'bastion',
+			sshUser: 'ubuntu',
+			sshPort: 22,
 		};
 		const mysql = withDatabaseType(current, 'mysql');
 		expect(mysql.databaseType).toBe('mysql');
@@ -43,12 +58,17 @@ describe('connection form helpers', () => {
 		expect(mysql.port).toBe(3306);
 		expect(mysql.ssl).toBe(true);
 		expect(mysql.sslInsecure).toBe(true);
+		expect(mysql.readOnly).toBe(true);
+		expect(mysql.sshEnabled).toBe(true);
+		expect(mysql.sshHost).toBe('bastion');
 
 		const sqlite = withDatabaseType(current, 'sqlite');
 		expect(sqlite.databaseType).toBe('sqlite');
 		expect(sqlite.password).toBe('');
 		expect(sqlite.ssl).toBe(false);
 		expect(sqlite.sslInsecure).toBe(false);
+		expect(sqlite.readOnly).toBe(true);
+		expect(sqlite.sshEnabled).toBe(false);
 	});
 
 	it('names a sqlite connection from the file when the name is still the default', () => {
@@ -162,6 +182,8 @@ describe('connection secrets', () => {
 		expect(stripped.password).toBe('');
 		expect(stripped.connectionString).not.toContain('s3cret');
 		expect(passwordFromConnection(stripped)).toBe('');
+		expect(stripped.sshPassword).toBe('');
+		expect(stripped.sshKeyPassphrase).toBe('');
 	});
 
 	it('reinjects a keyring password into the form and URL', () => {

@@ -11,8 +11,6 @@
 		PanelRight,
 		Play,
 		Plus,
-		Table2,
-		Timer,
 		Trash2,
 		X,
 	} from '$lib/icons';
@@ -78,6 +76,7 @@
 		rowIdOf,
 	} from '$lib/workspace/results-grid.svelte';
 	import { fly } from 'svelte/transition';
+	import { fitToViewport } from '$lib/utils/viewport';
 	import {
 		PAGE_SIZE_OPTIONS,
 		buildTableBrowseSql,
@@ -121,6 +120,7 @@
 		loading = false,
 		refreshSql = '',
 		resultKey = '',
+		readOnly = false,
 	}: {
 		result: QueryResultPayload;
 		sqlError: string;
@@ -140,6 +140,7 @@
 		loading?: boolean;
 		refreshSql?: string;
 		resultKey?: string;
+		readOnly?: boolean;
 	} = $props();
 
 	let displayResult = $state<QueryResultPayload>({
@@ -156,6 +157,8 @@
 	let syncingChanges = $state(false);
 	let rowContextMenu = $state<RowContextMenu>(null);
 	let relatedSubmenuOpen = $state(false);
+	let relatedSubmenuFlip = $state(false);
+	let relatedSubmenuEl = $state<HTMLDivElement | null>(null);
 	let editingCell = $state<EditingCell>(null);
 	let editDraft = $state('');
 	let columnWidths = $state<Record<string, number>>({});
@@ -206,6 +209,7 @@
 			resultColumns: displayResult.columns,
 			rowCount: displayResult.rows.length,
 			visibleColumns,
+			readOnly,
 		}),
 	);
 	let isCommandResult = $derived(
@@ -394,6 +398,7 @@
 		relatedSubmenuOpen = false;
 		editingCell = null;
 		editDraft = '';
+		relatedSubmenuFlip = false;
 		keepDraftsOnNextResult = false;
 		pendingPanelOpen = false;
 		userCollapsedPending = false;
@@ -980,8 +985,22 @@
 		if (!editable && outgoing.length === 0 && incoming.length === 0) return;
 		event.preventDefault();
 		relatedSubmenuOpen = false;
+		relatedSubmenuFlip = false;
 		rowContextMenu = { x: event.clientX, y: event.clientY, rowId, row };
 	}
+
+	$effect(() => {
+		if (!relatedSubmenuOpen) {
+			relatedSubmenuFlip = false;
+			return;
+		}
+		const el = relatedSubmenuEl;
+		if (!el) return;
+		requestAnimationFrame(() => {
+			if (!relatedSubmenuOpen) return;
+			relatedSubmenuFlip = el.getBoundingClientRect().right > window.innerWidth - 8;
+		});
+	});
 
 	function startInsertRow() {
 		if (!editable) return;
@@ -1315,6 +1334,16 @@
 				if (editingCell) commitEdit();
 				return;
 			}
+			if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !event.shiftKey) {
+				const target = event.target as HTMLElement | null;
+				if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+				if (editingCell) return;
+				if (grid.canUndo) {
+					event.preventDefault();
+					grid.undo();
+				}
+				return;
+			}
 			if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'c')
 				return;
 			const target = event.target as HTMLElement | null;
@@ -1369,7 +1398,7 @@
 	});
 </script>
 
-<div class="results-pane flex-1 flex flex-col bg-qc-grid min-w-[320px] min-h-0">
+<div class="results-pane flex-1 flex flex-col bg-qc-grid min-w-[320px] min-h-0 overflow-hidden">
 	{#snippet fillerHeader()}
 		{#each Array.from({ length: fillerColCount }) as _, i (`fill-h-${i}`)}
 			<th
@@ -1403,7 +1432,7 @@
 					type="button"
 					onclick={() => queueDeleteRows(Array.from(grid.selectedRows))}
 					class="btn-danger h-6 w-[72px] px-2 text-[12px] font-medium inline-flex items-center justify-center gap-1 shrink-0"
-					title={`Delete ${grid.selectedRows.size} row${grid.selectedRows.size === 1 ? '' : 's'}`}
+					data-tip={`Delete ${grid.selectedRows.size} row${grid.selectedRows.size === 1 ? '' : 's'}`}
 				>
 					<Trash2 size={12} />Delete
 				</button>
@@ -1423,7 +1452,7 @@
 			onclick={rerunContextQuery}
 			disabled={rerunning || loading}
 			class="toolbar-icon disabled:opacity-50"
-			title={rerunning ? 'Running' : 'Refresh'}
+			data-tip={rerunning ? 'Running' : 'Refresh'}
 			aria-label="Refresh results"
 		>
 			<Play size={14} />
@@ -1432,7 +1461,7 @@
 			type="button"
 			onclick={() => (grid.showFilterRow = !grid.showFilterRow)}
 			class={`toolbar-icon ${grid.showFilterRow || hasActiveFilters ? 'is-on' : ''}`}
-			title="Filter"
+			data-tip="Filter"
 			aria-label="Filter"
 			aria-pressed={grid.showFilterRow || hasActiveFilters}
 		>
@@ -1443,7 +1472,7 @@
 				type="button"
 				onclick={clearFilters}
 				class="toolbar-icon"
-				title="Clear filters"
+				data-tip="Clear filters"
 				aria-label="Clear filters"
 			>
 				<X size={13} />
@@ -1454,7 +1483,7 @@
 				type="button"
 				onclick={() => (showSortMenu = !showSortMenu)}
 				class={`toolbar-icon ${sort || showSortMenu ? 'is-on' : ''}`}
-				title="Sort"
+				data-tip="Sort"
 				aria-label="Sort"
 				aria-pressed={Boolean(sort) || showSortMenu}
 			>
@@ -1465,7 +1494,7 @@
 					type="button"
 					onclick={clearSort}
 					class="toolbar-icon"
-					title="Clear sort"
+					data-tip="Clear sort"
 					aria-label="Clear sort"
 				>
 					<X size={13} />
@@ -1513,7 +1542,7 @@
 				type="button"
 				onclick={copySelectedRows}
 				class="toolbar-icon"
-				title="Copy selected rows"
+				data-tip="Copy selected rows"
 				aria-label="Copy selected rows"
 			>
 				<Copy size={14} />
@@ -1522,98 +1551,97 @@
 				type="button"
 				onclick={() => grid.clearSelection()}
 				class="h-7 px-1.5 text-[11px] text-qc-muted hover:text-qc-subtle inline-flex items-center gap-1 shrink-0"
-				title="Clear selection"
+				data-tip="Clear selection"
 			>
 				{grid.selectedRows.size} selected
 				<X size={11} />
 			</button>
 		{/if}
 		<div class="flex-1 min-w-2"></div>
-		<div class="flex items-center gap-0.5 text-[12px] shrink-0">
-			<button
-				type="button"
-				class={`h-7 px-2 rounded ${activeView === 'results' ? 'text-qc-fg' : 'text-qc-muted hover:text-qc-subtle'}`}
-				onclick={() => (activeView = 'results')}
-			>
-				Results
-			</button>
-			<button
-				type="button"
-				class={`h-7 px-2 rounded ${activeView === 'messages' ? 'text-qc-fg' : 'text-qc-muted hover:text-qc-subtle'}`}
-				onclick={() => (activeView = 'messages')}
-			>
-				Messages
-			</button>
-			{#if dialectCapabilities(databaseType).supportsExplain}
+		{#if !resultContext || activeView !== 'results' || sqlError}
+			<div class="results-view-tabs shrink-0">
 				<button
 					type="button"
-					class={`h-7 px-2 rounded ${activeView === 'explain' ? 'text-qc-fg' : 'text-qc-muted hover:text-qc-subtle'}`}
-					onclick={() => (activeView = 'explain')}
+					class={activeView === 'results' ? 'is-on' : ''}
+					onclick={() => (activeView = 'results')}
 				>
-					Explain
+					Results
 				</button>
+				<button
+					type="button"
+					class={activeView === 'messages' ? 'is-on' : ''}
+					onclick={() => (activeView = 'messages')}
+				>
+					Messages
+				</button>
+				{#if dialectCapabilities(databaseType).supportsExplain}
+					<button
+						type="button"
+						class={activeView === 'explain' ? 'is-on' : ''}
+						onclick={() => (activeView = 'explain')}
+					>
+						Explain
+					</button>
+				{/if}
+			</div>
+		{/if}
+		<div class="flex items-center gap-0.5 text-qc-muted shrink-0">
+			{#if pageCount > 1}
+				<button
+					type="button"
+					class="toolbar-icon disabled:opacity-40"
+					disabled={page <= 1}
+					onclick={() => goToPage(page - 1)}
+					aria-label="Previous page"
+				>
+					<ChevronLeft size={14} />
+				</button>
+				<span class="px-0.5 text-[11px] tabular-nums text-qc-subtle"
+					>{page}/{pageCount}</span
+				>
+				<button
+					type="button"
+					class="toolbar-icon disabled:opacity-40"
+					disabled={page >= pageCount}
+					onclick={() => goToPage(page + 1)}
+					aria-label="Next page"
+				>
+					<ChevronRight size={14} />
+				</button>
+				<select
+					class="h-6 border-0 bg-transparent text-[11px] text-qc-muted px-0.5 outline-none"
+					value={String(grid.pageSize)}
+					onchange={(event) =>
+						setPageSize(
+							Number(
+								(event.currentTarget as HTMLSelectElement).value,
+							) as PageSize,
+						)}
+					aria-label="Rows per page"
+					data-tip="Rows per page"
+				>
+					{#each PAGE_SIZE_OPTIONS as size}
+						<option value={String(size)}>{size}</option>
+					{/each}
+				</select>
 			{/if}
-		</div>
-		<div class="w-px h-4 bg-qc-border mx-1 shrink-0"></div>
-		<div class="flex items-center gap-1 text-[12px] text-qc-muted shrink-0">
-			<button
-				type="button"
-				class="w-6 h-6 rounded flex items-center justify-center hover:bg-qc-hover hover:text-qc-subtle disabled:opacity-40"
-				disabled={page <= 1}
-				onclick={() => goToPage(page - 1)}
-				aria-label="Previous page"
-			>
-				<ChevronLeft size={14} />
-			</button>
-			<span class="tabular-nums text-qc-subtle">{page}/{pageCount}</span>
-			<button
-				type="button"
-				class="w-6 h-6 rounded flex items-center justify-center hover:bg-qc-hover hover:text-qc-subtle disabled:opacity-40"
-				disabled={page >= pageCount}
-				onclick={() => goToPage(page + 1)}
-				aria-label="Next page"
-			>
-				<ChevronRight size={14} />
-			</button>
-			<select
-				class="h-6 rounded border border-qc-border bg-qc-elevated text-[11px] text-qc-subtle px-1 outline-none"
-				value={String(grid.pageSize)}
-				onchange={(event) =>
-					setPageSize(
-						Number(
-							(event.currentTarget as HTMLSelectElement).value,
-						) as PageSize,
-					)}
-			>
-				{#each PAGE_SIZE_OPTIONS as size}
-					<option value={String(size)}>{size}</option>
-				{/each}
-			</select>
 			<button
 				type="button"
 				class={`toolbar-icon ${inspectorOpen ? 'is-on' : ''}`}
 				onclick={toggleInspector}
-				title={inspectorOpen ? 'Hide row inspector' : 'Show row inspector'}
+				data-tip={inspectorOpen ? 'Hide row inspector' : 'Show row inspector'}
 				aria-label={inspectorOpen ? 'Hide row inspector' : 'Show row inspector'}
 				aria-pressed={inspectorOpen}
 			>
 				<PanelRight size={14} />
 			</button>
 			<span
-				class="inline-flex items-center gap-1 tabular-nums"
-				title={displayResult.truncated
-					? `${displayTotal} rows (result capped at 1000)`
-					: `${displayTotal} rows`}
+				class="pl-1 text-[11px] tabular-nums text-qc-muted"
+				data-tip={displayResult.truncated
+					? `${displayTotal} rows (result capped at 1000) · ${durationMs}ms`
+					: `${displayTotal} rows · ${durationMs}ms`}
 			>
-				<Table2 size={12} />
-				{displayTotal}{displayResult.truncated ? '+' : ''}
-			</span>
-			<span
-				class="hidden sm:inline-flex items-center gap-1 tabular-nums"
-				title={`Ran in ${durationMs}ms`}
-			>
-				<Timer size={12} />
-				{durationMs}ms
+				{displayTotal}{displayResult.truncated ? '+' : ''} · {durationMs}ms
 			</span>
 		</div>
 	</div>
@@ -1628,7 +1656,7 @@
 
 	<div class="flex-1 flex min-h-0">
 		<div
-			class="flex-1 overflow-auto bg-qc-grid min-h-0 relative"
+			class="flex-1 overflow-auto bg-qc-grid min-h-0 relative isolate"
 			bind:this={gridScrollEl}
 			onscroll={updateRangeOverlay}
 		>
@@ -1856,7 +1884,6 @@
 								<tr
 									class="row-pending-insert h-8 max-h-8"
 									in:fly|local={{ y: -8, duration: 220 }}
-									out:fly|local={{ y: -8, duration: 180 }}
 								>
 									<td class="qc-select-col">
 										<div
@@ -1916,8 +1943,7 @@
 								{@const isActive = grid.activeRowId === rowId}
 								{@const isPendingDelete = grid.pendingDeletes.has(rowId)}
 								<tr
-									class={`group table-row h-8 max-h-8 transition-colors duration-200 ${isPendingDelete ? 'row-pending-delete' : isChecked ? 'row-selected' : isActive ? 'row-current' : ''}`}
-									out:fly|local={{ y: -6, duration: 180 }}
+									class={`group table-row h-8 max-h-8 ${isPendingDelete ? 'row-pending-delete' : isChecked ? 'row-selected' : isActive ? 'row-current' : ''}`}
 									oncontextmenu={(event) =>
 										openRowContextMenu(event, rowId, row)}
 									onclick={() => {
@@ -1961,7 +1987,7 @@
 												extendCellRange(rowIndex, colIndex, event)}
 											onclick={(event) =>
 												handleCellClick(event, rowId, column, currentValue)}
-											title={isPendingEdit
+											data-tip={isPendingEdit
 												? `${displayCellText(row[column], meta)} → ${displayCellText(currentValue, meta)}`
 												: isEmptyCell(currentValue)
 													? canFollowFk
@@ -2017,7 +2043,7 @@
 														<button
 															type="button"
 															class="shrink-0 rounded p-0.5 text-qc-cell opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-qc-hover"
-															title="Open related record"
+															data-tip="Open related record"
 															aria-label="Follow foreign key"
 															onclick={(event) => {
 																event.stopPropagation();
@@ -2080,11 +2106,13 @@
 			cards={pendingCards}
 			sqlPreview={pendingSqlPreview}
 			syncing={syncingChanges}
+			canUndo={grid.canUndo}
 			onClose={() => {
 				pendingPanelOpen = false;
 				userCollapsedPending = true;
 			}}
 			onClear={resetDraftState}
+			onUndo={() => grid.undo()}
 			onCommit={() => void syncChanges()}
 		/>
 	</div>
@@ -2104,11 +2132,16 @@
 			onclick={() => {
 				rowContextMenu = null;
 				relatedSubmenuOpen = false;
+				relatedSubmenuFlip = false;
 			}}
 		></button>
 		<div
 			class="ctx-menu fixed z-50"
 			style={`left:${rowContextMenu?.x ?? 0}px;top:${rowContextMenu?.y ?? 0}px;`}
+			use:fitToViewport={{
+				x: rowContextMenu?.x ?? 0,
+				y: rowContextMenu?.y ?? 0,
+			}}
 		>
 			<button
 				type="button"
@@ -2125,7 +2158,7 @@
 					disabled={hasPendingChanges}
 					onclick={() => startOutgoingFollow(item.fk, item.value)}
 					class="ctx-item"
-					title={hasPendingChanges
+					data-tip={hasPendingChanges
 						? 'Save or discard grid edits first'
 						: undefined}
 				>
@@ -2149,7 +2182,8 @@
 					</button>
 					{#if relatedSubmenuOpen}
 						<div
-							class="ctx-menu absolute left-full top-0 ml-0.5 max-h-72 overflow-auto"
+							bind:this={relatedSubmenuEl}
+							class={`ctx-menu absolute top-0 max-h-72 overflow-auto ${relatedSubmenuFlip ? 'right-full mr-0.5' : 'left-full ml-0.5'}`}
 						>
 							{#each incoming as rel}
 								<button
@@ -2157,7 +2191,7 @@
 									disabled={hasPendingChanges}
 									onclick={() => startIncomingFollow(rel, rel.value)}
 									class="ctx-item"
-									title={hasPendingChanges
+									data-tip={hasPendingChanges
 										? 'Save or discard grid edits first'
 										: undefined}
 								>
@@ -2174,7 +2208,7 @@
 						disabled={hasPendingChanges}
 						onclick={() => startIncomingFollow(rel, rel.value)}
 						class="ctx-item"
-						title={hasPendingChanges
+						data-tip={hasPendingChanges
 							? 'Save or discard grid edits first'
 							: undefined}
 					>

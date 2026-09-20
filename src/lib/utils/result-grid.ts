@@ -32,7 +32,9 @@ export function isGridEditable(params: {
 	resultColumns: string[];
 	rowCount: number;
 	visibleColumns: string[];
+	readOnly?: boolean;
 }): boolean {
+	if (params.readOnly) return false;
 	if (!params.context) return false;
 	if (
 		!canEditTable(

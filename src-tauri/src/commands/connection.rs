@@ -4,7 +4,7 @@ use tauri::State;
 use tracing::info;
 
 use crate::core::error::{DbError, StructuredDbError};
-use crate::core::pool::create_pool;
+use crate::core::pool::establish_pool;
 use crate::core::state::{
     disconnected_status, new_session_id, status_from_active, ActiveConnection, AppState,
 };
@@ -32,7 +32,7 @@ pub async fn connect(
     state: State<'_, AppState>,
 ) -> Result<ConnectionStatus, StructuredDbError> {
     let normalized = crate::core::connection::normalize_connection_input(params).map_err(StructuredDbError::from)?;
-    let pool = create_pool(&normalized).map_err(StructuredDbError::from)?;
+    let (pool, tunnel) = establish_pool(&normalized).await.map_err(StructuredDbError::from)?;
     info!(
         "Creating pool for {:?} at {}:{}",
         normalized.database_type, normalized.host, normalized.port
@@ -47,6 +47,7 @@ pub async fn connect(
         input: normalized,
         server_version,
         pool,
+        tunnel: tunnel.map(Arc::new),
     };
     let status = status_from_active(&active);
     {

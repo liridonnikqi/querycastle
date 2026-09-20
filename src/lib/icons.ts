@@ -47,6 +47,7 @@ export { default as Save } from 'phosphor-svelte/lib/FloppyDiskIcon';
 export { default as ScrollText } from 'phosphor-svelte/lib/ScrollIcon';
 export { default as Search } from 'phosphor-svelte/lib/MagnifyingGlassIcon';
 export { default as SquarePen } from 'phosphor-svelte/lib/PencilSimpleIcon';
+export { default as Square } from 'phosphor-svelte/lib/StopIcon';
 export { default as Star } from 'phosphor-svelte/lib/StarIcon';
 export { default as Sun } from 'phosphor-svelte/lib/SunIcon';
 export { default as Table2 } from '$lib/components/icons/Table.svelte';

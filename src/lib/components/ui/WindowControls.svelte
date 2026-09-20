@@ -71,6 +71,7 @@
 		<button
 			type="button"
 			aria-label="Minimize window"
+			data-tip="Minimize"
 			class="w-8 h-7 rounded-md flex items-center justify-center text-qc-muted hover:bg-qc-hover hover:text-qc-fg"
 			onmousedown={(event) => event.stopPropagation()}
 			onclick={handleMinimize}

@@ -17,7 +17,7 @@
 	onmousedown={(event) => event.stopPropagation()}
 	data-tauri-drag-region="false"
 	class={className}
-	{title}
+	data-tip={title}
 	aria-label={title}
 >
 	{#if theme.value === 'light'}

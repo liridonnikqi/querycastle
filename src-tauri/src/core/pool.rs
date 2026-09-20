@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use crate::core::error::DbError;
+use crate::core::tunnel::SshTunnel;
 use crate::core::types::{ConnectionInput, DatabaseType};
 
 #[derive(Debug, Clone)]
@@ -9,6 +10,20 @@ pub enum Pool {
     Mysql(mysql_async::Pool),
     Sqlite(r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>),
     Mssql(crate::adapters::mssql::MssqlPool),
+}
+
+pub async fn establish_pool(connection: &ConnectionInput) -> Result<(Pool, Option<SshTunnel>), DbError> {
+    let tunnel = if connection.ssh_enabled {
+        Some(SshTunnel::open(connection).await?)
+    } else {
+        None
+    };
+    let connect_input = match &tunnel {
+        Some(tunnel) => crate::core::connection::rewrite_for_local_tunnel(connection, tunnel.local_port),
+        None => connection.clone(),
+    };
+    let pool = create_pool(&connect_input)?;
+    Ok((pool, tunnel))
 }
 
 pub fn create_pool(connection: &ConnectionInput) -> Result<Pool, DbError> {
@@ -24,9 +39,12 @@ fn create_postgres_pool(connection: &ConnectionInput) -> Result<deadpool_postgre
     if connection.use_connection_string {
         let raw = connection.connection_string.trim();
         if !raw.is_empty() && (raw.starts_with("postgres://") || raw.starts_with("postgresql://")) {
-            if let Ok(cfg) = raw.parse::<tokio_postgres::Config>() {
-                return build_postgres_pool(cfg, connection.ssl, connection.ssl_insecure);
+        if let Ok(mut cfg) = raw.parse::<tokio_postgres::Config>() {
+            if connection.read_only {
+                cfg.options("-c default_transaction_read_only=on");
             }
+            return build_postgres_pool(cfg, connection.ssl, connection.ssl_insecure);
+        }
         }
     }
 
@@ -38,6 +56,9 @@ fn create_postgres_pool(connection: &ConnectionInput) -> Result<deadpool_postgre
     cfg.dbname(&connection.database);
     cfg.connect_timeout(Duration::from_secs(5));
     cfg.application_name("querycastle");
+    if connection.read_only {
+        cfg.options("-c default_transaction_read_only=on");
+    }
 
     build_postgres_pool(cfg, connection.ssl, connection.ssl_insecure)
 }
@@ -99,6 +120,12 @@ fn create_mysql_pool(connection: &ConnectionInput) -> Result<mysql_async::Pool, 
         base
     };
 
+    if connection.read_only {
+        let builder = mysql_async::OptsBuilder::from_opts(opts)
+            .init(vec!["SET SESSION TRANSACTION READ ONLY".to_string()]);
+        return Ok(mysql_async::Pool::new(builder));
+    }
+
     Ok(mysql_async::Pool::new(opts))
 }
 
@@ -107,9 +134,13 @@ fn create_sqlite_pool(connection: &ConnectionInput) -> Result<r2d2::Pool<r2d2_sq
     if path.is_empty() {
         return Err(DbError::validation("Database path is required for SQLite"));
     }
+    let read_only = connection.read_only;
     let manager = r2d2_sqlite::SqliteConnectionManager::file(path)
-        .with_init(|conn| {
-            conn.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
+        .with_init(move |conn| {
+            let extra = if read_only { " PRAGMA query_only = ON;" } else { "" };
+            conn.execute_batch(&format!(
+                "PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;{extra}"
+            ))?;
             Ok(())
         });
     r2d2::Pool::builder()

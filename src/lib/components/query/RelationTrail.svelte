@@ -24,14 +24,14 @@
 				<ChevronRight size={12} class="text-qc-muted shrink-0" />
 			{/if}
 			{#if crumb.isCurrent}
-				<span class="truncate text-qc-fg font-medium px-1" title={crumb.tooltip}
+				<span class="truncate text-qc-fg font-medium px-1" data-tip={crumb.tooltip}
 					>{crumb.label}</span
 				>
 			{:else}
 				<button
 					type="button"
 					class="truncate text-qc-cell hover:underline px-1"
-					title={crumb.tooltip}
+					data-tip={crumb.tooltip}
 					onclick={() => onActivate(crumb.index)}
 				>
 					{crumb.label}

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { ChevronLeft, ChevronRight, FileCode2, GitFork, Plus, ScrollText, Table2, Terminal, X } from '$lib/icons';
 	import type { TabContextMenu, WorkspaceTab } from '$lib/utils/workspace';
+	import { fitToViewport } from '$lib/utils/viewport';
 
 	let {
 		tabs,
@@ -153,7 +154,7 @@
 				class="tab-overflow-btn left-0"
 				onclick={() => scrollTabs(-1)}
 				aria-label="Scroll tabs left"
-				title="More tabs"
+				data-tip="More tabs"
 			>
 				<ChevronLeft size={14} />
 			</button>
@@ -164,7 +165,7 @@
 				class="tab-overflow-btn right-0"
 				onclick={() => scrollTabs(1)}
 				aria-label="Scroll tabs right"
-				title="More tabs"
+				data-tip="More tabs"
 			>
 				<ChevronRight size={14} />
 			</button>
@@ -173,7 +174,7 @@
 	<button
 		onclick={onAddTab}
 		class="w-8 h-full flex items-center justify-center text-qc-muted hover:text-qc-subtle hover:bg-qc-hover/60 shrink-0"
-		title="New tab (Ctrl+N)"
+		data-tip="New tab (Ctrl+N)"
 		aria-label="New query tab"
 	>
 		<Plus size={14} />
@@ -185,6 +186,7 @@
 	<div
 		class="ctx-menu fixed z-50"
 		style={`left:${tabContextMenu.x}px;top:${tabContextMenu.y}px;`}
+		use:fitToViewport={{ x: tabContextMenu.x, y: tabContextMenu.y }}
 	>
 		<button onclick={onCloseAllTabs} class="ctx-item">
 			Close all

@@ -26,7 +26,7 @@
 		lineNumbers,
 	} from '@codemirror/view';
 	import { tags } from '@lezer/highlight';
-	import { Play, Save, WandSparkles } from '$lib/icons';
+	import { Play, Save, Square, WandSparkles } from '$lib/icons';
 	import { theme } from '$lib/theme.svelte';
 	import type { DatabaseExplorer, DatabaseType } from '$lib/rpc';
 	import { explorerToSqlSchema } from '$lib/utils/schema-objects';
@@ -35,6 +35,7 @@
 		value,
 		onChange,
 		onRun,
+		onCancel,
 		onSaveQuery,
 		onFormatQuery,
 		running,
@@ -45,6 +46,7 @@
 		value: string;
 		onChange: (value: string) => void;
 		onRun: (query?: string) => void;
+		onCancel?: () => void;
 		onSaveQuery: () => void;
 		onFormatQuery: () => void;
 		running: boolean;
@@ -261,7 +263,11 @@
 	}
 
 	function runEditorAction() {
-		if (disabled || running) return;
+		if (disabled) return;
+		if (running) {
+			onCancel?.();
+			return;
+		}
 		if (selectedQuery.length > 0) {
 			onRun(selectedQuery);
 			return;
@@ -385,22 +391,26 @@
 	>
 		<button
 			onclick={runEditorAction}
-			disabled={disabled || running}
-			title={hasSelection
-				? 'Run the selected SQL only (Ctrl+Enter)'
-				: running
-					? 'Running'
+			disabled={disabled || (running && !onCancel)}
+			data-tip={running
+				? 'Cancel running query'
+				: hasSelection
+					? 'Run the selected SQL only (Ctrl+Enter)'
 					: 'Run query (Ctrl+Enter)'}
 			class="btn-primary h-6 px-2 text-[12px] font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1 shrink-0"
 		>
-			<Play size={14} />Run
+			{#if running}
+				<Square size={14} />Cancel
+			{:else}
+				<Play size={14} />Run
+			{/if}
 		</button>
 		<div class="ml-auto flex items-center gap-0.5">
 			<button
 				type="button"
 				onclick={onFormatQuery}
 				class="toolbar-icon"
-				title="Format SQL (Shift+Alt+F)"
+				data-tip="Format SQL (Shift+Alt+F)"
 				aria-label="Format SQL"
 			>
 				<WandSparkles size={14} />
@@ -409,7 +419,7 @@
 				type="button"
 				onclick={onSaveQuery}
 				class="toolbar-icon"
-				title="Save (Ctrl+S)"
+				data-tip="Save (Ctrl+S)"
 				aria-label="Save query"
 			>
 				<Save size={14} />

@@ -3,8 +3,10 @@ use std::sync::Arc;
 
 use crate::core::error::DbError;
 use crate::core::pool::Pool;
+use crate::core::tunnel::SshTunnel;
 use crate::core::types::{ConnectionInput, ConnectionStatus, DatabaseType};
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone)]
 pub struct ActiveConnection {
@@ -12,6 +14,7 @@ pub struct ActiveConnection {
     pub input: ConnectionInput,
     pub server_version: Option<String>,
     pub pool: Pool,
+    pub tunnel: Option<Arc<SshTunnel>>,
 }
 
 pub struct SessionState {
@@ -21,6 +24,7 @@ pub struct SessionState {
 
 pub struct AppState {
     pub inner: RwLock<SessionState>,
+    pub running_queries: RwLock<HashMap<String, CancellationToken>>,
 }
 
 impl AppState {
@@ -42,6 +46,35 @@ impl AppState {
             .cloned()
             .ok_or_else(|| DbError::NotFound("Connection session not found".to_string()))
     }
+
+    pub async fn register_query(&self, query_id: String, token: CancellationToken) {
+        let id = query_id.trim();
+        if id.is_empty() {
+            return;
+        }
+        self.running_queries.write().await.insert(id.to_string(), token);
+    }
+
+    pub async fn cancel_query(&self, query_id: &str) -> Result<(), DbError> {
+        let id = query_id.trim();
+        if id.is_empty() {
+            return Err(DbError::validation("Query id is required"));
+        }
+        let guard = self.running_queries.read().await;
+        let Some(token) = guard.get(id) else {
+            return Err(DbError::NotFound("No running query with that id".to_string()));
+        };
+        token.cancel();
+        Ok(())
+    }
+
+    pub async fn unregister_query(&self, query_id: &str) {
+        let id = query_id.trim();
+        if id.is_empty() {
+            return;
+        }
+        self.running_queries.write().await.remove(id);
+    }
 }
 
 impl Default for AppState {
@@ -51,6 +84,7 @@ impl Default for AppState {
                 sessions: HashMap::new(),
                 active_id: None,
             }),
+            running_queries: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -74,6 +108,8 @@ pub fn status_from_input(
         user: input.user.clone(),
         server_version: version,
         session_id,
+        read_only: input.read_only,
+        ssh_tunnel: input.ssh_enabled,
     }
 }
 
@@ -92,5 +128,7 @@ pub fn disconnected_status() -> ConnectionStatus {
         user: String::new(),
         server_version: None,
         session_id: String::new(),
+        read_only: false,
+        ssh_tunnel: false,
     }
 }

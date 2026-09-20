@@ -28,10 +28,14 @@
 		ENGINE_KEY,
 		connectionMetaLine,
 		connectionStringPlaceholder,
+		decodeSshSecrets,
 		defaultsForType,
 		generateConnectionString,
+		injectConnectionPassword,
+		injectSshSecrets,
 		loadRecentConnectionNames,
 		rememberRecentConnection,
+		sshSecretName,
 		withDatabaseType,
 		withParsedConnectionString,
 	} from '$lib/utils/connection';
@@ -110,18 +114,6 @@
 		),
 	);
 
-	let emptyCopy = $derived.by(() => {
-		if (savedConnections.length === 0) return 'No saved connections yet.';
-		if (query) return 'No connections match search.';
-		if (engineFilter !== 'all') {
-			const label =
-				engineFilters.find((item) => item.value === engineFilter)?.label ??
-				'provider';
-			return `No ${label} connections.`;
-		}
-		return 'No connections match.';
-	});
-
 	onMount(() => {
 		recentNames = loadRecentConnectionNames();
 		if (!isTauri()) return;
@@ -139,6 +131,12 @@
 		connectionString = '';
 		useString = false;
 		clearTest();
+	}
+
+	function openNewFromEmpty() {
+		const engine = engineFilter;
+		openNew();
+		if (engine !== 'all') selectProvider(engine);
 	}
 
 	function backHome() {
@@ -207,11 +205,32 @@
 		onSaveAndConnect(connectionPayload());
 	}
 
+	async function resolvedPayload(): Promise<ConnectionInput> {
+		let payload = connectionPayload();
+		if (!payload.password && payload.name.trim()) {
+			try {
+				const stored = await rpc.secretGet(payload.name);
+				if (stored) payload = injectConnectionPassword(payload, stored);
+			} catch {
+				// Keychain misses are non-fatal.
+			}
+		}
+		if (payload.sshEnabled && !payload.sshPassword && !payload.sshKeyPassphrase && payload.name.trim()) {
+			try {
+				const stored = await rpc.secretGet(sshSecretName(payload.name));
+				if (stored) payload = injectSshSecrets(payload, decodeSshSecrets(stored));
+			} catch {
+				// Keychain misses are non-fatal.
+			}
+		}
+		return payload;
+	}
+
 	async function testConnection() {
 		isTesting = true;
 		testMessage = '';
 		try {
-			const payload = connectionPayload();
+			const payload = await resolvedPayload();
 			const response = await rpc.testConnection(payload);
 			testOk = response.ok;
 			testMessage = response.ok
@@ -246,7 +265,7 @@
 
 <div class="h-full w-full flex overflow-hidden bg-qc-hub text-qc-fg">
 	<aside
-		class="hub-keep w-[clamp(280px,34vw,480px)] min-w-[260px] flex flex-col justify-end px-8 pb-10 pt-16"
+		class="hub-keep w-[clamp(300px,40vw,680px)] min-w-[260px] flex flex-col justify-end px-8 pb-10 pt-16"
 		data-tauri-drag-region
 	>
 		<img src="/hero-poster.avif" alt="" class="hub-keep-art" />
@@ -282,9 +301,7 @@
 		<main class="flex-1 overflow-y-auto min-w-0">
 			{#if view === 'home'}
 				<div class="hub-stage">
-					<div
-						class="w-full max-w-[720px] px-8 py-8 animate-in fade-in slide-in-from-bottom-1 duration-200"
-					>
+					<div class="hub-home animate-in fade-in slide-in-from-bottom-1 duration-200">
 						<div class="hub-toolbar">
 							<label class="hub-search">
 								<Search size={15} class="text-qc-muted shrink-0" />
@@ -295,13 +312,6 @@
 									class="flex-1 bg-transparent text-[13px] text-qc-fg placeholder:text-qc-muted outline-none"
 								/>
 							</label>
-							<button
-								type="button"
-								onclick={openNew}
-								class="btn-primary hub-action-btn shrink-0"
-							>
-								New <Plus size={14} />
-							</button>
 						</div>
 
 						{#if connectError}
@@ -341,53 +351,118 @@
 											</button>
 										{/each}
 									{:else}
-										<p class="text-[13px] text-qc-muted">
-											{engineFilter === 'all'
-												? 'No recent connections.'
-												: `No recent ${engineFilters.find((item) => item.value === engineFilter)?.label ?? 'provider'} connections.`}
-										</p>
+										<button
+											type="button"
+											onclick={openNewFromEmpty}
+											class="hub-recent-chip hub-recent-ghost"
+										>
+											{#if engineFilter !== 'all'}
+												<div
+													class="hub-engine-mark hub-engine-mark-xs hub-ghost-engine"
+													style="--bg: {ENGINE_KEY[engineFilter]}"
+												>
+													<DatabaseIcon
+														type={engineFilter}
+														size={11}
+														tone="white"
+													/>
+												</div>
+											{:else}
+												<Plus size={12} class="text-qc-muted" />
+											{/if}
+											<span>None yet</span>
+										</button>
 									{/if}
 								</div>
 							</section>
 						{/if}
 
-						<div
-							class="hub-filters mt-5"
-							role="tablist"
-							aria-label="Filter by engine"
-						>
-							{#each engineFilters as filter}
-								<button
-									type="button"
-									role="tab"
-									aria-selected={engineFilter === filter.value}
-									onclick={() => (engineFilter = filter.value)}
-									class="hub-filter"
-									class:active={engineFilter === filter.value}
-								>
-									{#if filter.value !== 'all'}
-										<DatabaseIcon
-											type={filter.value}
-											size={12}
-											tone={engineFilter === filter.value ? 'white' : 'ink'}
-										/>
-									{/if}
-									{filter.label}
-								</button>
-							{/each}
+						<div class="hub-list-head">
+							<div
+								class="hub-filters"
+								role="tablist"
+								aria-label="Filter by engine"
+							>
+								{#each engineFilters as filter}
+									<button
+										type="button"
+										role="tab"
+										aria-selected={engineFilter === filter.value}
+										onclick={() => (engineFilter = filter.value)}
+										class="hub-filter"
+										class:active={engineFilter === filter.value}
+									>
+										{#if filter.value !== 'all'}
+											<DatabaseIcon
+												type={filter.value}
+												size={12}
+												tone={engineFilter === filter.value ? 'white' : 'ink'}
+											/>
+										{/if}
+										{filter.label}
+									</button>
+								{/each}
+							</div>
+							<button
+								type="button"
+								onclick={openNew}
+								class="btn-primary hub-new-btn"
+							>
+								<Plus size={13} />
+								New
+							</button>
 						</div>
 
 						{#if filteredConnections.length === 0}
-							<div class="hub-empty mt-5">
-								<p class="text-[13px] text-qc-muted">{emptyCopy}</p>
-								{#if savedConnections.length === 0}
+							<div class="hub-conn-grid mt-5">
+								{#if query}
 									<button
 										type="button"
-										onclick={openNew}
-										class="btn-secondary h-8 px-3 text-[12px] font-medium inline-flex items-center gap-1.5 mt-3"
+										class="hub-card hub-ghost-card"
+										onclick={() => (hubSearch = '')}
 									>
-										<Plus size={13} />
-										New connection
+										<div class="hub-ghost-mark">
+											<Search size={16} />
+										</div>
+										<div class="min-w-0 flex-1 text-left">
+											<div class="text-[13px] font-medium leading-tight">
+												Nothing matches
+											</div>
+											<div class="mt-0.5 text-[11px] text-qc-muted">
+												Clear search
+											</div>
+										</div>
+									</button>
+								{:else}
+									<button
+										type="button"
+										class="hub-card hub-ghost-card"
+										onclick={openNewFromEmpty}
+									>
+										{#if engineFilter !== 'all'}
+											<div
+												class="hub-engine-mark hub-ghost-engine"
+												style="--bg: {ENGINE_KEY[engineFilter]}"
+											>
+												<DatabaseIcon
+													type={engineFilter}
+													size={16}
+													tone="white"
+												/>
+											</div>
+										{:else}
+											<div class="hub-ghost-mark">
+												<Plus size={16} />
+											</div>
+										{/if}
+										<div class="min-w-0 flex-1 text-left">
+											<div class="text-[13px] font-medium leading-tight">
+												Add a connection
+											</div>
+											<div class="mt-0.5 text-[11px] text-qc-muted">
+												Host, file, or connection string
+											</div>
+										</div>
 									</button>
 								{/if}
 							</div>
@@ -492,7 +567,7 @@
 				</div>
 			{:else}
 				<div
-					class="hub-new w-full px-8 pb-16 pt-4 animate-in fade-in slide-in-from-bottom-1 duration-200"
+					class="hub-new animate-in fade-in slide-in-from-bottom-1 duration-200"
 				>
 					<button
 						type="button"
@@ -613,6 +688,17 @@
 		min-height: 100%;
 	}
 
+	.hub-home,
+	.hub-new {
+		width: 100%;
+		box-sizing: border-box;
+		padding: 24px clamp(20px, 3vw, 40px) 40px;
+	}
+
+	.hub-home {
+		max-width: none;
+	}
+
 	.hub-toolbar {
 		display: flex;
 		align-items: center;
@@ -643,6 +729,7 @@
 	.hub-new {
 		max-width: 36rem;
 		margin-inline: auto;
+		padding-top: clamp(8px, 2vh, 24px);
 	}
 
 	.hub-recent-chip {
@@ -666,6 +753,16 @@
 		border-color: var(--qc-conn-hover-border);
 	}
 
+	.hub-recent-ghost {
+		border-style: dashed;
+		background: transparent;
+		color: var(--qc-muted);
+	}
+
+	.hub-recent-ghost:hover {
+		color: var(--qc-fg);
+	}
+
 	.hub-recents-row {
 		display: flex;
 		flex-wrap: wrap;
@@ -683,6 +780,27 @@
 		border: 1px solid var(--qc-border);
 		border-radius: 10px;
 		background: var(--qc-panel);
+	}
+
+	.hub-list-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-top: 20px;
+	}
+
+	.hub-new-btn {
+		height: 34px;
+		min-height: 34px;
+		padding: 0 12px;
+		font-size: 12px;
+		font-weight: 500;
+		border-radius: 8px;
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		flex-shrink: 0;
 	}
 
 	.hub-filter {
@@ -714,8 +832,8 @@
 
 	.hub-conn-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-		gap: 8px;
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+		gap: 10px;
 	}
 
 	.hub-card {
@@ -738,16 +856,31 @@
 		background: var(--qc-conn-hover-bg);
 	}
 
-	.hub-empty {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		min-height: 4.75rem;
-		padding: 1rem;
-		border-radius: 10px;
+	.hub-ghost-card {
+		border-style: dashed;
+		background: transparent;
+		color: var(--qc-subtle);
+		padding-right: 12px;
+	}
+
+	.hub-ghost-card:hover {
+		border-color: var(--qc-conn-hover-border);
+		background: var(--qc-conn-hover-bg);
+		color: var(--qc-fg);
+	}
+
+	.hub-ghost-mark {
+		width: 32px;
+		height: 32px;
+		border-radius: 8px;
 		border: 1px dashed var(--qc-border);
-		background: color-mix(in srgb, var(--qc-panel) 70%, transparent);
-		text-align: center;
+		display: grid;
+		place-items: center;
+		color: var(--qc-muted);
+		flex-shrink: 0;
+	}
+
+	.hub-ghost-engine {
+		opacity: 0.72;
 	}
 </style>

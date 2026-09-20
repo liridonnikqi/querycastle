@@ -73,6 +73,19 @@
 		commit(withSqliteFile(form, selected));
 	}
 
+	async function chooseSshKey() {
+		const selected = await open({
+			multiple: false,
+			directory: false,
+			filters: [
+				{ name: 'Private key', extensions: ['pem', 'key', 'id_rsa', 'id_ed25519'] },
+				{ name: 'All Files', extensions: ['*'] },
+			],
+		});
+		if (!selected || Array.isArray(selected)) return;
+		updateField('sshPrivateKeyPath', selected);
+	}
+
 	function handleStringInput(value: string) {
 		onStringChange(value);
 		const parsed = withParsedConnectionString(form, value);
@@ -157,7 +170,7 @@
 									dialectCapabilities(form.databaseType).defaultPort,
 							)}
 						class="ui-input h-8 w-24 shrink-0 px-3"
-						title="Port"
+						data-tip="Port"
 					/>
 				</div>
 			</label>
@@ -275,6 +288,106 @@
 				/>
 				Allow insecure TLS (self-signed)
 			</label>
+		</div>
+	{/if}
+
+	<div class={hub ? 'space-y-2' : 'sm:col-span-2 flex flex-col gap-2'}>
+		<label class="flex items-center gap-2 text-[12px] text-qc-subtle">
+			<input
+				type="checkbox"
+				class="qc-check"
+				checked={form.readOnly ?? false}
+				onchange={(event) => updateField('readOnly', event.currentTarget.checked)}
+			/>
+			Read-only (safe for production)
+		</label>
+		{#if !isSqlite}
+			<label class="flex items-center gap-2 text-[12px] text-qc-subtle">
+				<input
+					type="checkbox"
+					class="qc-check"
+					checked={form.sshEnabled ?? false}
+					onchange={(event) => updateField('sshEnabled', event.currentTarget.checked)}
+				/>
+				Connect through an SSH tunnel
+			</label>
+		{/if}
+	</div>
+
+	{#if !isSqlite && form.sshEnabled}
+		<div class={hub ? 'grid grid-cols-2 gap-3' : 'sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-2.5'}>
+			<div>
+				<div class={labelClass}>SSH host</div>
+				<input
+					value={form.sshHost ?? ''}
+					oninput={(event) => updateField('sshHost', event.currentTarget.value)}
+					class={inputClass}
+					placeholder="bastion.example.com"
+				/>
+			</div>
+			<div>
+				<div class={labelClass}>SSH port</div>
+				<input
+					type="number"
+					value={form.sshPort ?? 22}
+					oninput={(event) =>
+						updateField('sshPort', Number(event.currentTarget.value) || 22)}
+					class={inputClass}
+				/>
+			</div>
+			<div>
+				<div class={labelClass}>SSH user</div>
+				<input
+					value={form.sshUser ?? ''}
+					oninput={(event) => updateField('sshUser', event.currentTarget.value)}
+					class={inputClass}
+					placeholder="ubuntu"
+				/>
+			</div>
+			<div>
+				<div class={labelClass}>SSH password</div>
+				<input
+					type="password"
+					value={form.sshPassword ?? ''}
+					oninput={(event) => updateField('sshPassword', event.currentTarget.value)}
+					class={inputClass}
+					placeholder={passwordPlaceholder}
+					autocomplete="off"
+				/>
+			</div>
+			<div class={hub ? 'col-span-2' : 'sm:col-span-2'}>
+				<div class={labelClass}>Private key (optional)</div>
+				<div class="flex items-center gap-2">
+					<input
+						value={form.sshPrivateKeyPath ?? ''}
+						oninput={(event) =>
+							updateField('sshPrivateKeyPath', event.currentTarget.value)}
+						class={`${inputClass} ${hub ? 'font-mono' : ''}`}
+						placeholder="C:/Users/me/.ssh/id_ed25519"
+					/>
+					<button
+						type="button"
+						onclick={chooseSshKey}
+						class="toolbar-icon shrink-0"
+						data-tip="Choose private key"
+						aria-label="Choose private key"
+					>
+						<FolderOpen size={14} />
+					</button>
+				</div>
+			</div>
+			<div class={hub ? 'col-span-2' : 'sm:col-span-2'}>
+				<div class={labelClass}>Key passphrase</div>
+				<input
+					type="password"
+					value={form.sshKeyPassphrase ?? ''}
+					oninput={(event) =>
+						updateField('sshKeyPassphrase', event.currentTarget.value)}
+					class={inputClass}
+					placeholder={passwordPlaceholder}
+					autocomplete="off"
+				/>
+			</div>
 		</div>
 	{/if}
 

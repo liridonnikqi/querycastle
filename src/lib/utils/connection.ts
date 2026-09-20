@@ -196,6 +196,14 @@ export function withDatabaseType(
 				: nextType === 'mssql'
 					? true
 					: current.ssl && Boolean(current.sslInsecure),
+		readOnly: Boolean(current.readOnly),
+		sshEnabled: nextType === 'sqlite' ? false : Boolean(current.sshEnabled),
+		sshHost: nextType === 'sqlite' ? '' : (current.sshHost ?? ''),
+		sshPort: nextType === 'sqlite' ? 22 : current.sshPort && current.sshPort > 0 ? current.sshPort : 22,
+		sshUser: nextType === 'sqlite' ? '' : (current.sshUser ?? ''),
+		sshPassword: nextType === 'sqlite' ? '' : (current.sshPassword ?? ''),
+		sshPrivateKeyPath: nextType === 'sqlite' ? '' : (current.sshPrivateKeyPath ?? ''),
+		sshKeyPassphrase: nextType === 'sqlite' ? '' : (current.sshKeyPassphrase ?? ''),
 	};
 }
 
@@ -237,11 +245,15 @@ export function connectionEngineLabel(databaseType: DatabaseType): string {
 
 export function connectionMetaLine(connection: ConnectionInput): string {
 	const engine = connectionEngineLabel(connection.databaseType);
-	if (connection.databaseType === 'sqlite') {
-		const file = connection.database.split(/[/\\]/).pop() || 'local file';
-		return `${engine} · ${file}`;
-	}
-	return `${engine} · ${connection.host || 'localhost'}`;
+	const bits = [
+		engine,
+		connection.databaseType === 'sqlite'
+			? connection.database.split(/[/\\]/).pop() || 'local file'
+			: connection.host || 'localhost',
+	];
+	if (connection.readOnly) bits.push('read-only');
+	if (connection.sshEnabled) bits.push('ssh');
+	return bits.join(' · ');
 }
 
 export const RECENT_CONNECTIONS_KEY = 'querycastle.recentConnections.v1';
@@ -297,6 +309,14 @@ export function normalizeConnectionInput(
 			databaseType === 'sqlite' ? false : (input.sslInsecure ?? sslInsecureDefault),
 		useConnectionString: input.useConnectionString ?? false,
 		connectionString: input.connectionString ?? '',
+		readOnly: Boolean(input.readOnly),
+		sshEnabled: databaseType === 'sqlite' ? false : Boolean(input.sshEnabled),
+		sshHost: databaseType === 'sqlite' ? '' : (input.sshHost ?? ''),
+		sshPort: databaseType === 'sqlite' ? 22 : input.sshPort && input.sshPort > 0 ? input.sshPort : 22,
+		sshUser: databaseType === 'sqlite' ? '' : (input.sshUser ?? ''),
+		sshPassword: databaseType === 'sqlite' ? '' : (input.sshPassword ?? ''),
+		sshPrivateKeyPath: databaseType === 'sqlite' ? '' : (input.sshPrivateKeyPath ?? ''),
+		sshKeyPassphrase: databaseType === 'sqlite' ? '' : (input.sshKeyPassphrase ?? ''),
 	};
 }
 
@@ -336,6 +356,8 @@ export function stripConnectionSecrets(connection: ConnectionInput): ConnectionI
 	return {
 		...connection,
 		password: '',
+		sshPassword: '',
+		sshKeyPassphrase: '',
 		connectionString: connection.connectionString
 			? stripConnectionStringPassword(connection.connectionString)
 			: connection.connectionString,
@@ -353,6 +375,43 @@ export function injectConnectionPassword(
 	return next;
 }
 
+export function sshSecretName(connectionName: string): string {
+	return `${connectionName.trim()}::ssh`;
+}
+
+export type SshSecrets = { password: string; keyPassphrase: string };
+
+export function encodeSshSecrets(secrets: SshSecrets): string {
+	return JSON.stringify({
+		password: secrets.password,
+		keyPassphrase: secrets.keyPassphrase,
+	});
+}
+
+export function decodeSshSecrets(raw: string | null | undefined): SshSecrets {
+	if (!raw) return { password: '', keyPassphrase: '' };
+	try {
+		const parsed = JSON.parse(raw) as { password?: unknown; keyPassphrase?: unknown };
+		return {
+			password: typeof parsed.password === 'string' ? parsed.password : '',
+			keyPassphrase: typeof parsed.keyPassphrase === 'string' ? parsed.keyPassphrase : '',
+		};
+	} catch {
+		return { password: raw, keyPassphrase: '' };
+	}
+}
+
+export function injectSshSecrets(
+	connection: ConnectionInput,
+	secrets: SshSecrets,
+): ConnectionInput {
+	return {
+		...connection,
+		sshPassword: secrets.password || connection.sshPassword || '',
+		sshKeyPassphrase: secrets.keyPassphrase || connection.sshKeyPassphrase || '',
+	};
+}
+
 export async function migrateSavedConnectionSecrets(params: {
 	connections: ConnectionInput[];
 	secretSet: (name: string, password: string) => Promise<void>;
@@ -361,13 +420,23 @@ export async function migrateSavedConnectionSecrets(params: {
 	const next: ConnectionInput[] = [];
 	for (const connection of params.connections) {
 		const password = passwordFromConnection(connection);
+		const sshPassword = connection.sshPassword ?? '';
+		const sshKeyPassphrase = connection.sshKeyPassphrase ?? '';
 		const stripped = stripConnectionSecrets(connection);
 		const needsStrip =
 			stripped.password !== connection.password ||
-			stripped.connectionString !== connection.connectionString;
-		if (password && connection.name.trim()) {
+			stripped.connectionString !== connection.connectionString ||
+			stripped.sshPassword !== connection.sshPassword ||
+			stripped.sshKeyPassphrase !== connection.sshKeyPassphrase;
+		if ((password || sshPassword || sshKeyPassphrase) && connection.name.trim()) {
 			try {
-				await params.secretSet(connection.name, password);
+				if (password) await params.secretSet(connection.name, password);
+				if (sshPassword || sshKeyPassphrase) {
+					await params.secretSet(
+						sshSecretName(connection.name),
+						encodeSshSecrets({ password: sshPassword, keyPassphrase: sshKeyPassphrase }),
+					);
+				}
 				next.push(stripped);
 				changed = true;
 			} catch {

@@ -51,6 +51,7 @@ pub fn run() {
             commands::secrets::secret_get,
             commands::secrets::secret_delete,
             commands::query::run_query,
+            commands::query::cancel_query,
             commands::explorer::get_database_explorer,
             commands::explorer::get_object_definition,
             commands::explorer::list_databases,

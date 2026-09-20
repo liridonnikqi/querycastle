@@ -34,6 +34,6 @@
 	});
 </script>
 
-<span class="inline-flex items-center" title={label}>
+<span class="inline-flex items-center" data-tip={label}>
 	<Icon size={12} class="shrink-0 text-qc-muted" />
 </span>

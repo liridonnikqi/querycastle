@@ -4,15 +4,20 @@ pub mod postgres;
 pub mod sqlite;
 
 use crate::core::error::DbError;
-use crate::core::pool::{create_pool, Pool};
+use crate::core::pool::{establish_pool, Pool};
 use crate::core::types::*;
+use tokio_util::sync::CancellationToken;
 
-pub async fn run_query(pool: &Pool, sql: &str) -> Result<QueryResultPayload, DbError> {
+pub async fn run_query(
+    pool: &Pool,
+    sql: &str,
+    cancel: CancellationToken,
+) -> Result<QueryResultPayload, DbError> {
     match pool {
-        Pool::Postgres(p) => postgres::run_query(p, sql).await,
-        Pool::Mysql(p) => mysql::run_query(p, sql).await,
-        Pool::Sqlite(p) => sqlite::run_query(p, sql).await,
-        Pool::Mssql(p) => mssql::run_query(p, sql).await,
+        Pool::Postgres(p) => postgres::run_query(p, sql, cancel).await,
+        Pool::Mysql(p) => mysql::run_query(p, sql, cancel).await,
+        Pool::Sqlite(p) => sqlite::run_query(p, sql, cancel).await,
+        Pool::Mssql(p) => mssql::run_query(p, sql, cancel).await,
     }
 }
 
@@ -68,8 +73,8 @@ pub async fn server_version(pool: &Pool) -> Result<Option<String>, DbError> {
 }
 
 pub async fn test_connection(connection: &ConnectionInput) -> Result<TestConnectionResponse, DbError> {
-    let pool = match create_pool(connection) {
-        Ok(pool) => pool,
+    let (pool, _tunnel) = match establish_pool(connection).await {
+        Ok(pair) => pair,
         Err(err) => {
             return Ok(TestConnectionResponse {
                 ok: false,

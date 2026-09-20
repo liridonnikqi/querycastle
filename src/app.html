@@ -5,15 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="/boot.css" />
     <script>
-      (function () {
-        try {
-          var saved = localStorage.getItem("qc-theme");
-          var theme = saved === "light" || saved === "dark" ? saved : "dark";
-          document.documentElement.setAttribute("data-theme", theme);
-        } catch (e) {
-          document.documentElement.setAttribute("data-theme", "dark");
-        }
-      })();
+      try {
+        const saved = localStorage.getItem('qc-theme');
+        const theme = saved === 'light' || saved === 'dark' ? saved : 'dark';
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
     </script>
     %sveltekit.head%
   </head>
@@ -27,29 +25,29 @@
     </div>
     <div style="display: contents">%sveltekit.body%</div>
     <script>
-      (function() {
-        try {
-          var theme = document.documentElement.getAttribute("data-theme");
-          var bg = theme === "light" ? "#f4f4f5" : "#131417";
-          var fg = theme === "light" ? "#71717a" : "#a1a1aa";
-          var splash = document.getElementById("app-splash");
-          if (splash) {
-            splash.style.background = bg;
-            var label = splash.querySelector(".qc-loading-label");
-            if (label) label.style.color = fg;
-          }
-        } catch (e) {}
-        function hide() {
-          document.body.style.background = "";
-          var el = document.getElementById('app-splash');
-          if (el) { el.style.opacity = '0'; el.style.transition = 'opacity 260ms ease'; setTimeout(function(){ if(el.parentNode) el.parentNode.removeChild(el); }, 260); }
-        }
-        window.__hideAppSplash = hide;
-        setTimeout(function() {
-          var el = document.getElementById('app-splash');
-          if (el && el.parentNode) hide();
-        }, 4000);
-      })();
+      const splash = document.getElementById('app-splash');
+      if (splash) {
+        const shownAt = Date.now();
+        let hidden = false;
+
+        const hide = () => {
+          if (hidden) return;
+          hidden = true;
+          splash.style.opacity = '0';
+          splash.style.transition = 'opacity 260ms ease';
+          setTimeout(() => splash.remove(), 260);
+        };
+
+        window.addEventListener(
+          'app:ready',
+          () => {
+            const wait = Math.max(0, 650 - (Date.now() - shownAt));
+            setTimeout(hide, wait);
+          },
+          { once: true },
+        );
+        setTimeout(hide, 4000);
+      }
     </script>
   </body>
 </html>

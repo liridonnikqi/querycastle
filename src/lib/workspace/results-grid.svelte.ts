@@ -4,6 +4,32 @@ import type { PageSize } from '$lib/utils/table-browse';
 
 export type PendingInsertRow = { id: string; values: Record<string, unknown> };
 
+const UNDO_LIMIT = 50;
+
+type GridUndoOp =
+	| {
+			kind: 'cell';
+			rowId: string;
+			column: string;
+			previous: unknown;
+			hadPending: boolean;
+	  }
+	| { kind: 'insert-add'; id: string }
+	| { kind: 'insert-remove'; row: PendingInsertRow; index: number }
+	| {
+			kind: 'insert-cell';
+			id: string;
+			column: string;
+			previous: unknown;
+			hadKey: boolean;
+	  }
+	| {
+			kind: 'delete';
+			rowIds: string[];
+			snapshots: Array<[string, Record<string, unknown>]>;
+			updates: Array<[string, Record<string, unknown>]>;
+	  };
+
 export function rowIdOf(row: Record<string, unknown>): string {
 	return String(row[HIDDEN_ROW_ID_COLUMN] ?? '');
 }
@@ -33,6 +59,75 @@ export class ResultsGridSession {
 	columnFilters = $state<Record<string, string>>({});
 	showFilterRow = $state(false);
 	baseWhere = $state('');
+	undoStack = $state<GridUndoOp[]>([]);
+	private applyingUndo = false;
+
+	get canUndo() {
+		return this.undoStack.length > 0;
+	}
+
+	private pushUndo(op: GridUndoOp) {
+		if (this.applyingUndo) return;
+		this.undoStack = [...this.undoStack.slice(-(UNDO_LIMIT - 1)), op];
+	}
+
+	undo() {
+		const stack = this.undoStack;
+		if (stack.length === 0) return;
+		const op = stack[stack.length - 1]!;
+		this.undoStack = stack.slice(0, -1);
+		this.applyingUndo = true;
+		try {
+			switch (op.kind) {
+				case 'cell': {
+					const map = new Map(this.pendingUpdates);
+					const prev = { ...(map.get(op.rowId) ?? {}) };
+					if (op.hadPending) prev[op.column] = op.previous;
+					else delete prev[op.column];
+					if (Object.keys(prev).length === 0) map.delete(op.rowId);
+					else map.set(op.rowId, prev);
+					this.pendingUpdates = map;
+					break;
+				}
+				case 'insert-add':
+					this.pendingInserts = this.pendingInserts.filter((row) => row.id !== op.id);
+					break;
+				case 'insert-remove': {
+					const next = [...this.pendingInserts];
+					next.splice(op.index, 0, op.row);
+					this.pendingInserts = next;
+					break;
+				}
+				case 'insert-cell':
+					this.pendingInserts = this.pendingInserts.map((row) => {
+						if (row.id !== op.id) return row;
+						const values = { ...row.values };
+						if (op.hadKey) values[op.column] = op.previous;
+						else delete values[op.column];
+						return { ...row, values };
+					});
+					break;
+				case 'delete': {
+					const nextDeletes = new Set(this.pendingDeletes);
+					const nextSnapshots = new Map(this.deletedSnapshots);
+					const nextUpdates = new Map(this.pendingUpdates);
+					for (const rowId of op.rowIds) {
+						nextDeletes.delete(rowId);
+						nextSnapshots.delete(rowId);
+					}
+					for (const [rowId, values] of op.updates) {
+						nextUpdates.set(rowId, values);
+					}
+					this.pendingDeletes = nextDeletes;
+					this.deletedSnapshots = nextSnapshots;
+					this.pendingUpdates = nextUpdates;
+					break;
+				}
+			}
+		} finally {
+			this.applyingUndo = false;
+		}
+	}
 
 	clearDrafts() {
 		this.pendingUpdates = new Map();
@@ -41,6 +136,7 @@ export class ResultsGridSession {
 		this.deletedSnapshots = new Map();
 		this.selectedRows = new Set();
 		this.activeRowId = null;
+		this.undoStack = [];
 	}
 
 	resetBrowse() {
@@ -82,6 +178,16 @@ export class ResultsGridSession {
 		nextValue: unknown,
 		baseValue: unknown,
 	) {
+		const pending = this.pendingUpdates.get(rowId);
+		const hadPending =
+			Boolean(pending) && Object.prototype.hasOwnProperty.call(pending, column);
+		this.pushUndo({
+			kind: 'cell',
+			rowId,
+			column,
+			previous: hadPending ? pending?.[column] : undefined,
+			hadPending,
+		});
 		const map = new Map(this.pendingUpdates);
 		const prev = { ...(map.get(rowId) ?? {}) };
 		if (valuesEqual(nextValue, baseValue)) {
@@ -112,17 +218,25 @@ export class ResultsGridSession {
 	}
 
 	deleteRows(rowIds: string[], rows: Array<Record<string, unknown>>) {
+		const snapshots: Array<[string, Record<string, unknown>]> = [];
+		const updates: Array<[string, Record<string, unknown>]> = [];
 		const nextDeletes = new Set(this.pendingDeletes);
 		const nextUpdates = new Map(this.pendingUpdates);
 		const nextSelected = new Set(this.selectedRows);
 		const nextSnapshots = new Map(this.deletedSnapshots);
 		for (const rowId of rowIds) {
 			const row = rows.find((item) => rowIdOf(item) === rowId);
-			if (row) nextSnapshots.set(rowId, { ...row });
+			if (row) {
+				nextSnapshots.set(rowId, { ...row });
+				snapshots.push([rowId, { ...row }]);
+			}
+			const existingUpdate = nextUpdates.get(rowId);
+			if (existingUpdate) updates.push([rowId, { ...existingUpdate }]);
 			nextDeletes.add(rowId);
 			nextUpdates.delete(rowId);
 			nextSelected.delete(rowId);
 		}
+		this.pushUndo({ kind: 'delete', rowIds: [...rowIds], snapshots, updates });
 		this.pendingDeletes = nextDeletes;
 		this.pendingUpdates = nextUpdates;
 		this.selectedRows = nextSelected;
@@ -131,18 +245,34 @@ export class ResultsGridSession {
 
 	startInsert(values: Record<string, unknown> = {}): string {
 		const id = crypto.randomUUID();
+		this.pushUndo({ kind: 'insert-add', id });
 		this.pendingInserts = [...this.pendingInserts, { id, values }];
 		return id;
 	}
 
 	setInsertValue(id: string, column: string, value: unknown) {
+		const current = this.pendingInserts.find((row) => row.id === id);
+		const hadKey = Boolean(
+			current && Object.prototype.hasOwnProperty.call(current.values, column),
+		);
+		this.pushUndo({
+			kind: 'insert-cell',
+			id,
+			column,
+			previous: hadKey ? current?.values[column] : undefined,
+			hadKey,
+		});
 		this.pendingInserts = this.pendingInserts.map((row) =>
 			row.id === id ? { ...row, values: { ...row.values, [column]: value } } : row,
 		);
 	}
 
 	removeInsert(id: string) {
-		this.pendingInserts = this.pendingInserts.filter((row) => row.id !== id);
+		const index = this.pendingInserts.findIndex((row) => row.id === id);
+		if (index === -1) return;
+		const row = this.pendingInserts[index]!;
+		this.pushUndo({ kind: 'insert-remove', row, index });
+		this.pendingInserts = this.pendingInserts.filter((item) => item.id !== id);
 	}
 
 	setColumnFilter(column: string, value: string) {

@@ -6,6 +6,7 @@
 	import ThemeToggle from '$lib/components/ui/ThemeToggle.svelte';
 	import WindowControls from '$lib/components/ui/WindowControls.svelte';
 	import QueryCastleLogo from '$lib/components/ui/QueryCastleLogo.svelte';
+	import { theme } from '$lib/theme.svelte';
 	import { gridChrome, requestOpenPendingChanges } from '$lib/stores/grid-chrome.svelte';
 	import type { Snippet } from 'svelte';
 
@@ -42,7 +43,11 @@
 	ondblclick={handleHeaderDoubleClick}
 >
 	<div class="flex items-center gap-1.5 min-w-0 overflow-hidden pl-1" data-tauri-drag-region>
-		<QueryCastleLogo size={16} class="text-[#2563eb]" alt="" />
+		<QueryCastleLogo
+			size={16}
+			class={theme.value === 'light' ? 'text-black' : 'text-white'}
+			alt=""
+		/>
 		{#if leading}
 			<div class="min-w-0 max-w-full overflow-hidden" data-tauri-drag-region="false">
 				{@render leading()}
@@ -73,7 +78,7 @@
 				onclick={requestOpenPendingChanges}
 				onmousedown={(event) => event.stopPropagation()}
 				class="changes-btn"
-				title="Review pending changes"
+				data-tip="Review pending changes"
 			>
 				<span class="changes-btn-inner">
 					Changes
@@ -89,7 +94,7 @@
 				onclick={onDisconnect}
 				onmousedown={(event) => event.stopPropagation()}
 				class="w-7 h-7 rounded-md flex items-center justify-center text-qc-muted hover:bg-qc-hover hover:text-qc-subtle"
-				title="Disconnect"
+				data-tip="Disconnect"
 			>
 				<LogOut size={14} />
 			</button>

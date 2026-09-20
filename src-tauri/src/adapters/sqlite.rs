@@ -2,6 +2,7 @@ use rusqlite::types::ValueRef;
 use rusqlite::{params_from_iter, Connection};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use crate::core::error::DbError;
 use crate::core::limits::{MAX_QUERY_ROWS, QUERY_TIMEOUT_MS};
@@ -11,6 +12,7 @@ use crate::core::types::{
     DatabaseForeignKey, DatabaseIndex, DatabaseSchema, DatabaseTable, DatabaseTrigger,
     ObjectDefinition, ObjectDefinitionParams, QueryResultPayload, UpdatedRow,
 };
+use tokio_util::sync::CancellationToken;
 
 type SqlitePool = r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>;
 
@@ -78,10 +80,34 @@ pub async fn server_version(pool: &SqlitePool) -> Result<Option<String>, DbError
     .await
 }
 
-pub async fn run_query(pool: &SqlitePool, sql: &str) -> Result<QueryResultPayload, DbError> {
+pub async fn run_query(
+    pool: &SqlitePool,
+    sql: &str,
+    cancel: CancellationToken,
+) -> Result<QueryResultPayload, DbError> {
     let sql = sql.to_string();
+    let interrupt: Arc<Mutex<Option<rusqlite::InterruptHandle>>> = Arc::new(Mutex::new(None));
+    let interrupt_for_query = interrupt.clone();
+    let interrupt_for_cancel = interrupt.clone();
+    let cancel_for_query = cancel.clone();
+    let cancel_for_wait = cancel.clone();
+    let cancel_task = tokio::spawn(async move {
+        cancel_for_wait.cancelled().await;
+        if let Ok(guard) = interrupt_for_cancel.lock() {
+            if let Some(handle) = guard.as_ref() {
+                handle.interrupt();
+            }
+        }
+    });
     let fut = with_pool(pool, move |pool| {
         let conn = pool.get()?;
+        let handle = conn.get_interrupt_handle();
+        if cancel_for_query.is_cancelled() {
+            handle.interrupt();
+        }
+        if let Ok(mut guard) = interrupt_for_query.lock() {
+            *guard = Some(handle);
+        }
         let started = std::time::Instant::now();
 
         let mut stmt = conn.prepare(&sql)?;
@@ -131,11 +157,22 @@ pub async fn run_query(pool: &SqlitePool, sql: &str) -> Result<QueryResultPayloa
         })
     });
 
-    match tokio::time::timeout(std::time::Duration::from_millis(QUERY_TIMEOUT_MS), fut).await {
-        Ok(result) => result,
-        Err(_) => Err(DbError::Timeout {
-            message: format!("Query exceeded {QUERY_TIMEOUT_MS}ms"),
-        }),
+    let result = tokio::select! {
+        _ = cancel.cancelled() => Err(DbError::cancelled()),
+        result = tokio::time::timeout(std::time::Duration::from_millis(QUERY_TIMEOUT_MS), fut) => {
+            match result {
+                Ok(result) => result,
+                Err(_) => Err(DbError::Timeout {
+                    message: format!("Query exceeded {QUERY_TIMEOUT_MS}ms"),
+                }),
+            }
+        }
+    };
+    cancel_task.abort();
+    match result {
+        Ok(payload) => Ok(payload),
+        Err(_) if cancel.is_cancelled() => Err(DbError::cancelled()),
+        Err(err) => Err(err),
     }
 }
 

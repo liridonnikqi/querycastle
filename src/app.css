@@ -212,9 +212,14 @@ body {
 	font-size: 13px;
 	-webkit-font-smoothing: antialiased;
 	overflow: hidden;
-	transition:
-		background-color 0.2s ease,
-		color 0.2s ease;
+}
+
+html.theme-switching,
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+	transition: none !important;
+	animation: none !important;
 }
 
 #app {
@@ -225,9 +230,6 @@ button,
 [role='button'] {
 	cursor: pointer;
 	transition:
-		background-color 140ms ease,
-		border-color 140ms ease,
-		color 140ms ease,
 		transform 140ms cubic-bezier(0.16, 1, 0.3, 1),
 		box-shadow 140ms ease,
 		filter 140ms ease,
@@ -662,11 +664,13 @@ html[data-theme='light'] .qc-check:checked {
 	border-spacing: 0;
 	min-width: 100%;
 	width: max-content;
+	overflow: clip;
 }
 
 .excel-grid th,
 .excel-grid td {
 	border: none;
+	overflow: hidden;
 	box-shadow:
 		inset -1px 0 0 var(--qc-grid-line, var(--qc-border-subtle)),
 		inset 0 -1px 0 var(--qc-grid-line, var(--qc-border-subtle));
@@ -1024,6 +1028,33 @@ button.rail-btn:not(:disabled):active {
 	flex-shrink: 0;
 }
 
+.results-view-tabs {
+	display: inline-flex;
+	align-items: center;
+	margin-right: 6px;
+}
+
+.results-view-tabs button {
+	height: 24px;
+	padding: 0 7px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--qc-muted);
+	font-size: 11px;
+	line-height: 1;
+}
+
+.results-view-tabs button:hover {
+	color: var(--qc-subtle);
+	background: var(--qc-hover);
+}
+
+.results-view-tabs button.is-on {
+	color: var(--qc-fg);
+	background: transparent;
+}
+
 /* Compact context menu, shadcn-style: narrow panel, dense 12px items. */
 .ctx-menu {
 	min-width: 10rem;
@@ -1087,6 +1118,24 @@ button.rail-btn:not(:disabled):active {
 	margin: 4px -4px;
 }
 
+.qc-tooltip {
+	position: fixed;
+	z-index: 90;
+	max-width: min(280px, calc(100vw - 16px));
+	padding: 5px 8px;
+	border-radius: 6px;
+	border: 1px solid var(--qc-border);
+	background: var(--qc-elevated);
+	color: var(--qc-fg);
+	font-size: 11px;
+	line-height: 1.35;
+	font-family: var(--font-sans);
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+	pointer-events: none;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
 .toolbar-icon:hover {
 	color: var(--qc-fg);
 	background: var(--qc-hover);
@@ -1137,9 +1186,6 @@ button.rail-btn:not(:disabled):active {
 
 .tab-item {
 	position: relative;
-	transition:
-		color 140ms ease,
-		background-color 140ms ease;
 }
 
 .table-row:hover:not(.row-selected):not(.row-current):not(.row-pending-delete) td {
@@ -1164,6 +1210,9 @@ button.rail-btn:not(:disabled):active {
 .row-selected td {
 	background: var(--qc-row-selected-bg) !important;
 	color: var(--qc-row-selected-fg) !important;
+	box-shadow:
+		inset -1px 0 0 var(--qc-grid-line, var(--qc-border-subtle)),
+		inset 0 -1px 0 var(--qc-grid-line, var(--qc-border-subtle));
 }
 
 .cell-dirty {
@@ -1173,16 +1222,12 @@ button.rail-btn:not(:disabled):active {
 
 .row-pending-insert td {
 	background: color-mix(in srgb, var(--qc-insert-accent) 10%, var(--qc-grid));
-	transition: background-color 200ms ease;
 }
 
 .row-pending-delete td {
 	background: color-mix(in srgb, var(--qc-danger) 14%, var(--qc-grid)) !important;
 	color: var(--qc-delete-fg) !important;
 	text-decoration: line-through;
-	transition:
-		background-color 200ms ease,
-		color 200ms ease;
 }
 
 .row-current td {

@@ -109,7 +109,7 @@
 						type="button"
 						onclick={() => onSelect(session.id)}
 						class="inline-flex items-center gap-1.5 min-w-0"
-						title={`${label(session.status)} · ${session.status.database}`}
+						data-tip={`${label(session.status)} · ${session.status.database}`}
 					>
 						<DatabaseIcon
 						type={session.status.databaseType}
@@ -117,6 +117,12 @@
 						tone={session.status.databaseType === 'sqlite' ? 'ink' : 'brand'}
 					/>
 						<span class={`truncate ${embedded ? 'max-w-24' : 'max-w-40'}`}>{label(session.status)}</span>
+						{#if session.status.readOnly}
+							<span class="text-[10px] uppercase tracking-wide text-qc-muted">ro</span>
+						{/if}
+						{#if session.status.sshTunnel}
+							<span class="text-[10px] uppercase tracking-wide text-qc-muted">ssh</span>
+						{/if}
 					</button>
 					<button
 						type="button"
@@ -137,7 +143,7 @@
 		type="button"
 		onclick={openMenu}
 		class={`flex items-center justify-center text-qc-muted hover:text-qc-subtle hover:bg-qc-hover/60 shrink-0 ${embedded ? 'w-7 h-7 rounded-md' : 'w-8 h-full'}`}
-		title="Open connection"
+		data-tip="Open connection"
 		aria-label="Open connection"
 	>
 		<Plus size={14} />

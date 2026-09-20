@@ -10,8 +10,6 @@
 	import { toast } from '$lib/stores/toast.svelte';
 
 	const REPO_URL = 'https://github.com/liridonnikqi/querycastle';
-	const tooltipClass =
-		'pointer-events-none absolute bottom-full right-0 mb-1.5 w-max max-w-[240px] rounded bg-qc-elevated border border-qc-border px-2 py-1 text-[10px] font-normal leading-snug text-qc-fg opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 z-50';
 
 	let version = $state('0.1.1');
 	let status = $state<
@@ -121,7 +119,7 @@
 				<Loader2 size={10} class="animate-spin" /> Checking…
 			</span>
 		{:else if status === 'available'}
-			<span class="text-qc-fg font-medium" title={updateBody}>v{updateVersion} available</span>
+			<span class="text-qc-fg font-medium" data-tip={updateBody}>v{updateVersion} available</span>
 		{:else if status === 'downloading'}
 			<span class="inline-flex items-center gap-1 text-qc-subtle">
 				<Loader2 size={10} class="animate-spin" />
@@ -132,7 +130,7 @@
 				<Check size={10} /> Restart to apply update
 			</span>
 		{:else if status === 'error'}
-			<span class="text-qc-danger inline-flex items-center gap-1" title={errorMsg}>
+			<span class="text-qc-danger inline-flex items-center gap-1" data-tip={errorMsg}>
 				<AlertCircle size={10} /> Update failed
 			</span>
 		{/if}
@@ -143,13 +141,11 @@
 			{#if status === 'idle' || status === 'uptodate' || status === 'error'}
 				<button
 					onclick={handleCheck}
-					class="group relative h-5 w-5 rounded hover:bg-qc-hover text-qc-muted hover:text-qc-fg inline-flex items-center justify-center"
+					class="h-5 w-5 rounded hover:bg-qc-hover text-qc-muted hover:text-qc-fg inline-flex items-center justify-center"
 					aria-label="Check for updates"
+					data-tip="Check for updates — see if a newer version of QueryCastle is available"
 				>
 					<RefreshCw size={14} />
-					<span class={tooltipClass}
-						>Check for updates — see if a newer version of QueryCastle is available</span
-					>
 				</button>
 			{:else if status === 'available'}
 				<button
@@ -168,11 +164,11 @@
 			{:else if status === 'checking'}
 				<button
 					disabled
-					class="group relative h-5 w-5 rounded text-gray-500 inline-flex items-center justify-center opacity-70 cursor-wait"
+					class="h-5 w-5 rounded text-gray-500 inline-flex items-center justify-center opacity-70 cursor-wait"
 					aria-label="Checking for updates"
+					data-tip="Checking for updates…"
 				>
 					<Loader2 size={11} class="animate-spin" />
-					<span class={tooltipClass}>Checking for updates…</span>
 				</button>
 			{:else if status === 'downloading'}
 				<button
@@ -198,11 +194,11 @@
 		{/if}
 		<button
 			onclick={openRepo}
-			class="group relative h-5 w-5 rounded hover:bg-qc-hover text-qc-muted hover:text-qc-fg inline-flex items-center justify-center"
+			class="h-5 w-5 rounded hover:bg-qc-hover text-qc-muted hover:text-qc-fg inline-flex items-center justify-center"
 			aria-label="Open the QueryCastle GitHub repository"
+			data-tip="View the QueryCastle repository on GitHub"
 		>
 			<GithubIcon size={14} />
-			<span class={tooltipClass}>View the QueryCastle repository on GitHub</span>
 		</button>
 	</div>
 </footer>

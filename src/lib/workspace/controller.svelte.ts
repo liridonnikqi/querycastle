@@ -12,10 +12,14 @@ import { rpc } from '$lib/rpc-client';
 import type { QueryHistoryItem, SavedQueryItem } from '$lib/types';
 import { dialectCapabilities, engineDisplayName } from '$lib/utils/dialect';
 import {
+	decodeSshSecrets,
+	encodeSshSecrets,
 	injectConnectionPassword,
+	injectSshSecrets,
 	migrateSavedConnectionSecrets,
 	normalizeConnectionInput,
 	passwordFromConnection,
+	sshSecretName,
 	stripConnectionSecrets,
 } from '$lib/utils/connection';
 import { tryBuildEditableQuery } from '$lib/utils/editable-query';
@@ -113,6 +117,8 @@ export class Workspace {
 	isTestingConnection = $state(false);
 	isConnecting = $state(false);
 	isRunningQuery = $state(false);
+	runningTabId = $state<string | null>(null);
+	activeQueryId = $state<string | null>(null);
 	testConnectionMessage = $state('');
 	testConnectionOk = $state(false);
 	globalError = $state('');
@@ -213,6 +219,8 @@ export class Workspace {
 		this.isExplorerLoading = session.isExplorerLoading;
 		this.globalError = session.globalError;
 		this.queryDurationMs = session.queryDurationMs;
+		this.isRunningQuery = false;
+		this.runningTabId = null;
 		this.tabContextMenu = null;
 	}
 
@@ -225,6 +233,8 @@ export class Workspace {
 		this.isExplorerLoading = false;
 		this.globalError = '';
 		this.queryDurationMs = 0;
+		this.isRunningQuery = false;
+		this.runningTabId = null;
 		this.tabContextMenu = null;
 	}
 
@@ -274,6 +284,17 @@ export class Workspace {
 
 	setActiveSql(nextSql: string) {
 		this.setSqlInReusableQueryTab(nextSql);
+	}
+
+	private setActiveTabError(message: string) {
+		const tabId = this.activeTabId;
+		if (!tabId) {
+			this.globalError = message;
+			return;
+		}
+		this.tabs = this.tabs.map((tab) =>
+			tab.id === tabId ? { ...tab, sqlError: message } : tab,
+		);
 	}
 
 	addDiagramTab() {
@@ -355,24 +376,51 @@ export class Workspace {
 	}
 
 	private bumpQueryEpoch() {
+		const queryId = this.activeQueryId;
 		this.queryEpoch += 1;
 		this.isRunningQuery = false;
+		this.runningTabId = null;
+		this.activeQueryId = null;
+		if (queryId) void rpc.cancelQuery(queryId).catch(() => {});
 	}
 
 	private async withResolvedPassword(input: ConnectionInput): Promise<ConnectionInput> {
-		if (input.password) return injectConnectionPassword(input, input.password);
-		const names = [this.editingConnectionName, input.name]
-			.filter((name): name is string => Boolean(name && name.trim()))
-			.filter((name, index, all) => all.indexOf(name) === index);
-		for (const name of names) {
-			try {
-				const stored = await rpc.secretGet(name);
-				if (stored) return injectConnectionPassword(input, stored);
-			} catch {
-				// Keychain misses are non-fatal; the user can still type a password.
+		let next = input;
+		if (!next.password) {
+			const names = [this.editingConnectionName, input.name]
+				.filter((name): name is string => Boolean(name && name.trim()))
+				.filter((name, index, all) => all.indexOf(name) === index);
+			for (const name of names) {
+				try {
+					const stored = await rpc.secretGet(name);
+					if (stored) {
+						next = injectConnectionPassword(next, stored);
+						break;
+					}
+				} catch {
+					// Keychain misses are non-fatal; the user can still type a password.
+				}
+			}
+		} else {
+			next = injectConnectionPassword(next, next.password);
+		}
+		if (next.sshEnabled && !next.sshPassword && !next.sshKeyPassphrase) {
+			const names = [this.editingConnectionName, input.name]
+				.filter((name): name is string => Boolean(name && name.trim()))
+				.filter((name, index, all) => all.indexOf(name) === index);
+			for (const name of names) {
+				try {
+					const stored = await rpc.secretGet(sshSecretName(name));
+					if (stored) {
+						next = injectSshSecrets(next, decodeSshSecrets(stored));
+						break;
+					}
+				} catch {
+					// Keychain misses are non-fatal.
+				}
 			}
 		}
-		return input;
+		return next;
 	}
 
 	async upsertSavedConnection(connection: ConnectionInput) {
@@ -385,6 +433,21 @@ export class Workspace {
 					`Could not save password to the OS keychain: ${errorMessage(error)}`,
 				);
 				// Match migrate: do not strip+persist when keychain write fails.
+				return;
+			}
+		}
+		const sshPassword = connection.sshPassword ?? '';
+		const sshKeyPassphrase = connection.sshKeyPassphrase ?? '';
+		if (connection.sshEnabled && (sshPassword || sshKeyPassphrase) && connection.name.trim()) {
+			try {
+				await rpc.secretSet(
+					sshSecretName(connection.name),
+					encodeSshSecrets({ password: sshPassword, keyPassphrase: sshKeyPassphrase }),
+				);
+			} catch (error) {
+				toast.error(
+					`Could not save SSH secrets to the OS keychain: ${errorMessage(error)}`,
+				);
 				return;
 			}
 		}
@@ -839,17 +902,20 @@ export class Workspace {
 			historySql?: string;
 		},
 	) {
-		this.isRunningQuery = true;
 		const epoch = this.queryEpoch;
 		const sessionId = this.sessionId;
 		const targetTabId = options?.targetTabId ?? this.activeTabId;
+		const queryId = crypto.randomUUID();
+		this.isRunningQuery = true;
+		this.runningTabId = targetTabId;
+		this.activeQueryId = queryId;
 		try {
 			const sql = quoteCatalogIdentifiersInSql(
 				query,
 				this.connectionStatus.databaseType,
 				collectExplorerIdentifiers(this.explorer),
 			);
-			const queryResult = await rpc.runQuery({ sql, sessionId });
+			const queryResult = await rpc.runQuery({ sql, sessionId, queryId });
 			if (epoch !== this.queryEpoch || sessionId !== this.sessionId) return;
 			this.queryDurationMs = queryResult.durationMs;
 			this.globalError = '';
@@ -884,20 +950,17 @@ export class Workspace {
 		} catch (error) {
 			if (epoch !== this.queryEpoch || sessionId !== this.sessionId) return;
 			const message = errorMessage(error);
-			this.globalError = message;
+			const cancelled = /query cancelled/i.test(message);
 			this.tabs = this.tabs.map((tab) => {
 				if (tab.id !== targetTabId) return tab;
-				// A failed ad-hoc query must not keep showing the previous
-				// successful result underneath the new error. Data tabs keep
-				// their last good browse so the grid stays usable.
-				const clearStaleResult = tab.kind === 'query';
+				const clearStaleResult = tab.kind === 'query' && !cancelled;
 				return {
 					...tab,
-					sqlError: message,
+					sqlError: cancelled ? 'Query cancelled' : message,
 					...(clearStaleResult ? { result: createEmptyResult() } : {}),
 				};
 			});
-			if (options?.pushToHistory !== false) {
+			if (!cancelled && options?.pushToHistory !== false) {
 				this.pushHistory({
 					time: nowLabel(),
 					sql: options?.historySql ?? query,
@@ -910,20 +973,32 @@ export class Workspace {
 		} finally {
 			if (epoch === this.queryEpoch && sessionId === this.sessionId) {
 				this.isRunningQuery = false;
+				this.runningTabId = null;
+				if (this.activeQueryId === queryId) this.activeQueryId = null;
 			}
+		}
+	}
+
+	async cancelRunningQuery() {
+		const queryId = this.activeQueryId;
+		if (!queryId) return;
+		try {
+			await rpc.cancelQuery(queryId);
+		} catch {
+			// The query may have already finished.
 		}
 	}
 
 	async handleRunQuery(queryOverride?: string) {
 		if (!this.connectionStatus.connected) {
-			this.globalError = 'No active connection';
+			this.setActiveTabError('No active connection');
 			return;
 		}
 		this.ensureTab();
 		if (!this.activeTab || this.activeTab.kind !== 'query') return;
 		const sqlToRun = (queryOverride ?? this.activeTab.sql).trim();
 		if (!sqlToRun) {
-			this.globalError = 'Query is empty';
+			this.setActiveTabError('Query is empty');
 			return;
 		}
 		const editablePlan = tryBuildEditableQuery({
@@ -940,6 +1015,13 @@ export class Workspace {
 	}
 
 	async handleTableAction(action: TableAction, schema: string, table: string) {
+		if (
+			this.connectionStatus.readOnly &&
+			(action === 'drop' || action === 'truncate' || action === 'rename' || action === 'duplicate')
+		) {
+			this.globalError = 'This connection is read-only.';
+			return;
+		}
 		if (action === 'drop') {
 			const isView = isExplorerView(this.explorer, schema, table);
 			const ok = isView
@@ -1035,6 +1117,10 @@ export class Workspace {
 
 	async submitRename() {
 		if (!this.renameTarget) return;
+		if (this.connectionStatus.readOnly) {
+			this.globalError = 'This connection is read-only.';
+			return;
+		}
 		const nextName = this.renameValue.trim();
 		if (!nextName) {
 			this.globalError = 'New table name is required.';
@@ -1196,6 +1282,10 @@ export class Workspace {
 	async handleCreateDatabase(params: { name: string; encoding: string }) {
 		if (!this.connectionStatus.connected) {
 			this.globalError = 'No active connection';
+			return;
+		}
+		if (this.connectionStatus.readOnly) {
+			this.globalError = 'This connection is read-only.';
 			return;
 		}
 		const capabilities = dialectCapabilities(this.connectionStatus.databaseType);
