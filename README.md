@@ -18,6 +18,8 @@ Open a connection, browse the schema, run queries, and edit rows in the grid.
 - Results grid you can edit in place
 - Query tabs, saved queries, and per-connection history
 - Uses native OS(MacOS and Windows) keychains to store credentials securely (macOS Keychain and Windows Credential Manager respectively)
+- Readonly mode for connections (useful for production databases)
+- SSH tunneling for connections
 
 ## Run locally
 
