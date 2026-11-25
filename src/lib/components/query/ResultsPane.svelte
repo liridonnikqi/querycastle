@@ -4,10 +4,13 @@
 		ArrowUp,
 		ArrowUpDown,
 		ArrowUpRight,
+		Check,
 		ChevronLeft,
 		ChevronRight,
+		CircleAlert,
 		Copy,
 		Filter,
+		Loader2,
 		PanelRight,
 		Play,
 		Plus,
@@ -44,7 +47,11 @@
 		valuesForInsert,
 		type GridColumnMeta,
 	} from '$lib/utils/grid-editors';
-	import { HIDDEN_ROW_ID_COLUMN, dialectCapabilities } from '$lib/utils/dialect';
+	import {
+		HIDDEN_ROW_ID_COLUMN,
+		buildExplainSql,
+		dialectCapabilities,
+	} from '$lib/utils/dialect';
 	import {
 		explorerTableColumnNames,
 		isCommandQueryResult,
@@ -116,6 +123,7 @@
 		onApplyTableChanges,
 		onFollowRelation,
 		onActivateRelationTrail,
+		onDismissError,
 		durationMs = 0,
 		loading = false,
 		refreshSql = '',
@@ -136,6 +144,7 @@
 		) => Promise<ApplyTableChangesResult>;
 		onFollowRelation?: (hop: RelationHop) => void | Promise<void>;
 		onActivateRelationTrail?: (index: number) => void | Promise<void>;
+		onDismissError?: () => void;
 		durationMs?: number;
 		loading?: boolean;
 		refreshSql?: string;
@@ -710,12 +719,16 @@
 		}
 		if (!grid.activeRowId) return;
 		editingCell = null;
+		pendingPanelOpen = false;
+		userCollapsedPending = true;
 		inspectorOpen = true;
 	}
 
 	function inspectRow(rowId: string) {
 		grid.activeRowId = rowId;
 		editingCell = null;
+		pendingPanelOpen = false;
+		userCollapsedPending = true;
 		inspectorOpen = true;
 		rowContextMenu = null;
 		relatedSubmenuOpen = false;
@@ -817,7 +830,10 @@
 	function applyCellValue(rowId: string, column: string, nextValue: unknown) {
 		const row = displayResult.rows.find((item) => rowIdOf(item) === rowId);
 		grid.setCellValue(rowId, column, nextValue, row ? row[column] : undefined);
-		if (!userCollapsedPending) pendingPanelOpen = true;
+		if (!userCollapsedPending) {
+			inspectorOpen = false;
+			pendingPanelOpen = true;
+		}
 	}
 
 	function commitEdit() {
@@ -972,7 +988,10 @@
 	function queueDeleteRows(rowIds: string[]) {
 		grid.deleteRows(rowIds, displayResult.rows);
 		rowContextMenu = null;
-		if (!userCollapsedPending) pendingPanelOpen = true;
+		if (!userCollapsedPending) {
+			inspectorOpen = false;
+			pendingPanelOpen = true;
+		}
 	}
 
 	function openRowContextMenu(
@@ -1005,7 +1024,9 @@
 	function startInsertRow() {
 		if (!editable) return;
 		grid.startInsert();
-		if (!userCollapsedPending) pendingPanelOpen = true;
+		userCollapsedPending = false;
+		inspectorOpen = false;
+		pendingPanelOpen = true;
 		for (const column of columnMetas) {
 			if (column.fk) void ensureFkOptions(column.fk);
 		}
@@ -1070,6 +1091,17 @@
 	}
 
 	async function rerunContextQuery() {
+		if (!resultContext) {
+			const sql = refreshSql.trim();
+			if (!sql) return;
+			rerunning = true;
+			try {
+				await onRunSql(sql);
+			} finally {
+				rerunning = false;
+			}
+			return;
+		}
 		page = 1;
 		await applyBrowse();
 	}
@@ -1128,7 +1160,10 @@
 	});
 
 	$effect(() => {
-		if (changeCount > 0 && !userCollapsedPending) pendingPanelOpen = true;
+		if (changeCount > 0 && !userCollapsedPending) {
+			inspectorOpen = false;
+			pendingPanelOpen = true;
+		}
 		if (changeCount === 0) {
 			pendingPanelOpen = false;
 			userCollapsedPending = false;
@@ -1140,10 +1175,8 @@
 		const sourceSql =
 			refreshSql.trim().length > 0 ? refreshSql : buildDefaultContextSql();
 		if (!sourceSql) return;
-		const normalized = sourceSql.trim().replace(/;+\s*$/, '');
-		const explainSql = /^\s*explain\b/i.test(normalized)
-			? normalized
-			: `explain (costs true, verbose false, format text) ${normalized}`;
+		const explainSql = buildExplainSql(databaseType, sourceSql);
+		if (!explainSql) return;
 		runningExplain = true;
 		try {
 			await onRunSql(explainSql);
@@ -1166,6 +1199,7 @@
 			const missing = missingRequiredColumns(draft, columnMetas);
 			if (missing.length > 0) {
 				toast.error(`New row is missing ${missing.join(', ')}.`);
+				inspectorOpen = false;
 				pendingPanelOpen = true;
 				return;
 			}
@@ -1294,10 +1328,14 @@
 
 	$effect(() => {
 		gridChrome.changeCount = changeCount;
+		return () => {
+			gridChrome.changeCount = 0;
+		};
 	});
 
 	$effect(() => {
 		if (gridChrome.pendingOpenNonce > 0) {
+			inspectorOpen = false;
 			pendingPanelOpen = true;
 			userCollapsedPending = false;
 		}
@@ -1398,7 +1436,7 @@
 	});
 </script>
 
-<div class="results-pane flex-1 flex flex-col bg-qc-grid min-w-[320px] min-h-0 overflow-hidden">
+<div class="results-pane flex-1 flex flex-col bg-qc-grid min-w-0 min-h-0 overflow-hidden">
 	{#snippet fillerHeader()}
 		{#each Array.from({ length: fillerColCount }) as _, i (`fill-h-${i}`)}
 			<th
@@ -1424,14 +1462,14 @@
 		onActivate={(index) => onActivateRelationTrail?.(index)}
 	/>
 	<div
-		class="h-10 px-2 border-b border-qc-border bg-qc-panel shrink-0 flex items-center gap-0.5"
+		class="h-9 px-2.5 border-b border-qc-border bg-qc-panel shrink-0 flex items-center gap-1"
 	>
 		{#if editable}
 			{#if grid.selectedRows.size > 0}
 				<button
 					type="button"
 					onclick={() => queueDeleteRows(Array.from(grid.selectedRows))}
-					class="btn-danger h-6 w-[72px] px-2 text-[12px] font-medium inline-flex items-center justify-center gap-1 shrink-0"
+					class="btn-danger h-7 px-2.5 text-[12px] font-medium inline-flex items-center justify-center gap-1 shrink-0"
 					data-tip={`Delete ${grid.selectedRows.size} row${grid.selectedRows.size === 1 ? '' : 's'}`}
 				>
 					<Trash2 size={12} />Delete
@@ -1441,7 +1479,7 @@
 					type="button"
 					onclick={startInsertRow}
 					disabled={syncingChanges}
-					class="btn-primary h-6 w-[72px] px-2 text-[12px] font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1 shrink-0"
+					class="btn-primary h-7 px-2.5 text-[12px] font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1 shrink-0"
 				>
 					<Plus size={12} />Insert
 				</button>
@@ -1450,12 +1488,16 @@
 		<button
 			type="button"
 			onclick={rerunContextQuery}
-			disabled={rerunning || loading}
+			disabled={rerunning || loading || (!resultContext && refreshSql.trim().length === 0)}
 			class="toolbar-icon disabled:opacity-50"
-			data-tip={rerunning ? 'Running' : 'Refresh'}
+			data-tip={rerunning || loading ? 'Running' : 'Refresh'}
 			aria-label="Refresh results"
 		>
-			<Play size={14} />
+			{#if rerunning || loading}
+				<Loader2 size={14} class="animate-spin" />
+			{:else}
+				<Play size={14} />
+			{/if}
 		</button>
 		<button
 			type="button"
@@ -1559,17 +1601,17 @@
 		{/if}
 		<div class="flex-1 min-w-2"></div>
 		{#if !resultContext || activeView !== 'results' || sqlError}
-			<div class="results-view-tabs shrink-0">
+			<div class="qc-segmented mr-1 shrink-0">
 				<button
 					type="button"
-					class={activeView === 'results' ? 'is-on' : ''}
+					class={`qc-seg-btn ${activeView === 'results' ? 'is-on' : ''}`}
 					onclick={() => (activeView = 'results')}
 				>
 					Results
 				</button>
 				<button
 					type="button"
-					class={activeView === 'messages' ? 'is-on' : ''}
+					class={`qc-seg-btn ${activeView === 'messages' ? 'is-on' : ''}`}
 					onclick={() => (activeView = 'messages')}
 				>
 					Messages
@@ -1577,7 +1619,7 @@
 				{#if dialectCapabilities(databaseType).supportsExplain}
 					<button
 						type="button"
-						class={activeView === 'explain' ? 'is-on' : ''}
+						class={`qc-seg-btn ${activeView === 'explain' ? 'is-on' : ''}`}
 						onclick={() => (activeView = 'explain')}
 					>
 						Explain
@@ -1648,9 +1690,21 @@
 
 	{#if sqlError && activeView !== 'messages'}
 		<div
-			class="px-4 py-2 text-xs text-qc-danger border-b border-qc-danger/20 bg-qc-danger/10"
+			class="flex items-start gap-2 px-4 py-2 text-xs text-qc-danger border-b border-qc-danger/20 bg-qc-danger/10 shrink-0"
+			role="alert"
 		>
-			{sqlError}
+			<CircleAlert size={14} class="mt-0.5 shrink-0" />
+			<div class="min-w-0 flex-1 whitespace-pre-wrap break-words">{sqlError}</div>
+			{#if onDismissError}
+				<button
+					type="button"
+					onclick={onDismissError}
+					class="flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-75 hover:bg-qc-danger/15 hover:opacity-100"
+					aria-label="Dismiss error"
+				>
+					<X size={12} />
+				</button>
+			{/if}
 		</div>
 	{/if}
 
@@ -1663,42 +1717,44 @@
 			<div id="qc-range-overlay" class="grid-range-overlay" hidden></div>
 			{#if activeView === 'messages'}
 				<div
-					class="h-full p-4 text-xs text-qc-subtle space-y-2 excel-grid bg-qc-grid"
+					class="h-full p-4 text-xs text-qc-subtle space-y-2 bg-qc-grid"
 				>
 					{#if sqlError}
 						<div
-							class="rounded border border-qc-danger/30 bg-qc-danger/10 px-3 py-2 text-qc-danger"
+							class="rounded-lg border border-qc-danger/30 bg-qc-danger/10 px-3 py-2.5 text-qc-danger"
 						>
 							<div class="font-semibold mb-1">SQL Error</div>
 							<div class="whitespace-pre-wrap">{sqlError}</div>
 						</div>
 					{:else}
-						<div
-							class="rounded border border-qc-border bg-qc-elevated px-3 py-2"
-						>
-							{outcomeMessage}
+						<div class="flex items-center gap-2 text-xs text-qc-subtle">
+							<Check size={14} class="text-qc-muted shrink-0" />
+							<span>{outcomeMessage}</span>
 						</div>
 					{/if}
 				</div>
 			{:else if activeView === 'explain'}
-				<div class="h-full p-4 space-y-3 bg-qc-grid">
-					<div class="text-xs text-qc-muted">
-						Run `EXPLAIN` for the current query/result source.
+				<div class="h-full p-4 space-y-4 bg-qc-grid">
+					<div class="flex items-center justify-between gap-3">
+						<div class="text-xs text-qc-muted">
+							Run execution plan for the current query.
+						</div>
+						<button
+							type="button"
+							onclick={runExplain}
+							disabled={runningExplain || loading || (refreshSql.trim().length === 0 && !resultContext)}
+							class="btn-secondary h-7 px-3 text-xs font-medium disabled:opacity-60 shrink-0"
+						>
+							{runningExplain ? 'Running EXPLAIN…' : 'Run EXPLAIN'}
+						</button>
 					</div>
-					<button
-						onclick={runExplain}
-						disabled={runningExplain || loading}
-						class="h-8 px-3 rounded border border-qc-border bg-qc-elevated text-xs text-qc-subtle hover:bg-qc-hover disabled:opacity-60"
-					>
-						{runningExplain ? 'Running EXPLAIN...' : 'Run EXPLAIN'}
-					</button>
 					{#if refreshSql.trim().length > 0 || resultContext}
-						<div class="rounded border border-qc-border bg-qc-elevated p-3">
-							<div class="text-[11px] font-semibold text-qc-muted mb-1">
+						<div class="pt-3 border-t border-qc-border-subtle">
+							<div class="text-[11px] font-medium text-qc-muted mb-1.5">
 								Source SQL
 							</div>
 							<pre
-								class="font-mono text-[11px] text-qc-data whitespace-pre-wrap break-words">{refreshSql.trim()
+								class="font-mono text-[11px] leading-relaxed text-qc-data whitespace-pre-wrap break-words select-text">{refreshSql.trim()
 									.length > 0
 									? refreshSql
 									: buildDefaultContextSql()}</pre>
@@ -1710,29 +1766,34 @@
 					{/if}
 				</div>
 			{:else if isCommandResult}
-				<div class="h-full p-4 text-xs text-qc-subtle">
-					<div
-						class="rounded border border-qc-border bg-qc-elevated px-3 py-2"
-					>
-						{outcomeMessage}
-					</div>
+				<div class="h-full p-4 flex items-start gap-2 text-xs text-qc-subtle">
+					<Check size={14} class="mt-0.5 text-qc-muted shrink-0" />
+					<span>{outcomeMessage}</span>
 				</div>
 			{:else if loading}
 				<div class="min-w-full min-h-full">
 					<table
-						class="excel-grid min-w-full text-left text-sm whitespace-nowrap"
+						class="excel-grid min-w-full table-fixed text-left text-sm whitespace-nowrap animate-pulse"
 					>
+						<colgroup>
+							{#if editable}
+								<col class="qc-select-col" />
+							{/if}
+							{#each sheetColumns as column}
+								<col style={`width:${getColumnWidth(column)}px`} />
+							{/each}
+						</colgroup>
 						<thead class="bg-qc-grid z-10">
-							<tr>
+							<tr class="h-8">
 								{#if editable}
 									<th class="qc-select-col"></th>
 								{/if}
 								{#each sheetColumns as column}
 									<th
-										class="px-4 py-2"
-										style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;`}
+										class="px-2.5 py-1.5"
+										style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;max-width:${getColumnWidth(column)}px;`}
 									>
-										<div class="h-3.5 w-24 rounded bg-qc-hover"></div>
+										<div class="h-3.5 w-20 rounded bg-qc-hover"></div>
 									</th>
 								{/each}
 								{@render fillerHeader()}
@@ -1743,16 +1804,16 @@
 								<tr class="h-8">
 									{#if editable}
 										<td class="qc-select-col">
-											<div class="mx-auto h-3.5 w-3.5 rounded bg-qc-hover"></div>
+											<div class="mx-auto h-3 w-3 rounded bg-qc-hover"></div>
 										</td>
 									{/if}
 									{#each sheetColumns as column}
 										<td
-											class="px-4 py-1.5"
-											style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;`}
+											class="px-2.5 py-1.5"
+											style={`width:${getColumnWidth(column)}px;min-width:${getColumnWidth(column)}px;max-width:${getColumnWidth(column)}px;`}
 										>
 											<div
-												class="h-3.5 w-full max-w-[180px] rounded bg-qc-hover"
+												class="h-3.5 w-full max-w-[160px] rounded bg-qc-hover"
 											></div>
 										</td>
 									{/each}
@@ -2025,8 +2086,8 @@
 												>
 													{#if isEmptyCell(currentValue)}
 														<span
-															class="truncate min-w-0 flex-1 italic text-qc-muted"
-															>Empty</span
+															class="truncate min-w-0 flex-1 italic text-qc-muted/75"
+															>NULL</span
 														>
 													{:else if meta?.kind === 'boolean'}
 														<span

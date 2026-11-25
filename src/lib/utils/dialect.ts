@@ -91,6 +91,25 @@ export function engineDisplayName(databaseType: DatabaseType): string {
 	return 'PostgreSQL';
 }
 
+export function displayDatabaseName(database: string, databaseType: DatabaseType): string {
+	if (!database) return '';
+	if (databaseType === 'sqlite' || database.includes('/') || database.includes('\\')) {
+		const normalized = database.replaceAll('\\', '/');
+		const parts = normalized.split('/').filter(Boolean);
+		return parts[parts.length - 1] ?? database;
+	}
+	return database;
+}
+
+export function buildExplainSql(databaseType: DatabaseType, rawSql: string): string {
+	const normalized = rawSql.trim().replace(/;+\s*$/, '');
+	if (!normalized) return '';
+	if (/^\s*explain\b/i.test(normalized)) return normalized;
+	if (databaseType === 'sqlite') return `EXPLAIN QUERY PLAN ${normalized}`;
+	if (databaseType === 'mysql') return `EXPLAIN ${normalized}`;
+	return `EXPLAIN (COSTS true, VERBOSE false, FORMAT text) ${normalized}`;
+}
+
 export function qualifyTable(
 	databaseType: DatabaseType,
 	schema: string,

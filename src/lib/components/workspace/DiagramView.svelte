@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import {
 		LayoutGrid,
+		Loader2,
 		Maximize2,
 		Minus,
 		Network,
@@ -13,6 +14,7 @@
 	} from '$lib/icons';
 	import type { ConnectionStatus, DatabaseExplorer } from '$lib/rpc';
 	import type { TableAction } from '$lib/utils/workspace';
+	import { displayDatabaseName } from '$lib/utils/dialect';
 	import { theme } from '$lib/theme.svelte';	import {
 		HEADER_HEIGHT,
 		ROW_HEIGHT,
@@ -412,53 +414,64 @@
 
 <section class={`flex-1 min-w-0 flex flex-col bg-qc-bg ${embedded ? '' : 'border-l border-qc-border'}`}>
 	<div
-		class="h-10 border-b border-qc-border bg-qc-panel flex items-center justify-between px-3 gap-3 shrink-0"
+		class="h-9 border-b border-qc-border-subtle bg-qc-panel flex items-center justify-between px-3 gap-3 shrink-0"
 	>
 		<div class="flex items-center gap-2 min-w-0">
-			<Network size={15} class="text-qc-muted shrink-0" />
-			<span class="text-sm font-semibold text-qc-fg whitespace-nowrap">Schema diagram</span>
+			<Network size={14} class="text-qc-muted shrink-0" />
+			<span class="text-[13px] font-medium text-qc-fg whitespace-nowrap">Schema diagram</span>
 			{#if connectionStatus.connected}
+				<span class="text-[11px] text-qc-muted/50">·</span>
 				<span
-					class="text-[11px] px-1.5 py-0.5 rounded-full bg-qc-elevated border border-qc-border text-qc-subtle truncate"
-					>{connectionStatus.database}</span
+					class="text-[11px] text-qc-muted truncate max-w-44"
+					data-tip={connectionStatus.database}
+					>{displayDatabaseName(
+						connectionStatus.database,
+						connectionStatus.databaseType,
+					)}</span
 				>
+				<span class="text-[11px] text-qc-muted/50">·</span>
 				<span class="text-[11px] text-qc-muted whitespace-nowrap">
 					{layout.nodes.length} tables · {layout.edges.length} relations
 				</span>
 			{/if}
 		</div>
 		{#if connectionStatus.connected && layout.nodes.length > 0}
-			<div class="flex items-center gap-1.5">
-				<div class="relative flex items-center w-56">
-					<Search size={14} class="w-4 h-4 absolute left-2.5 text-qc-muted" />
+			<div class="flex items-center gap-1 shrink-0">
+				<div class="relative flex items-center w-36 sm:w-48 lg:w-56 mr-1">
+					<Search size={13} class="absolute left-2.5 text-qc-muted pointer-events-none" />
 					<input
 						type="text"
-						placeholder="Search..."
+						placeholder="Filter tables…"
 						bind:value={search}
-						class="w-full h-8 bg-qc-bg border border-qc-border text-qc-fg text-sm rounded-md block pl-8 pr-8 py-1.5 placeholder:text-qc-muted focus:outline-none hover:border-qc-muted focus:border-qc-muted"
+						class="w-full h-7 bg-qc-fg/[0.045] border border-transparent focus:border-qc-focus-border focus:bg-qc-bg text-qc-fg text-[12px] rounded-md block pl-7 pr-7 placeholder:text-qc-muted focus:outline-none transition-colors"
 					/>
 					{#if search}
 						<button
+							type="button"
 							onclick={() => (search = '')}
-							class="absolute right-2 w-4 h-4 rounded-full bg-qc-hover hover:bg-qc-elevated text-qc-muted flex items-center justify-center"
+							class="absolute right-1.5 w-4 h-4 rounded text-qc-muted hover:text-qc-fg flex items-center justify-center"
 							aria-label="Clear search"
 						>
-							<X size={10} />
+							<X size={11} />
 						</button>
 					{/if}
 				</div>
 				<button
+					type="button"
 					onclick={handleRelayout}
 					data-tip="Re-layout"
-					class="w-8 h-8 rounded-md border border-qc-border bg-qc-panel flex items-center justify-center text-qc-muted hover:text-qc-fg hover:bg-qc-hover"
+					aria-label="Re-layout diagram"
+					class="toolbar-icon"
 				>
 					<LayoutGrid size={14} />
 				</button>
 				<button
+					type="button"
 					onclick={handleRefresh}
 					data-tip="Refresh schema"
+					aria-label="Refresh schema"
 					disabled={isRefreshing || loadingExplorer}
-					class="w-8 h-8 rounded-md border border-qc-border bg-qc-panel flex items-center justify-center text-qc-muted hover:text-qc-fg hover:bg-qc-hover disabled:opacity-50"
+					class="toolbar-icon disabled:opacity-50"
 				>
 					<RefreshCw size={14} class={isRefreshing || loadingExplorer ? 'animate-spin' : ''} />
 				</button>
@@ -476,9 +489,7 @@
 			</div>
 		{:else if loadingExplorer && layout.nodes.length === 0}
 			<div class="h-full flex flex-col items-center justify-center text-center p-6">
-				<div
-					class="w-6 h-6 border-2 border-qc-border border-t-qc-subtle rounded-full animate-spin mb-3"
-				></div>
+				<Loader2 size={20} class="animate-spin text-qc-muted mb-2" />
 				<div class="text-xs text-qc-muted">Loading schema...</div>
 			</div>
 		{:else if layout.nodes.length === 0}
@@ -639,28 +650,35 @@
 					{/each}
 				</g>
 			</svg>
-			<div class="absolute left-3 bottom-3 z-10 flex flex-col items-center gap-1">
+			<div class="absolute left-3 bottom-3 z-10 flex flex-col rounded-lg border border-qc-border bg-qc-panel/90 backdrop-blur-sm divide-y divide-qc-border-subtle overflow-hidden shadow-sm">
 				<button
+					type="button"
 					onclick={() => zoomBy(1.25)}
 					data-tip="Zoom in"
-					class="w-7 h-7 flex items-center justify-center bg-qc-panel border border-qc-border rounded-md text-qc-muted hover:text-qc-fg hover:bg-qc-hover"
+					aria-label="Zoom in"
+					class="w-7 h-7 flex items-center justify-center text-qc-muted hover:text-qc-fg hover:bg-qc-hover"
 				>
 					<Plus size={13} />
 				</button>
 				<button
+					type="button"
 					onclick={() => zoomBy(1 / 1.25)}
 					data-tip="Zoom out"
-					class="w-7 h-7 flex items-center justify-center bg-qc-panel border border-qc-border rounded-md text-qc-muted hover:text-qc-fg hover:bg-qc-hover"
+					aria-label="Zoom out"
+					class="w-7 h-7 flex items-center justify-center text-qc-muted hover:text-qc-fg hover:bg-qc-hover"
 				>
 					<Minus size={13} />
 				</button>
 				<button
+					type="button"
 					onclick={() => fitToScreen()}
 					data-tip="Fit to screen"
-					class="w-7 h-7 flex items-center justify-center bg-qc-panel border border-qc-border rounded-md text-qc-muted hover:text-qc-fg hover:bg-qc-hover"
+					aria-label="Fit to screen"
+					class="w-7 h-7 flex items-center justify-center text-qc-muted hover:text-qc-fg hover:bg-qc-hover"
 				>
 					<Maximize2 size={13} />
-				</button>			</div>
+				</button>
+			</div>
 			{#if layout.edges.length === 0}
 				<div
 					class="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-qc-panel border border-qc-border shadow-sm text-[11px] text-qc-muted pointer-events-none"

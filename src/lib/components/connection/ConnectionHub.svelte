@@ -1,10 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { fade, fly, scale } from 'svelte/transition';
+	import { scale } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import {
-		ArrowLeft,
-		ArrowRight,
 		Loader2,
 		MoreVertical,
 		Plus,
@@ -16,65 +14,51 @@
 	import { isTauri } from '@tauri-apps/api/core';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import type { ConnectionInput, DatabaseType } from '$lib/rpc';
-	import { rpc } from '$lib/rpc-client';
 	import DatabaseIcon from '$lib/components/ui/DatabaseIcon.svelte';
 	import QueryCastleLogo from '$lib/components/ui/QueryCastleLogo.svelte';
 	import ThemeToggle from '$lib/components/ui/ThemeToggle.svelte';
 	import WindowControls from '$lib/components/ui/WindowControls.svelte';
-	import ConnectionFields from '$lib/components/connection/ConnectionFields.svelte';
+	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
 	import ConnectionStatusBanner from '$lib/components/connection/ConnectionStatusBanner.svelte';
 	import {
 		DATABASE_ENGINES,
 		ENGINE_KEY,
 		connectionMetaLine,
-		connectionStringPlaceholder,
-		decodeSshSecrets,
-		defaultsForType,
-		generateConnectionString,
-		injectConnectionPassword,
-		injectSshSecrets,
 		loadRecentConnectionNames,
 		rememberRecentConnection,
-		sshSecretName,
-		withDatabaseType,
-		withParsedConnectionString,
 	} from '$lib/utils/connection';
-	import { engineDisplayName } from '$lib/utils/dialect';
 
 	let {
 		savedConnections,
 		onConnect,
+		onNew,
 		onEdit,
 		onDelete,
-		onSaveAndConnect,
+		onSaveAndConnect: _onSaveAndConnect,
 		connectingName,
 		searchQuery,
-		isConnecting = false,
+		isConnecting: _isConnecting = false,
 		connectError = '',
+		onClearConnectError,
 	}: {
 		savedConnections: ConnectionInput[];
 		onConnect: (connection: ConnectionInput) => void;
+		onNew?: (engine?: DatabaseType) => void;
 		onEdit: (connection: ConnectionInput) => void;
 		onDelete: (name: string) => void;
-		onSaveAndConnect: (connection: ConnectionInput) => void;
+		onSaveAndConnect?: (connection: ConnectionInput) => void;
 		connectingName: string | null;
 		searchQuery: string;
 		isConnecting?: boolean;
 		connectError?: string;
+		onClearConnectError?: () => void;
 	} = $props();
 
-	let view = $state<'home' | 'new'>('home');
-	let picked = $state(false);
-	let form = $state<ConnectionInput>(defaultsForType('postgres'));
-	let connectionString = $state('');
-	let useString = $state(false);
 	let activeMenuName = $state<string | null>(null);
+	let pendingDeleteConnection = $state<ConnectionInput | null>(null);
 	let hubSearch = $state('');
 	let recentNames = $state<string[]>([]);
-	let appVersion = $state('0.1.6');
-	let isTesting = $state(false);
-	let testMessage = $state('');
-	let testOk = $state(false);
+	let appVersion = $state('0.2.1');
 	let engineFilter = $state<'all' | DatabaseType>('all');
 
 	const engineFilters: Array<{ value: 'all' | DatabaseType; label: string }> = [
@@ -125,65 +109,8 @@
 	});
 
 	function openNew() {
-		view = 'new';
-		picked = false;
-		form = defaultsForType('postgres');
-		connectionString = '';
-		useString = false;
-		clearTest();
-	}
-
-	function openNewFromEmpty() {
-		const engine = engineFilter;
-		openNew();
-		if (engine !== 'all') selectProvider(engine);
-	}
-
-	function backHome() {
-		view = 'home';
-		picked = false;
-		clearTest();
-	}
-
-	function clearTest() {
-		testMessage = '';
-		testOk = false;
-	}
-
-	function connectionPayload(): ConnectionInput {
-		return useString
-			? {
-					...form,
-					useConnectionString: form.databaseType !== 'sqlite',
-					connectionString: connectionString.trim(),
-				}
-			: { ...form, useConnectionString: false, connectionString: '' };
-	}
-
-	function selectProvider(next: DatabaseType) {
-		form = withDatabaseType(form, next);
-		connectionString = generateConnectionString(form);
-		useString = false;
-		picked = true;
-		clearTest();
-	}
-
-	function applyString(value: string) {
-		connectionString = value;
-		clearTest();
-		const parsed = withParsedConnectionString(form, value);
-		if (parsed) {
-			form = parsed;
-			useString = true;
-			picked = true;
-		} else {
-			useString = value.trim().length > 0;
-		}
-	}
-
-	function handleFormChange(next: ConnectionInput) {
-		form = next;
-		clearTest();
+		onClearConnectError?.();
+		onNew?.(engineFilter === 'all' ? undefined : engineFilter);
 	}
 
 	function connectSaved(connection: ConnectionInput) {
@@ -193,57 +120,14 @@
 
 	function handleDeleteConnection(connection: ConnectionInput) {
 		activeMenuName = null;
-		const ok = confirm(
-			`Delete connection "${connection.name}"?\nThis only removes it from QueryCastle. Your database is not affected.`,
-		);
-		if (!ok) return;
-		onDelete(connection.name);
+		pendingDeleteConnection = connection;
 	}
 
-	function submit() {
-		recentNames = rememberRecentConnection(form.name);
-		onSaveAndConnect(connectionPayload());
-	}
-
-	async function resolvedPayload(): Promise<ConnectionInput> {
-		let payload = connectionPayload();
-		if (!payload.password && payload.name.trim()) {
-			try {
-				const stored = await rpc.secretGet(payload.name);
-				if (stored) payload = injectConnectionPassword(payload, stored);
-			} catch {
-				// Keychain misses are non-fatal.
-			}
-		}
-		if (payload.sshEnabled && !payload.sshPassword && !payload.sshKeyPassphrase && payload.name.trim()) {
-			try {
-				const stored = await rpc.secretGet(sshSecretName(payload.name));
-				if (stored) payload = injectSshSecrets(payload, decodeSshSecrets(stored));
-			} catch {
-				// Keychain misses are non-fatal.
-			}
-		}
-		return payload;
-	}
-
-	async function testConnection() {
-		isTesting = true;
-		testMessage = '';
-		try {
-			const payload = await resolvedPayload();
-			const response = await rpc.testConnection(payload);
-			testOk = response.ok;
-			testMessage = response.ok
-				? response.serverVersion
-					? `${engineDisplayName(payload.databaseType)} ${response.serverVersion}`
-					: 'Connection succeeded'
-				: response.message;
-		} catch (error) {
-			testOk = false;
-			testMessage = error instanceof Error ? error.message : String(error);
-		} finally {
-			isTesting = false;
-		}
+	function confirmDeleteConnection() {
+		const target = pendingDeleteConnection;
+		pendingDeleteConnection = null;
+		if (!target) return;
+		onDelete(target.name);
 	}
 
 	async function handleTitlebarDoubleClick() {
@@ -299,215 +183,220 @@
 		</div>
 
 		<main class="flex-1 overflow-y-auto min-w-0">
-			{#if view === 'home'}
-				<div class="hub-stage">
-					<div class="hub-home animate-in fade-in slide-in-from-bottom-1 duration-200">
-						<div class="hub-toolbar">
-							<label class="hub-search">
-								<Search size={15} class="text-qc-muted shrink-0" />
-								<input
-									value={hubSearch}
-									oninput={(event) => (hubSearch = event.currentTarget.value)}
-									placeholder="Search connections..."
-									class="flex-1 bg-transparent text-[13px] text-qc-fg placeholder:text-qc-muted outline-none"
-								/>
-							</label>
+			<div class="hub-stage">
+				<div class="hub-home animate-in fade-in slide-in-from-bottom-1 duration-200">
+					<div class="hub-toolbar">
+						<label class="hub-search">
+							<Search size={15} class="text-qc-muted shrink-0" />
+							<input
+								value={hubSearch}
+								oninput={(event) => (hubSearch = event.currentTarget.value)}
+								placeholder="Search connections..."
+								class="flex-1 bg-transparent text-[13px] text-qc-fg placeholder:text-qc-muted outline-none"
+							/>
+						</label>
+					</div>
+
+					{#if connectError}
+						<div class="mt-3">
+							<ConnectionStatusBanner
+								message={connectError}
+								onDismiss={() => onClearConnectError?.()}
+							/>
 						</div>
+					{/if}
 
-						{#if connectError}
-							<div class="mt-3">
-								<ConnectionStatusBanner message={connectError} />
-							</div>
-						{/if}
-
-						{#if !query}
-							<section class="mt-6">
-								<h2
-									class="text-[11px] font-semibold tracking-wide uppercase text-qc-muted mb-2.5"
-								>
-									Recents
-								</h2>
-								<div class="hub-recents-row">
-									{#if filteredRecents.length > 0}
-										{#each filteredRecents as connection (connection.name)}
-											<button
-												type="button"
-												onclick={() => connectSaved(connection)}
-												class="hub-recent-chip"
-											>
-												<div
-													class="hub-engine-mark hub-engine-mark-xs"
-													style="--bg: {ENGINE_KEY[connection.databaseType]}"
-												>
-													<DatabaseIcon
-														type={connection.databaseType}
-														size={11}
-														tone="white"
-													/>
-												</div>
-												<span class="truncate max-w-[160px]"
-													>{connection.name}</span
-												>
-											</button>
-										{/each}
-									{:else}
+					{#if !query}
+						<section class="mt-6">
+							<h2 class="text-[11.5px] font-medium text-qc-muted mb-2.5">
+								Recent
+							</h2>
+							<div class="hub-recents-row">
+								{#if filteredRecents.length > 0}
+									{#each filteredRecents as connection (connection.name)}
 										<button
 											type="button"
-											onclick={openNewFromEmpty}
-											class="hub-recent-chip hub-recent-ghost"
+											onclick={() => connectSaved(connection)}
+											class="hub-recent-chip"
 										>
-											{#if engineFilter !== 'all'}
-												<div
-													class="hub-engine-mark hub-engine-mark-xs hub-ghost-engine"
-													style="--bg: {ENGINE_KEY[engineFilter]}"
-												>
-													<DatabaseIcon
-														type={engineFilter}
-														size={11}
-														tone="white"
-													/>
-												</div>
-											{:else}
-												<Plus size={12} class="text-qc-muted" />
-											{/if}
-											<span>None yet</span>
+											<div
+												class="hub-engine-mark hub-engine-mark-xs"
+												style="--bg: {ENGINE_KEY[connection.databaseType]}"
+											>
+												<DatabaseIcon
+													type={connection.databaseType}
+													size={11}
+													tone="white"
+												/>
+											</div>
+											<span class="truncate max-w-[160px]"
+												>{connection.name}</span
+											>
 										</button>
-									{/if}
-								</div>
-							</section>
-						{/if}
-
-						<div class="hub-list-head">
-							<div
-								class="hub-filters"
-								role="tablist"
-								aria-label="Filter by engine"
-							>
-								{#each engineFilters as filter}
-									<button
-										type="button"
-										role="tab"
-										aria-selected={engineFilter === filter.value}
-										onclick={() => (engineFilter = filter.value)}
-										class="hub-filter"
-										class:active={engineFilter === filter.value}
-									>
-										{#if filter.value !== 'all'}
-											<DatabaseIcon
-												type={filter.value}
-												size={12}
-												tone={engineFilter === filter.value ? 'white' : 'ink'}
-											/>
-										{/if}
-										{filter.label}
-									</button>
-								{/each}
-							</div>
-							<button
-								type="button"
-								onclick={openNew}
-								class="btn-primary hub-new-btn"
-							>
-								<Plus size={13} />
-								New
-							</button>
-						</div>
-
-						{#if filteredConnections.length === 0}
-							<div class="hub-conn-grid mt-5">
-								{#if query}
-									<button
-										type="button"
-										class="hub-card hub-ghost-card"
-										onclick={() => (hubSearch = '')}
-									>
-										<div class="hub-ghost-mark">
-											<Search size={16} />
-										</div>
-										<div class="min-w-0 flex-1 text-left">
-											<div class="text-[13px] font-medium leading-tight">
-												Nothing matches
-											</div>
-											<div class="mt-0.5 text-[11px] text-qc-muted">
-												Clear search
-											</div>
-										</div>
-									</button>
+									{/each}
 								{:else}
 									<button
 										type="button"
-										class="hub-card hub-ghost-card"
-										onclick={openNewFromEmpty}
+										onclick={openNew}
+										class="hub-recent-chip hub-recent-ghost"
 									>
 										{#if engineFilter !== 'all'}
 											<div
-												class="hub-engine-mark hub-ghost-engine"
+												class="hub-engine-mark hub-engine-mark-xs hub-ghost-engine"
 												style="--bg: {ENGINE_KEY[engineFilter]}"
 											>
 												<DatabaseIcon
 													type={engineFilter}
-													size={16}
+													size={11}
 													tone="white"
 												/>
 											</div>
 										{:else}
-											<div class="hub-ghost-mark">
-												<Plus size={16} />
-											</div>
+											<Plus size={12} class="text-qc-muted" />
 										{/if}
-										<div class="min-w-0 flex-1 text-left">
-											<div class="text-[13px] font-medium leading-tight">
-												Add a connection
-											</div>
-											<div class="mt-0.5 text-[11px] text-qc-muted">
-												Host, file, or connection string
-											</div>
-										</div>
+										<span>None yet</span>
 									</button>
 								{/if}
 							</div>
-						{:else}
-							<div class="hub-conn-grid mt-5">
-								{#each filteredConnections as connection, i (connection.name)}
-									{@const isBusy = connectingName === connection.name}
-									{@const menuOpen = activeMenuName === connection.name}
-									{@const keyBg = ENGINE_KEY[connection.databaseType]}
-									<div
-										class={`relative ${menuOpen ? 'z-30' : ''}`}
-										style="animation-delay: {i * 18}ms"
-									>
-										<button
-											type="button"
-											onclick={() => {
-												if (isBusy) return;
-												connectSaved(connection);
-											}}
-											class="hub-card"
+						</section>
+					{/if}
+
+					<div class="hub-list-head">
+						<div
+							class="hub-filters"
+							role="tablist"
+							aria-label="Filter by engine"
+						>
+							{#each engineFilters as filter}
+								<button
+									type="button"
+									role="tab"
+									aria-selected={engineFilter === filter.value}
+									onclick={() => {
+										engineFilter = filter.value;
+										onClearConnectError?.();
+									}}
+									class="hub-filter"
+									class:active={engineFilter === filter.value}
+								>
+									{#if filter.value !== 'all'}
+										<DatabaseIcon
+											type={filter.value}
+											size={14}
+											tone={engineFilter === filter.value ? 'white' : 'ink'}
+										/>
+									{/if}
+									{filter.label}
+								</button>
+							{/each}
+						</div>
+						<button
+							type="button"
+							onclick={openNew}
+							class="btn-primary hub-new-btn"
+						>
+							<Plus size={13} />
+							New
+						</button>
+					</div>
+
+					{#if filteredConnections.length === 0}
+						<div class="hub-conn-grid mt-5">
+							{#if query}
+								<button
+									type="button"
+									class="hub-card hub-ghost-card"
+									onclick={() => (hubSearch = '')}
+								>
+									<div class="hub-ghost-mark">
+										<Search size={16} />
+									</div>
+									<div class="min-w-0 flex-1 text-left">
+										<div class="text-[13px] font-medium leading-tight">
+											Nothing matches
+										</div>
+										<div class="mt-0.5 text-[11px] text-qc-muted">
+											Clear search
+										</div>
+									</div>
+								</button>
+							{:else}
+								<button
+									type="button"
+									class="hub-card hub-ghost-card"
+									onclick={openNew}
+								>
+									{#if engineFilter !== 'all'}
+										<div
+											class="hub-engine-mark hub-ghost-engine"
+											style="--bg: {ENGINE_KEY[engineFilter]}"
 										>
-											<div class="hub-engine-mark" style="--bg: {keyBg}">
-												<DatabaseIcon
-													type={connection.databaseType}
-													size={16}
-													tone="white"
-												/>
+											<DatabaseIcon
+												type={engineFilter}
+												size={16}
+												tone="white"
+											/>
+										</div>
+									{:else}
+										<div class="hub-ghost-mark">
+											<Plus size={16} />
+										</div>
+									{/if}
+									<div class="min-w-0 flex-1 text-left">
+										<div class="text-[13px] font-medium leading-tight">
+											Add a connection
+										</div>
+										<div class="mt-0.5 text-[11px] text-qc-muted">
+											Host, file, or connection string
+										</div>
+									</div>
+								</button>
+							{/if}
+						</div>
+					{:else}
+						<div class="hub-conn-grid mt-5">
+							{#each filteredConnections as connection, i (connection.name)}
+								{@const isBusy = connectingName === connection.name}
+								{@const menuOpen = activeMenuName === connection.name}
+								{@const keyBg = ENGINE_KEY[connection.databaseType]}
+								<div
+									class={`relative ${menuOpen ? 'z-30' : ''}`}
+									style="animation-delay: {i * 18}ms"
+								>
+									<button
+										type="button"
+										onclick={() => {
+											if (isBusy) return;
+											connectSaved(connection);
+										}}
+										class="hub-card"
+									>
+										<div class="hub-engine-mark" style="--bg: {keyBg}">
+											<DatabaseIcon
+												type={connection.databaseType}
+												size={16}
+												tone="white"
+											/>
+										</div>
+										<div class="min-w-0 flex-1 text-left">
+											<div
+												class="text-[13px] font-medium truncate leading-tight"
+											>
+												{connection.name}
 											</div>
-											<div class="min-w-0 flex-1 text-left">
-												<div
-													class="text-[13px] font-medium truncate leading-tight"
-												>
-													{connection.name}
-												</div>
-												<div class="mt-0.5 text-[11px] text-qc-muted truncate">
-													{connectionMetaLine(connection)}
-												</div>
+											<div class="mt-0.5 text-[11px] text-qc-muted truncate">
+												{connectionMetaLine(connection)}
 											</div>
-											{#if isBusy}
-												<Loader2
-													size={14}
-													class="animate-spin text-qc-muted mr-6 shrink-0"
-												/>
-											{/if}
-										</button>
+										</div>
+									</button>
+									{#if isBusy}
+										<div
+											class="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 inline-flex items-center justify-center text-qc-muted"
+											aria-label="Connecting"
+										>
+											<Loader2 size={15} class="animate-spin" />
+										</div>
+									{:else}
 										<button
 											type="button"
 											onclick={(event) => {
@@ -522,180 +411,75 @@
 										>
 											<MoreVertical size={15} />
 										</button>
-										{#if menuOpen}
+									{/if}
+									{#if menuOpen}
+										<button
+											type="button"
+											class="fixed inset-0 z-40 cursor-default"
+											aria-label="Close menu"
+											onclick={() => (activeMenuName = null)}
+										></button>
+										<div
+											class="ctx-menu absolute right-2 top-[calc(100%-6px)] z-50 origin-top-right"
+											transition:scale={{
+												start: 0.96,
+												duration: 140,
+												easing: cubicOut,
+											}}
+										>
 											<button
 												type="button"
-												class="fixed inset-0 z-40 cursor-default"
-												aria-label="Close menu"
-												onclick={() => (activeMenuName = null)}
-											></button>
-											<div
-												class="ctx-menu absolute right-2 top-[calc(100%-6px)] z-50 origin-top-right"
-												transition:scale={{
-													start: 0.96,
-													duration: 140,
-													easing: cubicOut,
+												class="ctx-item"
+												onclick={() => {
+													activeMenuName = null;
+													onEdit(connection);
 												}}
 											>
-												<button
-													type="button"
-													class="ctx-item"
-													onclick={() => {
-														activeMenuName = null;
-														onEdit(connection);
-													}}
-												>
-													<SquarePen size={12} class="text-qc-muted" />
-													Edit
-												</button>
-												<div class="ctx-separator"></div>
-												<button
-													type="button"
-													class="ctx-item ctx-item-danger"
-													onclick={() => handleDeleteConnection(connection)}
-												>
-													<Trash2 size={12} />
-													Delete
-												</button>
-											</div>
-										{/if}
-									</div>
-								{/each}
-							</div>
-						{/if}
-					</div>
-				</div>
-			{:else}
-				<div
-					class="hub-new animate-in fade-in slide-in-from-bottom-1 duration-200"
-				>
-					<button
-						type="button"
-						onclick={backHome}
-						class="inline-flex items-center gap-2 text-[13px] mb-8 hover:text-qc-subtle"
-					>
-						<ArrowLeft size={15} class="text-qc-muted" />
-						<span class="text-qc-muted">Back</span>
-						
-					</button>
-
-					<div class="hub-provider-grid mb-6">
-						{#each DATABASE_ENGINES as provider (provider.value)}
-							{@const selected =
-								form.databaseType === provider.value && picked}
-							<button
-								type="button"
-								onclick={() => selectProvider(provider.value)}
-								class="hub-provider"
-								class:selected
-							>
-								<div
-									class="hub-engine-mark hub-engine-mark-sm"
-									style="--bg: {ENGINE_KEY[provider.value]}"
-								>
-									<DatabaseIcon
-										type={provider.value}
-										size={14}
-										tone="white"
-									/>
+												<SquarePen size={12} class="text-qc-muted" />
+												Edit
+											</button>
+											<div class="ctx-separator"></div>
+											<button
+												type="button"
+												class="ctx-item ctx-item-danger"
+												onclick={() => handleDeleteConnection(connection)}
+											>
+												<Trash2 size={12} />
+												Delete
+											</button>
+										</div>
+									{/if}
 								</div>
-								<span class="text-[13px] font-medium">{provider.label}</span>
-							</button>
-						{/each}
-					</div>
-
-					<div class="mb-6">
-						<label
-							class="text-[12px] font-medium text-qc-subtle"
-							for="hub-connection-string">Connection string</label
-						>
-						<input
-							id="hub-connection-string"
-							value={connectionString}
-							oninput={(event) => applyString(event.currentTarget.value)}
-							class="field-input w-full h-10 px-3.5 mt-1.5 text-[13px] font-mono placeholder:text-qc-muted"
-							placeholder={connectionStringPlaceholder(form.databaseType)}
-						/>
-						<p class="mt-1.5 text-[12px] text-qc-muted">
-							Paste a URL to auto-detect the database type
-						</p>
-					</div>
-
-					{#if picked}
-						<form
-							class="space-y-3.5"
-							in:fly={{ y: 6, duration: 200, easing: cubicOut }}
-							out:fade={{ duration: 120 }}
-							onsubmit={(event) => {
-								event.preventDefault();
-								submit();
-							}}
-						>
-							<ConnectionFields
-								variant="hub"
-								{form}
-								{connectionString}
-								showString={false}
-								onFormChange={handleFormChange}
-								onStringChange={(value) => (connectionString = value)}
-							/>
-
-							{#if connectError || testMessage}
-								<ConnectionStatusBanner
-									message={connectError || testMessage}
-									ok={!connectError && testOk}
-								/>
-							{/if}
-
-							<div class="flex flex-row items-center justify-end gap-2">
-								<button
-									type="button"
-									onclick={testConnection}
-									disabled={isTesting || isConnecting}
-									class="btn-secondary hub-action-btn disabled:opacity-60 min-w-[88px]"
-								>
-									{#if isTesting}
-										<Loader2 size={14} class="animate-spin" />
-										Testing…
-									{:else}
-										Test
-									{/if}
-								</button>
-								<button
-									type="submit"
-									disabled={isConnecting || isTesting}
-									class="btn-primary hub-action-btn disabled:opacity-60"
-								>
-									{#if isConnecting}
-										<Loader2 size={14} class="animate-spin" />
-										Connecting…
-									{:else}
-										Connect
-										<ArrowRight size={14} />
-									{/if}
-								</button>
-							</div>
-						</form>
+							{/each}
+						</div>
 					{/if}
 				</div>
-			{/if}
+			</div>
 		</main>
 	</div>
 </div>
+
+<ConfirmDialog
+	open={pendingDeleteConnection !== null}
+	title="Delete connection"
+	message={pendingDeleteConnection
+		? `Delete connection "${pendingDeleteConnection.name}"? This only removes it from QueryCastle. Your database is not affected.`
+		: ''}
+	confirmLabel="Delete"
+	variant="danger"
+	onConfirm={confirmDeleteConnection}
+	onCancel={() => (pendingDeleteConnection = null)}
+/>
 
 <style>
 	.hub-stage {
 		min-height: 100%;
 	}
 
-	.hub-home,
-	.hub-new {
+	.hub-home {
 		width: 100%;
 		box-sizing: border-box;
 		padding: 24px clamp(20px, 3vw, 40px) 40px;
-	}
-
-	.hub-home {
 		max-width: none;
 	}
 
@@ -724,12 +508,6 @@
 	.hub-search:focus-within {
 		border-color: var(--qc-focus-border);
 		box-shadow: 0 0 0 3px var(--qc-focus-ring);
-	}
-
-	.hub-new {
-		max-width: 36rem;
-		margin-inline: auto;
-		padding-top: clamp(8px, 2vh, 24px);
 	}
 
 	.hub-recent-chip {
@@ -784,6 +562,7 @@
 
 	.hub-list-head {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		justify-content: space-between;
 		gap: 12px;
@@ -841,7 +620,7 @@
 		display: flex;
 		align-items: center;
 		gap: 12px;
-		padding: 12px 36px 12px 12px;
+		padding: 12px 40px 12px 12px;
 		border-radius: 10px;
 		border: 1px solid var(--qc-border);
 		background: var(--qc-panel);

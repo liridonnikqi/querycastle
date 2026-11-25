@@ -21,7 +21,7 @@
 	<button
 		type="button"
 		onclick={onToggle}
-		class="w-full flex items-center gap-1 px-3 pt-2 pb-0.5 text-[10px] uppercase tracking-wide text-qc-muted hover:text-qc-subtle text-left"
+		class="w-full flex items-center gap-1 px-3 pt-2 pb-0.5 text-[11px] font-medium text-qc-muted hover:text-qc-subtle text-left"
 	>
 		{#if open}
 			<ChevronDown size={12} class="shrink-0" />

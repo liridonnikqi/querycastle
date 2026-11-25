@@ -53,7 +53,7 @@ export function buildTableActionPlan(params: {
 		return {
 			kind: 'run_query',
 			query: `drop ${objectType} ${safeSchema}.${safeTable}${cascade};`,
-			title: `${table} [drop]`,
+			title: `${table} · Drop`,
 			context: null,
 		};
 	}
@@ -64,7 +64,7 @@ export function buildTableActionPlan(params: {
 		return {
 			kind: 'run_query',
 			query: `truncate table ${safeSchema}.${safeTable};`,
-			title: `${table} [truncate]`,
+			title: `${table} · Truncate`,
 			context: null,
 		};
 	}
@@ -83,7 +83,7 @@ export function buildTableActionPlan(params: {
 		return {
 			kind: 'run_query',
 			query,
-			title: `${table} [duplicate]`,
+			title: `${table} · Duplicate`,
 			context: null,
 		};
 	}
@@ -122,7 +122,7 @@ export function buildTableActionPlan(params: {
 			title = `${table}`;
 			context = null;
 		} else {
-			title = `${table} [all]`;
+			title = table;
 			context = editable ? { schema, table } : null;
 		}
 	}
@@ -132,7 +132,7 @@ export function buildTableActionPlan(params: {
 			databaseType === 'sqlite'
 				? `pragma table_info('${table.replaceAll("'", "''")}');`
 				: `select column_name, data_type, is_nullable from information_schema.columns where table_schema = '${schema.replaceAll("'", "''")}' and table_name = '${table.replaceAll("'", "''")}' order by ordinal_position;`;
-		title = `${table} [structure]`;
+		title = `${table} · Structure`;
 	}
 
 	if (action === 'export_file') {
@@ -140,7 +140,7 @@ export function buildTableActionPlan(params: {
 			databaseType === 'mssql'
 				? `select * from ${safeSchema}.${safeTable} order by (select null) offset 0 rows fetch next 1000 rows only;`
 				: `select * from ${safeSchema}.${safeTable} limit 1000;`;
-		title = `${table} [export]`;
+		title = `${table} · Export`;
 	}
 
 	return { kind: 'run_query', query, title, context };
@@ -164,7 +164,7 @@ export function buildSchemaActionPlan(params: {
 				: databaseType === 'mssql'
 					? `select table_name\nfrom information_schema.tables\nwhere table_schema = '${escaped}'\norder by table_name;`
 					: `select tablename as table_name\nfrom pg_catalog.pg_tables\nwhere schemaname = '${escaped}'\norder by tablename;`;
-	return { kind: 'run_query', query, title: `${schema} [tables]` };
+	return { kind: 'run_query', query, title: `${schema} · Tables` };
 }
 
 export function buildRenameTableSql(params: {

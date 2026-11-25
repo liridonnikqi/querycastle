@@ -130,7 +130,7 @@
 							event.stopPropagation();
 							onClose(session.id);
 						}}
-						class="w-3.5 h-3.5 opacity-50 hover:opacity-100"
+						class="w-4 h-4 rounded inline-flex items-center justify-center opacity-55 hover:opacity-100 hover:bg-qc-hover shrink-0"
 						aria-label={`Disconnect ${label(session.status)}`}
 					>
 						<X size={12} />

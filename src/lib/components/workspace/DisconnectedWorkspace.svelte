@@ -1,6 +1,6 @@
 <script lang="ts">
 	import ConnectionHub from '$lib/components/connection/ConnectionHub.svelte';
-	import type { ConnectionInput } from '$lib/rpc';
+	import type { ConnectionInput, DatabaseType } from '$lib/rpc';
 
 	let {
 		savedConnections,
@@ -8,7 +8,9 @@
 		connectionSearch,
 		isConnecting = false,
 		connectError = '',
+		onClearConnectError,
 		onConnect,
+		onNew,
 		onEdit,
 		onDelete,
 		onSaveAndConnect,
@@ -18,10 +20,12 @@
 		connectionSearch: string;
 		isConnecting?: boolean;
 		connectError?: string;
+		onClearConnectError?: () => void;
 		onConnect: (connection: ConnectionInput) => void | Promise<void>;
+		onNew?: (engine?: DatabaseType) => void;
 		onEdit: (connection: ConnectionInput) => void;
 		onDelete: (name: string) => void;
-		onSaveAndConnect: (connection: ConnectionInput) => void | Promise<void>;
+		onSaveAndConnect?: (connection: ConnectionInput) => void | Promise<void>;
 	} = $props();
 </script>
 
@@ -33,7 +37,9 @@
 			searchQuery={connectionSearch}
 			{isConnecting}
 			{connectError}
+			{onClearConnectError}
 			{onConnect}
+			{onNew}
 			{onEdit}
 			{onDelete}
 			{onSaveAndConnect}

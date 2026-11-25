@@ -387,7 +387,7 @@
 
 <div class="flex-1 flex flex-col min-h-0 bg-qc-bg">
 	<div
-		class="h-10 px-2 border-b border-qc-border bg-qc-bg shrink-0 flex items-center"
+		class="h-9 px-2.5 border-b border-qc-border bg-qc-panel shrink-0 flex items-center gap-1"
 	>
 		<button
 			onclick={runEditorAction}
@@ -397,12 +397,12 @@
 				: hasSelection
 					? 'Run the selected SQL only (Ctrl+Enter)'
 					: 'Run query (Ctrl+Enter)'}
-			class="btn-primary h-6 px-2 text-[12px] font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1 shrink-0"
+			class="btn-primary h-7 px-2.5 text-[12px] font-medium leading-none disabled:opacity-50 inline-flex items-center justify-center gap-1.5 shrink-0"
 		>
 			{#if running}
-				<Square size={14} />Cancel
+				<Square size={11} />Cancel
 			{:else}
-				<Play size={14} />Run
+				<Play size={12} />Run
 			{/if}
 		</button>
 		<div class="ml-auto flex items-center gap-0.5">
@@ -468,10 +468,7 @@
 	}
 
 	.qc-run-sel-btn {
-		box-shadow:
-			inset 0 1px 0 0 var(--qc-btn-highlight),
-			0 0 0 1px var(--qc-btn-ring),
-			0 8px 20px rgba(0, 0, 0, 0.28);
+		box-shadow: 0 6px 18px rgba(0, 0, 0, 0.24);
 	}
 
 	.qc-run-sel-btn:not(:disabled):active {

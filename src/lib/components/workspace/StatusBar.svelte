@@ -4,12 +4,20 @@
 	import { getVersion } from '@tauri-apps/api/app';
 	import { check } from '@tauri-apps/plugin-updater';
 	import { openUrl } from '@tauri-apps/plugin-opener';
-	import { Download, RefreshCw, Check, AlertCircle, Loader2 } from '$lib/icons';
+	import { Download, RefreshCw, Check, AlertCircle, Loader2, X } from '$lib/icons';
 	import GithubIcon from '$lib/components/ui/GithubIcon.svelte';
+	import type { ConnectionStatus } from '$lib/rpc';
+	import { displayDatabaseName } from '$lib/utils/dialect';
 	import { downloadAndInstallUpdate } from '$lib/updater';
 	import { toast } from '$lib/stores/toast.svelte';
 
 	const REPO_URL = 'https://github.com/liridonnikqi/querycastle';
+
+	let {
+		connectionStatus,
+	}: {
+		connectionStatus?: ConnectionStatus;
+	} = $props();
 
 	let version = $state('0.1.1');
 	let status = $state<
@@ -108,35 +116,65 @@
 </script>
 
 <footer
-	class="h-8 flex items-center justify-between px-3 bg-qc-panel text-qc-muted text-xs shrink-0 border-t border-qc-border select-none"
+	class="h-7 flex items-center justify-between px-3 bg-qc-panel text-qc-muted text-[11px] shrink-0 border-t border-qc-border-subtle select-none"
 >
 	<div class="flex items-center gap-2 min-w-0">
-		<span>v{version}</span>
+		{#if connectionStatus?.connected}
+			<span class="inline-flex items-center gap-1.5 text-qc-subtle truncate">
+				<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" aria-hidden="true"></span>
+				<span class="font-medium text-qc-fg truncate max-w-44">
+					{connectionStatus.name?.trim() ||
+						displayDatabaseName(connectionStatus.database, connectionStatus.databaseType)}
+				</span>
+				{#if connectionStatus.database}
+					<span class="text-qc-muted/60">·</span>
+					<span class="truncate max-w-48">
+						{displayDatabaseName(connectionStatus.database, connectionStatus.databaseType)}
+					</span>
+				{/if}
+			</span>
+			{#if connectionStatus.readOnly}
+				<span class="px-1.5 py-0.5 rounded bg-qc-bg border border-qc-border text-[10px] leading-none text-qc-muted shrink-0">
+					Read-only
+				</span>
+			{/if}
+			{#if connectionStatus.sshTunnel}
+				<span class="px-1.5 py-0.5 rounded bg-qc-bg border border-qc-border text-[10px] leading-none text-qc-muted shrink-0">
+					SSH
+				</span>
+			{/if}
+		{:else}
+			<span>v{version}</span>
+		{/if}
 		{#if !isDesktop}
 			<span>Updates available in desktop app</span>
 		{:else if status === 'checking'}
-			<span class="inline-flex items-center gap-1">
-				<Loader2 size={10} class="animate-spin" /> Checking…
+			<span class="inline-flex items-center gap-1.5 leading-none">
+				<Loader2 size={12} class="animate-spin" />
+				<span>Checking…</span>
 			</span>
 		{:else if status === 'available'}
 			<span class="text-qc-fg font-medium" data-tip={updateBody}>v{updateVersion} available</span>
 		{:else if status === 'downloading'}
-			<span class="inline-flex items-center gap-1 text-qc-subtle">
-				<Loader2 size={10} class="animate-spin" />
-				Downloading{#if total} {Math.round((downloaded / total) * 100)}%{/if}
+			<span class="inline-flex items-center gap-1.5 text-qc-subtle leading-none">
+				<Loader2 size={12} class="animate-spin" />
+				<span>Downloading{#if total} {Math.round((downloaded / total) * 100)}%{/if}</span>
 			</span>
 		{:else if status === 'ready'}
-			<span class="text-qc-fg inline-flex items-center gap-1">
-				<Check size={10} /> Restart to apply update
+			<span class="text-qc-fg inline-flex items-center gap-1 leading-none">
+				<Check size={12} /> Restart to apply update
 			</span>
 		{:else if status === 'error'}
-			<span class="text-qc-danger inline-flex items-center gap-1" data-tip={errorMsg}>
-				<AlertCircle size={10} /> Update failed
+			<span class="text-qc-danger inline-flex items-center gap-1 leading-none" data-tip={errorMsg}>
+				<AlertCircle size={12} /> Update failed
 			</span>
 		{/if}
 	</div>
 
-	<div class="flex items-center gap-1">
+	<div class="flex items-center gap-1.5">
+		{#if connectionStatus?.connected}
+			<span class="text-qc-muted/80 tabular-nums mr-0.5">v{version}</span>
+		{/if}
 		{#if isDesktop}
 			{#if status === 'idle' || status === 'uptodate' || status === 'error'}
 				<button
@@ -159,24 +197,23 @@
 					class="h-5 w-5 rounded hover:bg-qc-hover text-qc-muted hover:text-qc-fg inline-flex items-center justify-center"
 					aria-label="Dismiss"
 				>
-					×
+					<X size={12} />
 				</button>
 			{:else if status === 'checking'}
 				<button
 					disabled
-					class="h-5 w-5 rounded text-gray-500 inline-flex items-center justify-center opacity-70 cursor-wait"
+					class="h-5 w-5 rounded text-qc-muted inline-flex items-center justify-center opacity-70 cursor-wait"
 					aria-label="Checking for updates"
 					data-tip="Checking for updates…"
 				>
-					<Loader2 size={11} class="animate-spin" />
+					<Loader2 size={12} class="animate-spin" />
 				</button>
 			{:else if status === 'downloading'}
-				<button
-					disabled
-					class="h-5 px-2 rounded bg-gray-50 border border-gray-200 text-gray-500 inline-flex items-center gap-1 text-[11px] opacity-70 cursor-wait"
+				<span
+					class="h-5 px-2 rounded bg-qc-elevated border border-qc-border text-qc-muted inline-flex items-center gap-1 text-[11px]"
 				>
-					<Loader2 size={10} class="animate-spin" /> Downloading{#if total} {Math.round((downloaded / total) * 100)}%{/if}
-				</button>
+					{total ? `${Math.round((downloaded / total) * 100)}%` : '…'}
+				</span>
 			{:else if status === 'ready'}
 				<button
 					onclick={async () => {

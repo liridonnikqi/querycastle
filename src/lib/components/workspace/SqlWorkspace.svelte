@@ -50,6 +50,7 @@
 				workspace.applyTableChanges(context, changes)}
 			onFollowRelation={(hop) => workspace.followRelation(hop)}
 			onActivateRelationTrail={(index) => workspace.activateRelationTrail(index)}
+			onDismissError={() => workspace.clearTabError(tab.id)}
 			durationMs={tab.result.durationMs}
 			readOnly={Boolean(workspace.connectionStatus.readOnly)}
 		/>
@@ -62,6 +63,8 @@
 	loadingExplorer={workspace.isExplorerLoading}
 	databases={workspace.databases}
 	searchQuery={workspace.explorerSearch}
+	selectedSchema={workspace.selectedSchemaName}
+	onSelectSchema={(schema) => (workspace.selectedSchemaName = schema)}
 	onChangeDatabase={(database) => void workspace.handleDatabaseChange(database)}
 	onSearchChange={(value) => (workspace.explorerSearch = value)}
 	onRefreshDatabases={() => workspace.loadDatabases()}
@@ -155,56 +158,47 @@
 		</div>
 	{:else}
 		<div class="flex-1 flex items-center justify-center p-8 bg-qc-bg">
-			<div class="w-full max-w-sm">
-				<div class="text-center mb-6">
+			<div class="w-full max-w-xs">
+				<div class="text-center mb-5">
 					<div class="text-sm font-medium text-qc-fg">Quick Shortcuts</div>
 					<div class="text-xs text-qc-muted mt-1">
-						No tabs open, use these shortcuts to get started
+						Open a query tab or pick a table from the sidebar
 					</div>
 				</div>
-				<div class="space-y-0 divide-y divide-qc-border">
-					<div class="flex items-center justify-between px-3 py-2 text-xs">
+				<div class="space-y-1">
+					<div class="flex items-center justify-between px-2 py-1.5 text-xs">
 						<span class="text-qc-muted">Run Query</span>
-						<span
-							class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle"
-							>Ctrl+Enter</span
-						>
+						<span class="qc-kbd">Ctrl+Enter</span>
 					</div>
-					<div class="flex items-center justify-between px-3 py-2 text-xs">
+					<div class="flex items-center justify-between px-2 py-1.5 text-xs">
 						<span class="text-qc-muted">Save Query</span>
-						<span
-							class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle"
-							>Ctrl+S</span
-						>
+						<span class="qc-kbd">Ctrl+S</span>
 					</div>
-					<div class="flex items-center justify-between px-3 py-2 text-xs">
+					<div class="flex items-center justify-between px-2 py-1.5 text-xs">
 						<span class="text-qc-muted">Format SQL</span>
-						<span
-							class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle"
-							>Shift+Alt+F</span
-						>
+						<span class="qc-kbd">Shift+Alt+F</span>
 					</div>
-					<div class="flex items-center justify-between px-3 py-2 text-xs">
+					<div class="flex items-center justify-between px-2 py-1.5 text-xs">
 						<span class="text-qc-muted">New Query Tab</span>
-						<span
-							class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle"
-							>Ctrl+N</span
-						>
+						<span class="qc-kbd">Ctrl+N</span>
 					</div>
-					<div class="flex items-center justify-between px-3 py-2 text-xs">
+					<div class="flex items-center justify-between px-2 py-1.5 text-xs">
 						<span class="text-qc-muted">Close Tab</span>
-						<span
-							class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle"
-							>Ctrl+X</span
-						>
+						<span class="qc-kbd">Ctrl+X</span>
 					</div>
-					<div class="flex items-center justify-between px-3 py-2 text-xs">
+					<div class="flex items-center justify-between px-2 py-1.5 text-xs">
 						<span class="text-qc-muted">Search</span>
-						<span
-							class="px-2 py-0.5 rounded bg-qc-elevated border border-qc-border font-mono text-[11px] text-qc-subtle"
-							>Ctrl+K</span
-						>
+						<span class="qc-kbd">Ctrl+K</span>
 					</div>
+				</div>
+				<div class="mt-5 text-center">
+					<button
+						type="button"
+						onclick={() => workspace.addQueryTab()}
+						class="btn-primary h-8 px-3.5 text-[12px] font-medium inline-flex items-center justify-center gap-1.5"
+					>
+						New query
+					</button>
 				</div>
 			</div>
 		</div>

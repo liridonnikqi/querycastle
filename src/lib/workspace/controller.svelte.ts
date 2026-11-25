@@ -4,6 +4,7 @@ import type {
 	ConnectionInput,
 	ConnectionStatus,
 	DatabaseExplorer,
+	DatabaseType,
 	ObjectDefinitionParams,
 	QueryResultPayload,
 	TableChangesPayload,
@@ -13,7 +14,9 @@ import type { QueryHistoryItem, SavedQueryItem } from '$lib/types';
 import { dialectCapabilities, engineDisplayName } from '$lib/utils/dialect';
 import {
 	decodeSshSecrets,
+	defaultsForType,
 	encodeSshSecrets,
+	generateConnectionString,
 	injectConnectionPassword,
 	injectSshSecrets,
 	migrateSavedConnectionSecrets,
@@ -87,6 +90,7 @@ import {
 	buildTableActionPlan,
 } from '$lib/utils/workspace-actions';
 import { initializeWorkspace } from '$lib/utils/workspace-init';
+import { gridChrome } from '$lib/stores/grid-chrome.svelte';
 import { toast } from '$lib/stores/toast.svelte';
 
 function errorMessage(error: unknown): string {
@@ -126,6 +130,14 @@ export class Workspace {
 	showRenameModal = $state(false);
 	renameTarget = $state<{ schema: string; table: string } | null>(null);
 	renameValue = $state('');
+	confirmDialog = $state<{
+		title: string;
+		message: string;
+		confirmLabel: string;
+		variant: 'danger' | 'default';
+		onConfirm: () => void;
+	} | null>(null);
+	selectedSchemaName = $state('');
 	tabContextMenu = $state<TabContextMenu>(null);
 	queryDurationMs = $state(0);
 	connectionInputMode = $state<'fields' | 'string'>('fields');
@@ -230,12 +242,35 @@ export class Workspace {
 		this.tabs = [];
 		this.activeTabId = '';
 		this.explorerSearch = '';
+		this.selectedSchemaName = '';
 		this.isExplorerLoading = false;
 		this.globalError = '';
 		this.queryDurationMs = 0;
 		this.isRunningQuery = false;
 		this.runningTabId = null;
 		this.tabContextMenu = null;
+		this.confirmDialog = null;
+		gridChrome.changeCount = 0;
+	}
+
+	private reportError(message: string) {
+		this.globalError = message;
+		toast.error(message);
+	}
+
+	clearConnectionMessage() {
+		this.testConnectionMessage = '';
+		this.testConnectionOk = false;
+	}
+
+	clearTabError(tabId: string) {
+		if (!tabId) {
+			this.globalError = '';
+			return;
+		}
+		this.tabs = this.tabs.map((tab) =>
+			tab.id === tabId ? { ...tab, sqlError: '' } : tab,
+		);
 	}
 
 	private stashActiveSession() {
@@ -477,7 +512,7 @@ export class Workspace {
 
 	saveActiveQuery() {
 		if (!this.connectionStatus.connected) {
-			this.globalError = 'Connect to a database before saving queries.';
+			this.reportError('Connect to a database before saving queries.');
 			return;
 		}
 		const sql = this.getActiveSql().trim();
@@ -487,7 +522,7 @@ export class Workspace {
 				item.connectionKey === this.activeConnectionKey && item.sql.trim() === sql,
 		);
 		if (duplicate) {
-			this.globalError = 'This query is already saved for the current connection.';
+			this.reportError('This query is already saved for the current connection.');
 			return;
 		}
 		const next: SavedQueryItem = {
@@ -500,6 +535,7 @@ export class Workspace {
 		this.queryFavorites = [next, ...this.queryFavorites].slice(0, 200);
 		persistJsonValue(QUERY_FAVORITES_KEY, this.queryFavorites);
 		this.globalError = '';
+		toast.success('Query saved');
 	}
 
 	private pushHistory(item: QueryHistoryItem) {
@@ -579,7 +615,7 @@ export class Workspace {
 			this.editingConnectionName = null;
 			this.globalError = '';
 		} catch (error) {
-			this.globalError = errorMessage(error);
+			this.reportError(errorMessage(error));
 			this.showConnectionModal = true;
 		}
 	}
@@ -595,7 +631,7 @@ export class Workspace {
 			this.setActiveSql(nextSql);
 			this.globalError = '';
 		} catch (error) {
-			this.globalError = errorMessage(error);
+			this.reportError(errorMessage(error));
 		}
 	}
 
@@ -693,6 +729,7 @@ export class Workspace {
 	startEditConnection(connection: ConnectionInput) {
 		this.applyConnectionToForm(connection);
 		this.editingConnectionName = connection.name;
+		this.clearConnectionMessage();
 		this.showConnectionModal = true;
 	}
 
@@ -733,7 +770,7 @@ export class Workspace {
 			this.globalError = '';
 		} catch (error) {
 			this.explorer = null;
-			this.globalError = errorMessage(error);
+			this.reportError(errorMessage(error));
 		} finally {
 			this.isExplorerLoading = false;
 		}
@@ -772,10 +809,13 @@ export class Workspace {
 		}
 	}
 
-	openNewConnectionModal() {
+	openNewConnectionModal(initialType: DatabaseType = 'postgres') {
 		this.editingConnectionName = null;
-		this.testConnectionMessage = '';
-		this.testConnectionOk = false;
+		this.clearConnectionMessage();
+		const fresh = defaultsForType(initialType);
+		this.connectionForm = fresh;
+		this.connectionStringInput = generateConnectionString(fresh);
+		this.connectionInputMode = 'fields';
 		this.showConnectionModal = true;
 	}
 
@@ -785,10 +825,11 @@ export class Workspace {
 		try {
 			await rpc.switchSession(id);
 		} catch (error) {
-			this.globalError = errorMessage(error);
+			this.reportError(errorMessage(error));
 			return;
 		}
 		this.bumpQueryEpoch();
+		this.selectedSchemaName = '';
 		const next = this.openSessions.find((item) => item.id === id);
 		if (next) this.restoreSession(next);
 	}
@@ -801,7 +842,7 @@ export class Workspace {
 		try {
 			nextStatus = await rpc.disconnectSession(id);
 		} catch (error) {
-			this.globalError = errorMessage(error);
+			this.reportError(errorMessage(error));
 			return;
 		}
 		this.openSessions = removeSession(this.openSessions, id);
@@ -818,6 +859,7 @@ export class Workspace {
 		this.openSessions = [];
 		this.connectionStatus = disconnectedStatus();
 		this.resetWorkspaceToEmpty();
+		this.clearConnectionMessage();
 	}
 
 	async handleConnect(saveConnection: boolean) {
@@ -853,6 +895,7 @@ export class Workspace {
 			}
 			this.showConnectionModal = false;
 			this.editingConnectionName = null;
+			this.clearConnectionMessage();
 			this.activeSessionInput = payload;
 			this.resetWorkspaceToEmpty();
 			this.stashActiveSession();
@@ -881,12 +924,13 @@ export class Workspace {
 		try {
 			await rpc.disconnect();
 		} catch (error) {
-			this.globalError = errorMessage(error);
+			this.reportError(errorMessage(error));
 		}
 		this.openSessions = [];
 		this.connectionStatus = disconnectedStatus();
 		this.resetWorkspaceToEmpty();
 		this.editingConnectionName = null;
+		this.clearConnectionMessage();
 	}
 
 	runSessionQuery(sql: string): Promise<QueryResultPayload> {
@@ -909,6 +953,7 @@ export class Workspace {
 		this.isRunningQuery = true;
 		this.runningTabId = targetTabId;
 		this.activeQueryId = queryId;
+		this.clearTabError(targetTabId);
 		try {
 			const sql = quoteCatalogIdentifiersInSql(
 				query,
@@ -926,7 +971,10 @@ export class Workspace {
 							result: queryResult,
 							lastRunSql: sql,
 							sqlError: '',
-							resultContext: options?.context ?? tab.resultContext,
+							resultContext:
+								options && 'context' in options
+									? (options.context ?? null)
+									: tab.resultContext,
 						}
 					: tab,
 			);
@@ -1014,28 +1062,35 @@ export class Workspace {
 		});
 	}
 
+	private async runMutatingTableAction(
+		action: 'drop' | 'truncate' | 'duplicate',
+		query: string,
+	) {
+		try {
+			await rpc.runQuery({
+				sql: query,
+				sessionId: this.sessionId,
+			});
+			this.globalError = '';
+			await this.loadExplorer();
+			if (action === 'drop' || action === 'duplicate') {
+				await this.loadDatabases().catch(() => {});
+			}
+			if (action === 'drop') toast.success('Object dropped');
+			else if (action === 'truncate') toast.success('Table truncated');
+			else toast.success('Table duplicated');
+		} catch (error) {
+			this.reportError(errorMessage(error));
+		}
+	}
+
 	async handleTableAction(action: TableAction, schema: string, table: string) {
 		if (
 			this.connectionStatus.readOnly &&
 			(action === 'drop' || action === 'truncate' || action === 'rename' || action === 'duplicate')
 		) {
-			this.globalError = 'This connection is read-only.';
+			this.reportError('This connection is read-only.');
 			return;
-		}
-		if (action === 'drop') {
-			const isView = isExplorerView(this.explorer, schema, table);
-			const ok = isView
-				? confirm(`Drop view ${schema}.${table}?\nThis cannot be undone.`)
-				: confirm(
-						`Drop table ${schema}.${table} CASCADE?\nThis will also drop dependent objects and cannot be undone.`,
-					);
-			if (!ok) return;
-		}
-		if (action === 'truncate') {
-			const ok = confirm(
-				`Truncate table ${schema}.${table}? All rows will be deleted.`,
-			);
-			if (!ok) return;
 		}
 		const plan = buildTableActionPlan({
 			action,
@@ -1051,7 +1106,7 @@ export class Workspace {
 			return;
 		}
 		if (plan.kind === 'error') {
-			this.globalError = plan.message;
+			this.reportError(plan.message);
 			return;
 		}
 		if (plan.kind === 'rename') {
@@ -1062,7 +1117,7 @@ export class Workspace {
 		}
 		if (plan.kind === 'editor_sql') {
 			this.setActiveSql(plan.sql);
-			this.globalError = plan.message;
+			this.reportError(plan.message);
 			return;
 		}
 		if (plan.kind === 'editor_sql_clear_error') {
@@ -1070,20 +1125,37 @@ export class Workspace {
 			this.globalError = '';
 			return;
 		}
-		if (action === 'drop' || action === 'truncate' || action === 'duplicate') {
-			try {
-				await rpc.runQuery({
-					sql: plan.query,
-					sessionId: this.sessionId,
-				});
-				this.globalError = '';
-				await this.loadExplorer();
-				if (action === 'drop' || action === 'duplicate') {
-					await this.loadDatabases().catch(() => {});
-				}
-			} catch (error) {
-				this.globalError = errorMessage(error);
-			}
+		if (action === 'drop') {
+			const isView = isExplorerView(this.explorer, schema, table);
+			this.confirmDialog = {
+				title: isView ? 'Drop view' : 'Drop table',
+				message: isView
+					? `Drop view ${schema}.${table}? This cannot be undone.`
+					: `Drop table ${schema}.${table} CASCADE? This will also drop dependent objects and cannot be undone.`,
+				confirmLabel: isView ? 'Drop view' : 'Drop table',
+				variant: 'danger',
+				onConfirm: () => {
+					this.confirmDialog = null;
+					void this.runMutatingTableAction('drop', plan.query);
+				},
+			};
+			return;
+		}
+		if (action === 'truncate') {
+			this.confirmDialog = {
+				title: 'Truncate table',
+				message: `Truncate table ${schema}.${table}? All rows will be deleted.`,
+				confirmLabel: 'Truncate',
+				variant: 'danger',
+				onConfirm: () => {
+					this.confirmDialog = null;
+					void this.runMutatingTableAction('truncate', plan.query);
+				},
+			};
+			return;
+		}
+		if (action === 'duplicate') {
+			await this.runMutatingTableAction('duplicate', plan.query);
 			return;
 		}
 		const tabId = this.addDataTab(plan.title, plan.query, plan.context);
@@ -1118,12 +1190,12 @@ export class Workspace {
 	async submitRename() {
 		if (!this.renameTarget) return;
 		if (this.connectionStatus.readOnly) {
-			this.globalError = 'This connection is read-only.';
+			this.reportError('This connection is read-only.');
 			return;
 		}
 		const nextName = this.renameValue.trim();
 		if (!nextName) {
-			this.globalError = 'New table name is required.';
+			this.reportError('New table name is required.');
 			return;
 		}
 		this.showRenameModal = false;
@@ -1138,7 +1210,7 @@ export class Workspace {
 			this.globalError = '';
 			await this.loadExplorer();
 		} catch (error) {
-			this.globalError = errorMessage(error);
+			this.reportError(errorMessage(error));
 		}
 	}
 
@@ -1155,7 +1227,7 @@ export class Workspace {
 			);
 			this.globalError = '';
 		} catch (error) {
-			this.globalError = errorMessage(error);
+			this.reportError(errorMessage(error));
 		}
 	}
 
@@ -1198,7 +1270,7 @@ export class Workspace {
 			hop,
 		});
 		if (!sql) {
-			this.globalError = 'Could not follow this relation.';
+			this.reportError('Could not follow this relation.');
 			return;
 		}
 		const tabId = this.addDataTab(
@@ -1262,6 +1334,7 @@ export class Workspace {
 	async handleDatabaseChange(database: string) {
 		if (!database || database === this.connectionStatus.database) return;
 		this.globalError = '';
+		this.selectedSchemaName = '';
 		this.isExplorerLoading = true;
 		this.explorer = null;
 		try {
@@ -1274,36 +1347,38 @@ export class Workspace {
 			await this.loadDatabases();
 			await this.loadExplorer({ clearBeforeLoad: true });
 		} catch (error) {
-			this.globalError = errorMessage(error);
+			this.reportError(errorMessage(error));
 			this.isExplorerLoading = false;
 		}
 	}
 
 	async handleCreateDatabase(params: { name: string; encoding: string }) {
 		if (!this.connectionStatus.connected) {
-			this.globalError = 'No active connection';
+			this.reportError('No active connection');
 			return;
 		}
 		if (this.connectionStatus.readOnly) {
-			this.globalError = 'This connection is read-only.';
+			this.reportError('This connection is read-only.');
 			return;
 		}
 		const capabilities = dialectCapabilities(this.connectionStatus.databaseType);
 		if (!capabilities.canCreateDatabase) {
-			this.globalError = `Create database is not available for ${engineDisplayName(this.connectionStatus.databaseType)}.`;
+			this.reportError(
+				`Create database is not available for ${engineDisplayName(this.connectionStatus.databaseType)}.`,
+			);
 			return;
 		}
 		const name = params.name.trim();
 		const encoding = params.encoding.trim().toUpperCase();
 		if (!name) {
-			this.globalError = 'Database name is required.';
+			this.reportError('Database name is required.');
 			return;
 		}
 		if (
 			capabilities.createDatabaseEncodings.length > 0 &&
 			!capabilities.createDatabaseEncodings.includes(encoding)
 		) {
-			this.globalError = `Unsupported encoding: ${encoding}`;
+			this.reportError(`Unsupported encoding: ${encoding}`);
 			return;
 		}
 		try {
@@ -1322,7 +1397,7 @@ export class Workspace {
 			}
 			toast.success(`Created database "${name}"`);
 		} catch (error) {
-			this.globalError = errorMessage(error);
+			this.reportError(errorMessage(error));
 		}
 	}
 

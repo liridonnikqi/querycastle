@@ -1,5 +1,6 @@
 <script lang="ts">
 	import ConnectionModal from '$lib/components/connection/ConnectionModal.svelte';
+	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
 	import RenameTableModal from '$lib/components/workspace/RenameTableModal.svelte';
 	import type { Workspace } from '$lib/workspace/controller.svelte';
 
@@ -18,7 +19,9 @@
 	onClose={() => {
 		workspace.showConnectionModal = false;
 		workspace.editingConnectionName = null;
+		workspace.clearConnectionMessage();
 	}}
+	onClearMessage={() => workspace.clearConnectionMessage()}
 	onModeChange={(mode) => {
 		workspace.connectionInputMode =
 			workspace.connectionForm.databaseType === 'sqlite' ? 'fields' : mode;
@@ -36,4 +39,14 @@
 	onValueChange={(value) => (workspace.renameValue = value)}
 	onClose={() => (workspace.showRenameModal = false)}
 	onSubmit={() => void workspace.submitRename()}
+/>
+
+<ConfirmDialog
+	open={workspace.confirmDialog !== null}
+	title={workspace.confirmDialog?.title ?? ''}
+	message={workspace.confirmDialog?.message ?? ''}
+	confirmLabel={workspace.confirmDialog?.confirmLabel ?? 'Confirm'}
+	variant={workspace.confirmDialog?.variant ?? 'danger'}
+	onConfirm={() => workspace.confirmDialog?.onConfirm()}
+	onCancel={() => (workspace.confirmDialog = null)}
 />

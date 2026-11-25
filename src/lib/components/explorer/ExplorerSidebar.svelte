@@ -8,6 +8,7 @@
 		Hash,
 		History,
 		Layers,
+		Loader2,
 		Play,
 		Plus,
 		RefreshCw,
@@ -16,6 +17,7 @@
 		SquarePen,
 		Table2,
 		Trash2,
+		X,
 		Database,
 		Network,
 	} from '$lib/icons';
@@ -30,7 +32,7 @@
 	import { copyTextToClipboard } from '$lib/utils/clipboard';
 	import { fitToViewport } from '$lib/utils/viewport';
 	import { toast } from '$lib/stores/toast.svelte';
-	import { dialectCapabilities } from '$lib/utils/dialect';
+	import { dialectCapabilities, displayDatabaseName } from '$lib/utils/dialect';
 	import type { SchemaAction, TableAction } from '$lib/utils/workspace';
 	import ExplorerGroup from '$lib/components/explorer/ExplorerGroup.svelte';
 	import {
@@ -65,7 +67,9 @@
 		onOpenDiagram,
 		onOpenSavedQuery,
 		onOpenHistory,
-		activeTabKind: _activeTabKind = null,
+		activeTabKind = null,
+		selectedSchema = '',
+		onSelectSchema,
 	}: {
 		connectionStatus: ConnectionStatus;
 		explorer: DatabaseExplorer | null;
@@ -94,6 +98,8 @@
 		onOpenSavedQuery?: (sql: string) => void;
 		onOpenHistory?: (index: number) => void;
 		activeTabKind?: 'query' | 'data' | 'diagram' | null;
+		selectedSchema?: string;
+		onSelectSchema?: (schema: string) => void;
 	} = $props();
 
 	const skeletonRows = [0, 1, 2, 3, 4, 5];
@@ -186,6 +192,18 @@
 		showCreateDatabaseModal = true;
 		newDatabaseName = '';
 		newDatabaseEncoding = 'UTF8';
+	}
+
+	let createDatabaseBackdropDown = false;
+
+	function handleCreateDatabaseBackdropPointerDown(event: PointerEvent) {
+		createDatabaseBackdropDown = event.target === event.currentTarget;
+	}
+
+	function handleCreateDatabaseBackdropClick(event: MouseEvent) {
+		const startedOnBackdrop = createDatabaseBackdropDown;
+		createDatabaseBackdropDown = false;
+		if (startedOnBackdrop && event.target === event.currentTarget) closeCreateDatabaseModal();
 	}
 
 	function closeCreateDatabaseModal() {
@@ -298,6 +316,12 @@
 	});
 
 	$effect(() => {
+		if (selectedSchema) {
+			selectedSchemaName = selectedSchema;
+		}
+	});
+
+	$effect(() => {
 		const schemas = filteredExplorer?.schemas ?? [];
 		if (schemas.length === 0) return;
 		if (!schemas.some((schema) => schema.name === selectedSchemaName)) {
@@ -318,9 +342,22 @@
 		}
 	}
 
-	let selectedDatabaseLabel = $derived.by(() => {
+	let selectedDatabaseFull = $derived.by(() => {
 		if (connectionStatus.database) return connectionStatus.database;
 		return databases[0] ?? 'Select database';
+	});
+
+	let selectedDatabaseLabel = $derived.by(() => {
+		if (connectionStatus.database) {
+			return displayDatabaseName(
+				connectionStatus.database,
+				connectionStatus.databaseType,
+			);
+		}
+		const fallback = databases[0];
+		return fallback
+			? displayDatabaseName(fallback, connectionStatus.databaseType)
+			: 'Select database';
 	});
 
 	function openTable(schema: string, table: string) {
@@ -355,6 +392,10 @@
 
 	let diagramRail = $state(false);
 
+	$effect(() => {
+		diagramRail = activeTabKind === 'diagram';
+	});
+
 	function selectExplorerPane(pane: 'tables' | 'saved' | 'history') {
 		explorerPane = pane;
 		diagramRail = false;
@@ -370,6 +411,7 @@
 		if (contextMenu) contextMenu = null;
 		if (schemaContextMenu) schemaContextMenu = null;
 		if (objectContextMenu) objectContextMenu = null;
+		if (showCreateDatabaseModal && !creatingDatabase) showCreateDatabaseModal = false;
 	}
 
 	async function copySidebarText(text: string) {
@@ -426,20 +468,20 @@
 	</nav>
 
 	<div
-		class="w-[220px] bg-qc-panel border-r border-qc-border flex flex-col min-h-0"
+		class="w-[240px] bg-qc-panel border-r border-qc-border flex flex-col min-h-0"
 	>
 		<div
 			class="flex items-center h-9 border-b border-qc-border px-1.5 gap-0.5 shrink-0 relative"
 		>
 			{#if explorerPane === 'tables'}
-				<div class="flex-1 min-w-0 flex items-center gap-2.5 px-1 text-[12px]">
+				<div class="flex-1 min-w-0 flex items-center gap-1.5 px-1 text-[12px]">
 					<button
 						type="button"
-						class="inline-flex items-center gap-1 min-w-0 text-qc-muted hover:text-qc-subtle"
+						class="inline-flex items-center gap-1 min-w-0 max-w-[55%] text-qc-muted hover:text-qc-subtle"
 						onclick={toggleDatabaseMenu}
 						oncontextmenu={(event) =>
 							currentSchema && openSchemaContextMenu(event, currentSchema.name)}
-						data-tip={`Switch database (${selectedDatabaseLabel})`}
+						data-tip={`Switch database (${selectedDatabaseFull})`}
 						aria-haspopup="listbox"
 						aria-expanded={showDatabaseMenu}
 					>
@@ -450,7 +492,7 @@
 
 					<button
 						type="button"
-						class="inline-flex items-center gap-1 min-w-0 text-qc-fg font-medium"
+						class="inline-flex items-center gap-1 min-w-0 flex-1 text-qc-fg font-medium"
 						onclick={() => {
 							showSchemaMenu = !showSchemaMenu;
 							showDatabaseMenu = false;
@@ -474,7 +516,7 @@
 			{#if explorerPane === 'tables'}
 				<button
 					type="button"
-					class="w-7 h-7 rounded flex items-center justify-center text-qc-muted hover:bg-qc-hover"
+					class="w-6 h-6 rounded flex items-center justify-center text-qc-muted hover:bg-qc-hover shrink-0"
 					onclick={() => void refreshEntities()}
 					aria-label="Refresh schema"
 					data-tip="Refresh"
@@ -490,7 +532,7 @@
 			{#if explorerPane !== 'tables'}
 				<button
 					type="button"
-					class="w-7 h-7 rounded flex items-center justify-center text-qc-muted hover:bg-qc-hover"
+					class="w-6 h-6 rounded flex items-center justify-center text-qc-muted hover:bg-qc-hover shrink-0"
 					onclick={handleHeaderPlus}
 					aria-label="New query"
 					data-tip="New query"
@@ -500,7 +542,7 @@
 			{/if}
 			<button
 				type="button"
-				class="w-7 h-7 rounded flex items-center justify-center text-qc-muted hover:bg-qc-hover"
+				class="w-6 h-6 rounded flex items-center justify-center text-qc-muted hover:bg-qc-hover shrink-0"
 				onclick={() => (showSearch = !showSearch)}
 				aria-label="Search schema"
 				data-tip="Search"
@@ -523,7 +565,7 @@
 							class={`w-full px-2 py-1.5 text-left text-xs flex items-center justify-between gap-2 ${db === connectionStatus.database ? 'bg-qc-hover text-qc-fg' : 'text-qc-fg hover:bg-qc-hover'}`}
 							onclick={() => handleDatabaseSelect(db)}
 						>
-							<span class="truncate">{db}</span>
+							<span class="truncate">{displayDatabaseName(db, connectionStatus.databaseType)}</span>
 							{#if db === connectionStatus.database}
 								<Check size={12} class="shrink-0 text-qc-subtle" />
 							{/if}
@@ -560,6 +602,7 @@
 							class={`w-full px-2 py-1.5 text-left text-xs flex items-center justify-between gap-2 ${schema.name === currentSchema?.name ? 'bg-qc-hover text-qc-fg' : 'text-qc-fg hover:bg-qc-hover'}`}
 							onclick={() => {
 								selectedSchemaName = schema.name;
+								onSelectSchema?.(schema.name);
 								showSchemaMenu = false;
 							}}
 						>
@@ -680,7 +723,7 @@
 					{#if listedViews.length > 0}
 						{#if listedTables.length > 0}
 							<div
-								class="px-3 pt-1 pb-0.5 text-[10px] uppercase tracking-wide text-qc-muted"
+								class="px-3 pt-1 pb-0.5 text-[11px] font-medium text-qc-muted"
 							>
 								Tables
 							</div>
@@ -689,7 +732,7 @@
 							{/each}
 						{/if}
 						<div
-							class="px-3 pt-2 pb-0.5 text-[10px] uppercase tracking-wide text-qc-muted"
+							class="px-3 pt-2 pb-0.5 text-[11px] font-medium text-qc-muted"
 						>
 							Views
 						</div>
@@ -791,6 +834,11 @@
 							</button>
 						{/each}
 					</ExplorerGroup>
+					{#if listedRelations.length === 0 && schemaFunctions(schema).length === 0 && schemaProcedures(schema).length === 0 && schemaSequences(schema).length === 0}
+						<div class="px-3 py-3 text-xs text-qc-muted">
+							{searchQuery.trim() ? 'No matching objects.' : 'No tables in this schema yet.'}
+						</div>
+					{/if}
 				{/if}
 			{/key}
 		</div>
@@ -953,43 +1001,62 @@
 		{/if}
 
 		{#if showCreateDatabaseModal}
+			<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 			<div
 				class="fixed inset-0 z-70 bg-black/55 backdrop-blur-[1px] flex items-center justify-center p-4"
+				onpointerdown={handleCreateDatabaseBackdropPointerDown}
+				onclick={handleCreateDatabaseBackdropClick}
+				role="presentation"
 			>
-				<div
-					class="w-full max-w-md overflow-hidden rounded-xl border border-qc-border bg-qc-panel"
+				<form
+					class="w-full max-w-md overflow-hidden rounded-xl border border-qc-border bg-qc-panel shadow-[0_24px_60px_rgba(0,0,0,0.35)]"
+					onsubmit={(event) => {
+						event.preventDefault();
+						void submitCreateDatabase();
+					}}
 				>
 					<div
-						class="h-10 px-4 border-b border-qc-border flex items-center justify-between bg-qc-elevated"
+						class="px-5 py-3.5 border-b border-qc-border-subtle flex items-center justify-between"
 					>
-						<h3 class="text-sm font-semibold text-qc-fg">Add Database</h3>
+						<h3 class="text-[14px] font-semibold text-qc-fg">Add Database</h3>
 						<button
+							type="button"
 							onclick={closeCreateDatabaseModal}
-							class="text-qc-muted hover:text-qc-fg"
-							aria-label="Close create database modal">x</button
+							disabled={creatingDatabase}
+							class="w-7 h-7 rounded-md inline-flex items-center justify-center text-qc-muted hover:bg-qc-hover hover:text-qc-fg disabled:opacity-50"
+							aria-label="Close create database modal"
 						>
+							<X size={14} />
+						</button>
 					</div>
-					<div class="p-4 space-y-3">
-						<input
-							bind:value={newDatabaseName}
-							placeholder="Database Name"
-							class="ui-input w-full h-9 text-sm px-2"
-						/>
+					<div class="px-5 py-4 space-y-3">
+						<label class="flex flex-col gap-1">
+							<span class="text-[11px] font-medium text-qc-subtle">Database name</span>
+							<input
+								bind:value={newDatabaseName}
+								placeholder="my_database"
+								class="ui-input w-full h-8 text-[13px] px-2.5"
+							/>
+						</label>
 						{#if createDatabaseEncodings.length > 0}
-							<select
-								bind:value={newDatabaseEncoding}
-								class="w-full h-9 px-2 rounded-md border border-qc-border bg-qc-panel text-sm text-qc-fg outline-none"
-							>
-								{#each createDatabaseEncodings as encoding}
-									<option value={encoding}>{encoding}</option>
-								{/each}
-							</select>
+							<label class="flex flex-col gap-1">
+								<span class="text-[11px] font-medium text-qc-subtle">Encoding</span>
+								<select
+									bind:value={newDatabaseEncoding}
+									class="w-full h-8 px-2.5 rounded-md border border-qc-border bg-qc-bg text-[13px] text-qc-fg outline-none focus:border-qc-focus-border"
+								>
+									{#each createDatabaseEncodings as encoding}
+										<option value={encoding}>{encoding}</option>
+									{/each}
+								</select>
+							</label>
 						{/if}
 					</div>
 					<div
-						class="h-12 px-4 border-t border-qc-border flex items-center justify-end gap-2 bg-qc-elevated"
+						class="px-5 py-3 border-t border-qc-border-subtle flex items-center justify-end gap-2"
 					>
 						<button
+							type="button"
 							onclick={closeCreateDatabaseModal}
 							disabled={creatingDatabase}
 							class="btn-secondary h-8 px-3 text-xs font-medium disabled:opacity-60"
@@ -997,14 +1064,19 @@
 							Cancel
 						</button>
 						<button
-							onclick={submitCreateDatabase}
+							type="submit"
 							disabled={creatingDatabase || newDatabaseName.trim().length === 0}
-							class="btn-primary h-8 px-3 text-xs disabled:opacity-60"
+							class="btn-primary h-8 px-3 text-xs font-medium inline-flex items-center justify-center gap-1.5 disabled:opacity-60"
 						>
-							{creatingDatabase ? 'Creating...' : 'Add'}
+							{#if creatingDatabase}
+								<Loader2 size={13} class="animate-spin" />
+								Creating…
+							{:else}
+								Add
+							{/if}
 						</button>
 					</div>
-				</div>
+				</form>
 			</div>
 		{/if}
 	</div>

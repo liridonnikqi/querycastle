@@ -19,21 +19,13 @@
 
 	const mono = $derived(tone !== 'brand');
 	const wrapClass = $derived(
-		tone === 'white'
-			? type === 'mysql'
-				? 'qc-db-tone-white'
-				: 'text-white'
-			: tone === 'ink'
-				? type === 'mysql'
-					? 'qc-db-tone-ink'
-					: 'qc-db-mono-ink'
-				: '',
+		tone === 'white' ? 'text-white' : tone === 'ink' ? 'qc-db-mono-ink' : '',
 	);
 </script>
 
-<span class={`inline-flex ${wrapClass} ${className}`}>
+<span class={`inline-flex items-center justify-center shrink-0 ${wrapClass} ${className}`}>
 	{#if type === 'mysql'}
-		<MysqlIcon {size} />
+		<MysqlIcon {size} {mono} />
 	{:else if type === 'sqlite'}
 		<SqliteIcon {size} {mono} />
 	{:else if type === 'mssql'}

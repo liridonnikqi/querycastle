@@ -35,7 +35,11 @@
 			const key = event.key.toLowerCase();
 			if (key === 'k') {
 				event.preventDefault();
-				workspace.showSearchPalette = !workspace.showSearchPalette;
+				if (workspace.connectionStatus.connected) {
+					workspace.showSearchPalette = !workspace.showSearchPalette;
+				} else {
+					document.querySelector<HTMLInputElement>('.hub-search input')?.focus();
+				}
 				return;
 			}
 			if (isEditableTarget(event.target)) return;
@@ -95,10 +99,14 @@
 			connectingName={workspace.connectingName}
 			connectionSearch={workspace.connectionSearch}
 			isConnecting={workspace.isConnecting}
-			connectError={workspace.testConnectionMessage && !workspace.testConnectionOk
+			connectError={workspace.testConnectionMessage &&
+			!workspace.testConnectionOk &&
+			!workspace.showConnectionModal
 				? workspace.testConnectionMessage
 				: ''}
+			onClearConnectError={() => workspace.clearConnectionMessage()}
 			onConnect={(connection) => void workspace.connectSaved(connection)}
+			onNew={(engine) => workspace.openNewConnectionModal(engine)}
 			onEdit={(connection) => workspace.startEditConnection(connection)}
 			onDelete={(name) => void workspace.removeSavedConnection(name)}
 			onSaveAndConnect={(payload) => {
@@ -113,16 +121,18 @@
 		</div>
 	{/if}
 	<WorkspaceModals {workspace} />
-	<StatusBar />
+	<StatusBar connectionStatus={workspace.connectionStatus} />
 	<ToastHost />
 	<SearchPalette
 		open={workspace.showSearchPalette}
-		searchQuery={workspace.explorerSearch}
+		searchQuery=""
 		explorer={workspace.explorer}
-		onSearchChange={(value) => (workspace.explorerSearch = value)}
+		onSearchChange={() => {}}
 		onClose={() => (workspace.showSearchPalette = false)}
 		onSelectTable={(schema, table) => workspace.handlePaletteSelectTable(schema, table)}
-		onSelectSchema={() => {}}
+		onSelectSchema={(schema) => {
+			workspace.selectedSchemaName = schema;
+		}}
 		onSelectRoutine={(routine) => {
 			void workspace.openObjectDefinition({
 				kind: routine.kind,

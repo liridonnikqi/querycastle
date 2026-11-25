@@ -122,9 +122,10 @@
 			<div class="flex items-stretch h-full w-max">
 				{#each tabs as tab (tab.id)}
 					{@const Icon = tabIcon(tab)}
+					{@const isActive = tab.id === activeTabId}
 					<div
 						data-tab-id={tab.id}
-						class={`tab-item group flex items-center gap-1.5 px-3 text-[12px] whitespace-nowrap h-full shrink-0 ${tab.id === activeTabId ? 'active text-qc-fg' : 'text-qc-muted hover:text-qc-subtle hover:bg-qc-hover/60'}`}
+						class={`tab-item group flex items-center gap-1.5 px-3 text-[12px] whitespace-nowrap h-full shrink-0 border-r border-qc-border-subtle transition-colors ${isActive ? 'active bg-qc-bg text-qc-fg font-medium' : 'text-qc-muted hover:text-qc-subtle hover:bg-qc-hover/50'}`}
 					>
 						<button
 							onclick={() => selectTab(tab.id)}
@@ -135,11 +136,12 @@
 							<span class="truncate max-w-40">{tab.title}</span>
 						</button>
 						<button
+							type="button"
 							onclick={(e) => {
 								e.stopPropagation();
 								onCloseTab(tab.id);
 							}}
-							class="w-3.5 h-3.5 opacity-50 hover:opacity-100"
+							class={`w-4 h-4 rounded inline-flex items-center justify-center hover:bg-qc-hover shrink-0 transition-opacity ${isActive ? 'opacity-60 hover:opacity-100' : 'opacity-0 group-hover:opacity-70 hover:!opacity-100'}`}
 							aria-label={`Close ${tab.title}`}
 						>
 							<X size={12} />

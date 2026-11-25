@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Search, Table2, Columns2, KeyRound, ChevronRight, X, Braces, Hash, Play, Eye, Layers, Zap } from '$lib/icons';
+	import { Search, Table2, KeyRound, X, Braces, Hash, Play, Eye, Layers, Zap, Type } from '$lib/icons';
 	import type { DatabaseExplorer, DatabaseRoutine, DatabaseSequence } from '$lib/rpc';
 	import { routineSignature, schemaRoutines, schemaSequences, tableIndexes, tableTriggers } from '$lib/utils/schema-objects';
 
@@ -31,17 +31,12 @@
 
 	let inputEl: HTMLInputElement | null = $state(null);
 	let selectedIndex = $state(0);
-	// svelte-ignore state_referenced_locally
-	let internalQuery = $state(searchQuery);
-
-	$effect(() => {
-		internalQuery = searchQuery;
-	});
+	let internalQuery = $state('');
 
 	$effect(() => {
 		if (open) {
+			internalQuery = searchQuery;
 			selectedIndex = 0;
-			// focus next tick
 			setTimeout(() => inputEl?.focus(), 30);
 		}
 	});
@@ -149,6 +144,18 @@
 		}
 	}
 
+	let backdropPointerDown = false;
+
+	function handleBackdropPointerDown(e: PointerEvent) {
+		backdropPointerDown = e.target === e.currentTarget;
+	}
+
+	function handleBackdropClick(e: MouseEvent) {
+		const startedOnBackdrop = backdropPointerDown;
+		backdropPointerDown = false;
+		if (startedOnBackdrop && e.target === e.currentTarget) onClose();
+	}
+
 	function handleBackdropKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') onClose();
 	}
@@ -158,128 +165,135 @@
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
-		class="fixed inset-0 z-[80] flex items-start justify-center pt-[18vh] p-4 bg-black/40 backdrop-blur-[2px]"
-		onclick={onClose}
+		class="fixed inset-0 z-[80] flex items-start justify-center pt-[16vh] p-4 bg-black/45 backdrop-blur-[2px]"
+		onpointerdown={handleBackdropPointerDown}
+		onclick={handleBackdropClick}
 		onkeydown={handleBackdropKeydown}
 		role="presentation"
 	>
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
-			class="w-[640px] max-w-[95vw] bg-qc-elevated rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.35)] border border-qc-border overflow-hidden flex flex-col"
-			onclick={(e) => e.stopPropagation()}
+			class="w-[560px] max-w-[94vw] bg-qc-elevated rounded-xl shadow-[0_24px_64px_rgba(0,0,0,0.45)] border border-qc-border overflow-hidden flex flex-col"
 		>
-			<div class="flex items-center gap-3 px-4 h-[56px] border-b border-qc-border-subtle shrink-0">
-				<Search size={18} class="text-qc-muted shrink-0" />
+			<div class="flex items-center gap-2.5 px-4 h-12 border-b border-qc-border-subtle shrink-0">
+				<Search size={16} class="text-qc-muted shrink-0" />
 				<input
 					bind:this={inputEl}
 					type="text"
 					value={internalQuery}
 					oninput={handleInput}
 					onkeydown={handleKeydown}
-					placeholder="Search tables, views, functions..."
-					class="flex-1 h-full bg-transparent outline-none text-[15px] placeholder-qc-muted text-qc-fg"
+					placeholder="Search tables, views, columns, routines…"
+					class="flex-1 h-full bg-transparent outline-none text-[14px] placeholder:text-qc-muted text-qc-fg"
 					autocomplete="off"
 					spellcheck={false}
 				/>
 				{#if internalQuery}
 					<button
+						type="button"
 						onclick={() => {
 							internalQuery = '';
 							onSearchChange('');
 							inputEl?.focus();
 						}}
-						class="w-7 h-7 rounded-full bg-qc-hover hover:bg-qc-border text-qc-muted flex items-center justify-center"
+						class="w-6 h-6 rounded hover:bg-qc-hover text-qc-muted hover:text-qc-fg flex items-center justify-center shrink-0"
 						aria-label="Clear"
 					>
-						<X size={14} />
+						<X size={13} />
 					</button>
 				{/if}
-				<div class="hidden sm:flex items-center gap-1 ml-2">
-					<kbd class="px-1.5 py-0.5 bg-qc-hover border border-qc-border rounded text-[10px] font-medium text-qc-subtle">ESC</kbd>
-				</div>
+				<span class="hidden sm:inline text-[11px] font-mono text-qc-muted/70 shrink-0">esc</span>
 			</div>
 
-			<div class="max-h-[50vh] overflow-y-auto overscroll-contain p-2">
+			<div class="max-h-[48vh] overflow-y-auto overscroll-contain p-1.5">
 				{#if !explorer}
-					<div class="px-3 py-8 text-center text-sm text-qc-muted">Connect to a database to search.</div>
+					<div class="px-3 py-8 text-center text-[13px] text-qc-muted">Connect to a database to search.</div>
 				{:else if results.length === 0}
 					<div class="px-3 py-8 text-center">
-						<div class="text-sm text-qc-fg">No results for "{internalQuery}"</div>
+						<div class="text-[13px] text-qc-fg">No results for "{internalQuery}"</div>
 						<div class="text-xs text-qc-muted mt-1">Try a different term</div>
 					</div>
 				{:else}
-					<div class="space-y-1">
+					<div class="space-y-0.5">
 						{#each results as r, i}
 							<button
+								type="button"
 								onclick={() => selectResult(r)}
 								onmouseenter={() => (selectedIndex = i)}
-								class={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left text-sm transition
-									${i === selectedIndex ? 'bg-qc-sidebar-active text-qc-fg' : 'text-qc-fg hover:bg-qc-hover'}`}
+								class={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left text-[13px] transition-colors ${
+									i === selectedIndex
+										? 'bg-qc-sidebar-active text-qc-fg'
+										: 'text-qc-fg hover:bg-qc-hover/60'
+								}`}
 							>
-								<div class={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 ${i === selectedIndex ? 'bg-qc-hover text-qc-fg' : r.kind === 'schema' ? 'bg-amber-500/15 text-amber-400' : r.kind === 'table' && r.tableKind === 'view' ? 'bg-sky-500/15 text-sky-400' : r.kind === 'table' ? 'bg-emerald-500/15 text-emerald-400' : r.kind === 'routine' ? 'bg-violet-500/15 text-violet-400' : r.kind === 'sequence' ? 'bg-amber-500/15 text-amber-400' : r.kind === 'index' ? 'bg-qc-hover text-qc-subtle' : r.kind === 'trigger' ? 'bg-orange-500/15 text-orange-400' : 'bg-qc-hover text-qc-muted'}`}>
+								<span
+									class={`shrink-0 ${
+										i === selectedIndex ? 'text-qc-fg' : 'text-qc-muted'
+									}`}
+								>
 									{#if r.kind === 'schema'}
-										<Table2 size={14} />
+										<Layers size={15} />
 									{:else if r.kind === 'table' && r.tableKind === 'view'}
-										<Eye size={14} />
+										<Eye size={15} />
 									{:else if r.kind === 'table'}
-										<Columns2 size={14} />
+										<Table2 size={15} />
 									{:else if r.kind === 'routine'}
 										{#if r.routine.kind === 'procedure'}
-											<Play size={14} />
+											<Play size={15} />
 										{:else}
-											<Braces size={14} />
+											<Braces size={15} />
 										{/if}
 									{:else if r.kind === 'sequence'}
-										<Hash size={14} />
+										<Hash size={15} />
 									{:else if r.kind === 'index'}
-										<Layers size={14} />
+										<KeyRound size={15} />
 									{:else if r.kind === 'trigger'}
-										<Zap size={14} />
+										<Zap size={15} />
 									{:else if r.column.endsWith('_id')}
-										<KeyRound size={13} />
+										<KeyRound size={14} />
 									{:else}
-										<span class="text-[10px] font-bold">T</span>
+										<Type size={14} />
 									{/if}
-								</div>
-								<div class="flex-1 min-w-0">
-									{#if r.kind === 'schema'}
-										<div class="font-medium truncate">{r.schema}</div>
-										<div class={`text-xs truncate ${i === selectedIndex ? 'text-qc-muted' : 'text-qc-muted'}`}>Schema • {explorer.schemas.find(s=>s.name===r.schema)?.tables.length ?? 0} tables</div>
-									{:else if r.kind === 'table'}
-										<div class="font-medium truncate">{r.table}</div>
-										<div class={`text-xs truncate text-qc-muted`}>{r.schema} • {r.tableKind === 'view' ? 'View' : 'Table'}</div>
-									{:else if r.kind === 'routine'}
-										<div class="font-medium truncate">{routineSignature(r.routine)}</div>
-										<div class={`text-xs truncate text-qc-muted`}>{r.routine.schema} • {r.routine.kind === 'procedure' ? 'Procedure' : 'Function'}</div>
-									{:else if r.kind === 'sequence'}
-										<div class="font-medium truncate">{r.sequence.name}</div>
-										<div class={`text-xs truncate text-qc-muted`}>{r.sequence.schema} • Sequence</div>
-									{:else if r.kind === 'index'}
-										<div class="font-medium truncate">{r.name}</div>
-										<div class={`text-xs truncate text-qc-muted`}>{r.schema}.{r.table} • Index</div>
-									{:else if r.kind === 'trigger'}
-										<div class="font-medium truncate">{r.name}</div>
-										<div class={`text-xs truncate text-qc-muted`}>{r.schema}.{r.table} • Trigger</div>
-									{:else}
-										<div class="font-medium truncate">{r.column}</div>
-										<div class={`text-xs truncate text-qc-muted`}>{r.schema}.{r.table} • Column</div>
-									{/if}
-								</div>
-								<ChevronRight size={14} class="text-qc-muted" />
+								</span>
+
+								{#if r.kind === 'schema'}
+									<span class="font-medium truncate flex-1">{r.schema}</span>
+									<span class="text-[11px] text-qc-muted shrink-0">
+										Schema · {explorer.schemas.find((s) => s.name === r.schema)?.tables.length ?? 0} tables
+									</span>
+								{:else if r.kind === 'table'}
+									<span class="font-medium truncate flex-1">{r.table}</span>
+									<span class="text-[11px] text-qc-muted shrink-0">
+										{r.schema} · {r.tableKind === 'view' ? 'View' : 'Table'}
+									</span>
+								{:else if r.kind === 'routine'}
+									<span class="font-medium truncate flex-1">{routineSignature(r.routine)}</span>
+									<span class="text-[11px] text-qc-muted shrink-0">
+										{r.routine.schema} · {r.routine.kind === 'procedure' ? 'Procedure' : 'Function'}
+									</span>
+								{:else if r.kind === 'sequence'}
+									<span class="font-medium truncate flex-1">{r.sequence.name}</span>
+									<span class="text-[11px] text-qc-muted shrink-0">{r.sequence.schema} · Sequence</span>
+								{:else if r.kind === 'index'}
+									<span class="font-medium truncate flex-1">{r.name}</span>
+									<span class="text-[11px] text-qc-muted shrink-0">{r.schema}.{r.table} · Index</span>
+								{:else if r.kind === 'trigger'}
+									<span class="font-medium truncate flex-1">{r.name}</span>
+									<span class="text-[11px] text-qc-muted shrink-0">{r.schema}.{r.table} · Trigger</span>
+								{:else}
+									<span class="font-medium truncate flex-1">{r.column}</span>
+									<span class="text-[11px] text-qc-muted shrink-0">{r.schema}.{r.table} · Column</span>
+								{/if}
 							</button>
 						{/each}
 					</div>
 				{/if}
 			</div>
 
-			<div class="flex items-center justify-between px-3 py-2.5 border-t border-qc-border-subtle bg-qc-panel text-[11px] text-qc-muted">
-				<div class="flex items-center gap-3">
-					<span class="hidden sm:inline-flex items-center gap-1"><kbd class="px-1 py-0.5 bg-qc-elevated border border-qc-border rounded text-[10px]">↑↓</kbd> Navigate</span>
-					<span class="inline-flex items-center gap-1"><kbd class="px-1 py-0.5 bg-qc-elevated border border-qc-border rounded text-[10px]">↵</kbd> Select</span>
-					<span class="hidden sm:inline-flex items-center gap-1"><kbd class="px-1 py-0.5 bg-qc-elevated border border-qc-border rounded text-[10px]">ESC</kbd> Close</span>
-				</div>
-				<span class="text-qc-muted">{results.length} results</span>
+			<div class="flex items-center justify-between px-3.5 py-2 border-t border-qc-border-subtle text-[11px] text-qc-muted/80">
+				<span class="hidden sm:inline font-mono">↑↓ navigate · ↵ open · esc close</span>
+				<span class="ml-auto tabular-nums">{results.length} {results.length === 1 ? 'result' : 'results'}</span>
 			</div>
 		</div>
 	</div>

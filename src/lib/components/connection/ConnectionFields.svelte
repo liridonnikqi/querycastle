@@ -2,28 +2,29 @@
 	import { FolderOpen } from '$lib/icons';
 	import { open } from '@tauri-apps/plugin-dialog';
 	import type { ConnectionInput } from '$lib/rpc';
+	import DatabaseIcon from '$lib/components/ui/DatabaseIcon.svelte';
 	import {
 		connectionStringPlaceholder,
 		generateConnectionString,
 		withParsedConnectionString,
 		withSqliteFile,
 	} from '$lib/utils/connection';
-	import { dialectCapabilities } from '$lib/utils/dialect';
+	import { dialectCapabilities, displayDatabaseName, engineDisplayName } from '$lib/utils/dialect';
+
+	export type ConnectionTab = 'general' | 'ssh' | 'url';
 
 	let {
+		tab = 'general',
 		form,
 		connectionString,
-		variant = 'dialog',
-		showString = true,
 		passwordStored = false,
 		nameInput = $bindable(null),
 		onFormChange,
 		onStringChange,
 	}: {
+		tab?: ConnectionTab;
 		form: ConnectionInput;
 		connectionString: string;
-		variant?: 'hub' | 'dialog';
-		showString?: boolean;
 		passwordStored?: boolean;
 		nameInput?: HTMLInputElement | null;
 		onFormChange: (next: ConnectionInput) => void;
@@ -31,20 +32,23 @@
 	} = $props();
 
 	const isSqlite = $derived(form.databaseType === 'sqlite');
-	const hub = $derived(variant === 'hub');
 	const passwordPlaceholder = $derived(
-		passwordStored ? 'Stored in Keychain (Leave blank to keep)' : undefined,
+		passwordStored ? 'Saved in keychain' : undefined,
 	);
-	const inputClass = $derived(
-		hub
-			? 'field-input w-full h-9 px-3 text-[13px] placeholder:text-qc-muted'
-			: 'ui-input h-8 w-full px-3 placeholder:text-qc-muted',
-	);
-	const labelClass = $derived(
-		hub
-			? 'text-[11px] font-medium text-qc-subtle mb-1.5'
-			: 'text-[10px] font-semibold uppercase tracking-wider text-qc-muted',
-	);
+	const inputClass =
+		'field-input w-full h-9 px-3 text-[13px] placeholder:text-qc-muted';
+	const labelClass = 'text-[11.5px] font-medium text-qc-subtle';
+
+	let sshAuth = $state<'password' | 'key'>('password');
+	let lastAuthInitKey = $state('');
+
+	$effect(() => {
+		const key = `${form.name}::${form.sshEnabled}`;
+		if (key !== lastAuthInitKey) {
+			lastAuthInitKey = key;
+			sshAuth = form.sshPrivateKeyPath?.trim() ? 'key' : 'password';
+		}
+	});
 
 	function commit(next: ConnectionInput) {
 		onFormChange(next);
@@ -58,6 +62,30 @@
 		const next: ConnectionInput = { ...form, [key]: value };
 		if (key === 'ssl' && value === false) next.sslInsecure = false;
 		commit(next);
+	}
+
+	function handlePortInput(
+		key: 'port' | 'sshPort',
+		event: Event & { currentTarget: HTMLInputElement },
+	) {
+		const digits = event.currentTarget.value.replace(/\D+/g, '');
+		event.currentTarget.value = digits;
+		const parsed = Number(digits);
+		if (parsed > 0 && parsed <= 65535) {
+			updateField(key, parsed);
+		}
+	}
+
+	function handlePortBlur(
+		key: 'port' | 'sshPort',
+		fallback: number,
+		event: FocusEvent & { currentTarget: HTMLInputElement },
+	) {
+		const parsed = Number(event.currentTarget.value);
+		if (!parsed || parsed <= 0 || parsed > 65535) {
+			updateField(key, fallback);
+			event.currentTarget.value = String(fallback);
+		}
 	}
 
 	async function chooseSqliteFile() {
@@ -91,327 +119,376 @@
 		const parsed = withParsedConnectionString(form, value);
 		if (parsed) onFormChange(parsed);
 	}
+
+	async function pasteClipboard() {
+		try {
+			const clip = await navigator.clipboard.readText();
+			if (clip) handleStringInput(clip.trim());
+		} catch {
+			// Ignore clipboard permission denials in restricted webviews.
+		}
+	}
+
+	const summaryTarget = $derived(
+		isSqlite
+			? displayDatabaseName(form.database, 'sqlite') || 'No file selected'
+			: `${form.host || 'localhost'}:${form.port || dialectCapabilities(form.databaseType).defaultPort}`,
+	);
 </script>
 
-<div
-	class={hub
-		? 'space-y-3.5'
-		: 'grid content-start grid-cols-1 gap-2.5 sm:grid-cols-2'}
->
-	<div
-		class={hub ? (isSqlite ? '' : 'grid grid-cols-2 gap-3') : 'sm:col-span-2'}
-	>
-		<label class={hub ? 'block' : 'flex flex-col gap-1 text-qc-subtle'}>
-			<span class={labelClass}>{hub ? 'Name' : 'Connection Name'}</span>
-			<input
-				bind:this={nameInput}
-				value={form.name}
-				oninput={(event) => updateField('name', event.currentTarget.value)}
-				class={inputClass}
-				placeholder={hub ? 'My database' : undefined}
-			/>
-		</label>
-		{#if hub && !isSqlite}
-			<div>
-				<div class={labelClass}>Host</div>
-				<input
-					value={form.host}
-					oninput={(event) => updateField('host', event.currentTarget.value)}
-					class={inputClass}
-					placeholder="localhost"
-				/>
-			</div>
-		{/if}
-	</div>
-
+{#if tab === 'general'}
 	{#if isSqlite}
-		<label
-			class={hub ? 'block' : 'sm:col-span-2 flex flex-col gap-1 text-qc-subtle'}
-		>
-			<span class={labelClass}>{hub ? 'Database file' : 'Database Path'}</span>
-			<div class="flex items-center gap-2">
+		<div class="space-y-3">
+			<label class="flex flex-col gap-1.5 min-w-0">
+				<span class={labelClass}>Connection name</span>
 				<input
-					value={form.database}
-					oninput={(event) =>
-						updateField('database', event.currentTarget.value)}
-					placeholder="C:/data/mydb.sqlite"
-					class={`${inputClass} ${hub ? 'font-mono' : ''}`}
+					bind:this={nameInput}
+					value={form.name}
+					oninput={(event) => updateField('name', event.currentTarget.value)}
+					class={inputClass}
+					placeholder="My SQLite database"
 				/>
-				<button
-					type="button"
-					onclick={chooseSqliteFile}
-					class={hub
-						? 'h-9 px-3 rounded-md border border-qc-border bg-qc-elevated text-qc-subtle text-[12px] inline-flex items-center gap-1.5 hover:bg-qc-hover shrink-0'
-						: 'inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-qc-border bg-qc-panel px-3 text-[12px] font-medium text-qc-subtle hover:bg-qc-hover hover:text-qc-fg'}
+			</label>
+
+			<label class="flex flex-col gap-1.5 min-w-0">
+				<span class={labelClass}>Database file</span>
+				<div class="flex items-center gap-2">
+					<input
+						value={form.database}
+						oninput={(event) => updateField('database', event.currentTarget.value)}
+						placeholder="C:/data/mydb.sqlite"
+						class={`${inputClass} font-mono`}
+					/>
+					<button
+						type="button"
+						onclick={chooseSqliteFile}
+						class="btn-secondary h-9 px-3 text-[12.5px] font-medium inline-flex items-center gap-1.5 shrink-0"
+					>
+						<FolderOpen size={14} />
+						Browse…
+					</button>
+				</div>
+			</label>
+
+			<div class="pt-3 border-t border-qc-border-subtle flex items-center justify-between gap-3">
+				<label
+					data-tip="Prevent write queries (safe for production)"
+					class="inline-flex items-center gap-2 text-[12px] text-qc-subtle select-none cursor-pointer"
 				>
-					<FolderOpen size={14} />
-					{hub ? 'Open' : 'Open File'}
-				</button>
+					<input
+						type="checkbox"
+						class="qc-form-check"
+						checked={form.readOnly ?? false}
+						onchange={(event) => updateField('readOnly', event.currentTarget.checked)}
+					/>
+					<span>Read-only</span>
+				</label>
+				<span class="text-[11px] text-qc-muted">Creates file if missing</span>
 			</div>
-		</label>
+		</div>
 	{:else}
-		{#if !hub}
-			<label class="sm:col-span-2 flex flex-col gap-1 text-qc-subtle">
-				<span class={labelClass}>Host & Port</span>
-				<div class="flex gap-2">
+		<div class="space-y-3">
+			<label class="flex flex-col gap-1.5 min-w-0">
+				<span class={labelClass}>Connection name</span>
+				<input
+					bind:this={nameInput}
+					value={form.name}
+					oninput={(event) => updateField('name', event.currentTarget.value)}
+					class={inputClass}
+					placeholder="Production DB"
+				/>
+			</label>
+
+			<div class="grid grid-cols-[1fr_7.5rem] gap-2.5">
+				<label class="flex flex-col gap-1.5 min-w-0">
+					<span class={labelClass}>Host</span>
 					<input
 						value={form.host}
 						oninput={(event) => updateField('host', event.currentTarget.value)}
 						class={inputClass}
 						placeholder="localhost"
 					/>
+				</label>
+				<label class="flex flex-col gap-1.5 min-w-0">
+					<span class={labelClass}>Port</span>
 					<input
-						type="number"
-						value={form.port}
-						oninput={(event) =>
-							updateField(
-								'port',
-								Number(event.currentTarget.value) ||
-									dialectCapabilities(form.databaseType).defaultPort,
-							)}
-						class="ui-input h-8 w-24 shrink-0 px-3"
-						data-tip="Port"
-					/>
-				</div>
-			</label>
-			<label class="sm:col-span-2 flex flex-col gap-1 text-qc-subtle">
-				<span class={labelClass}
-					>Database{form.databaseType === 'postgres' ? ' — Optional' : ''}</span
-				>
-				<input
-					value={form.database}
-					oninput={(event) =>
-						updateField('database', event.currentTarget.value)}
-					placeholder={form.databaseType === 'postgres'
-						? 'postgres (default)'
-						: form.databaseType === 'mysql'
-							? 'mysql (default)'
-							: undefined}
-					class={inputClass}
-				/>
-			</label>
-			<label class="flex flex-col gap-1 text-qc-subtle">
-				<span class={labelClass}>User</span>
-				<input
-					value={form.user}
-					oninput={(event) => updateField('user', event.currentTarget.value)}
-					class={inputClass}
-				/>
-			</label>
-			<label class="flex flex-col gap-1 text-qc-subtle">
-				<span class={labelClass}>Password</span>
-				<input
-					type="password"
-					value={form.password}
-					oninput={(event) =>
-						updateField('password', event.currentTarget.value)}
-					class={inputClass}
-					placeholder={passwordPlaceholder}
-					autocomplete="off"
-				/>
-				{#if passwordStored && !form.password}
-					<span class="text-[11px] text-qc-muted">Using the saved password</span
-					>
-				{/if}
-			</label>
-		{:else}
-			<div class="grid grid-cols-2 gap-3">
-				<div>
-					<div class={labelClass}>Port</div>
-					<input
+						type="text"
+						inputmode="numeric"
 						value={String(form.port)}
-						oninput={(event) =>
-							updateField(
+						oninput={(event) => handlePortInput('port', event)}
+						onblur={(event) =>
+							handlePortBlur(
 								'port',
-								Number(event.currentTarget.value) ||
-									dialectCapabilities(form.databaseType).defaultPort,
+								dialectCapabilities(form.databaseType).defaultPort,
+								event,
 							)}
-						class="{inputClass} font-mono"
+						class={`${inputClass} font-mono`}
 					/>
-				</div>
-				<div>
-					<div class={labelClass}>Database</div>
-					<input
-						value={form.database}
-						oninput={(event) =>
-							updateField('database', event.currentTarget.value)}
-						class={inputClass}
-					/>
-				</div>
+				</label>
 			</div>
-			<div class="grid grid-cols-2 gap-3">
-				<div>
-					<div class={labelClass}>User</div>
+
+			<div class="grid grid-cols-2 gap-2.5">
+				<label class="flex flex-col gap-1.5 min-w-0">
+					<span class={labelClass}>User</span>
 					<input
 						value={form.user}
 						oninput={(event) => updateField('user', event.currentTarget.value)}
 						class={inputClass}
 					/>
-				</div>
-				<div>
-					<div class={labelClass}>Password</div>
+				</label>
+				<label class="flex flex-col gap-1.5 min-w-0">
+					<span class={labelClass}>Password</span>
 					<input
 						type="password"
 						value={form.password}
-						oninput={(event) =>
-							updateField('password', event.currentTarget.value)}
+						oninput={(event) => updateField('password', event.currentTarget.value)}
 						class={inputClass}
 						placeholder={passwordPlaceholder}
 						autocomplete="off"
 					/>
-					{#if passwordStored && !form.password}
-						<div class="mt-1 text-[11px] text-qc-muted">
-							Using the saved password
-						</div>
-					{/if}
-				</div>
+				</label>
 			</div>
-		{/if}
-		<div class={hub ? 'space-y-2' : 'sm:col-span-2 flex flex-col gap-2'}>
-			<label class="flex items-center gap-2 text-[12px] text-qc-subtle">
+
+			<label class="flex flex-col gap-1.5 min-w-0">
+				<span class="flex items-baseline justify-between gap-2">
+					<span class={labelClass}>Database</span>
+					{#if form.databaseType === 'postgres'}
+						<span class="text-[11px] text-qc-muted">Optional</span>
+					{/if}
+				</span>
 				<input
-					type="checkbox"
-					class="qc-check"
-					checked={form.ssl}
-					onchange={(event) => updateField('ssl', event.currentTarget.checked)}
+					value={form.database}
+					oninput={(event) => updateField('database', event.currentTarget.value)}
+					placeholder={form.databaseType === 'postgres'
+						? 'postgres'
+						: form.databaseType === 'mysql'
+							? 'mysql'
+							: 'master'}
+					class={inputClass}
 				/>
-				Use SSL
 			</label>
-			<label class="flex items-center gap-2 text-[12px] text-qc-subtle">
-				<input
-					type="checkbox"
-					class="qc-check"
-					checked={form.sslInsecure ?? false}
-					disabled={!form.ssl}
-					onchange={(event) =>
-						updateField('sslInsecure', event.currentTarget.checked)}
-				/>
-				Allow insecure TLS (self-signed)
-			</label>
+
+			<div class="pt-3 border-t border-qc-border-subtle flex flex-wrap items-center justify-between gap-3">
+				<div class="flex items-center gap-4">
+					<label
+						class="inline-flex items-center gap-2 text-[12px] text-qc-subtle select-none cursor-pointer"
+					>
+						<input
+							type="checkbox"
+							class="qc-form-check"
+							checked={form.ssl}
+							onchange={(event) => updateField('ssl', event.currentTarget.checked)}
+						/>
+						<span>Use SSL</span>
+					</label>
+					<label
+						data-tip="Allow insecure or self-signed TLS certificates"
+						class={`inline-flex items-center gap-2 text-[12px] text-qc-subtle select-none ${
+							form.ssl ? 'cursor-pointer' : 'opacity-45 cursor-not-allowed'
+						}`}
+					>
+						<input
+							type="checkbox"
+							class="qc-form-check"
+							checked={form.sslInsecure ?? false}
+							disabled={!form.ssl}
+							onchange={(event) =>
+								updateField('sslInsecure', event.currentTarget.checked)}
+						/>
+						<span>Self-signed TLS</span>
+					</label>
+				</div>
+
+				<label
+					data-tip="Prevent write queries (safe for production)"
+					class="inline-flex items-center gap-2 text-[12px] text-qc-subtle select-none cursor-pointer"
+				>
+					<input
+						type="checkbox"
+						class="qc-form-check"
+						checked={form.readOnly ?? false}
+						onchange={(event) => updateField('readOnly', event.currentTarget.checked)}
+					/>
+					<span>Read-only</span>
+				</label>
+			</div>
 		</div>
 	{/if}
-
-	<div class={hub ? 'space-y-2' : 'sm:col-span-2 flex flex-col gap-2'}>
-		<label class="flex items-center gap-2 text-[12px] text-qc-subtle">
+{:else if tab === 'ssh' && !isSqlite}
+	<div class="space-y-3">
+		<label
+			class="pb-3 border-b border-qc-border-subtle flex items-center justify-between gap-3 cursor-pointer select-none"
+		>
+			<div class="min-w-0">
+				<div class="text-[12.5px] font-medium text-qc-fg">Enable SSH tunnel</div>
+				<div class="text-[11px] text-qc-muted mt-0.5">
+					Route database traffic through an SSH bastion host
+				</div>
+			</div>
 			<input
 				type="checkbox"
-				class="qc-check"
-				checked={form.readOnly ?? false}
-				onchange={(event) => updateField('readOnly', event.currentTarget.checked)}
+				class="qc-form-check"
+				checked={form.sshEnabled ?? false}
+				onchange={(event) => updateField('sshEnabled', event.currentTarget.checked)}
 			/>
-			Read-only (safe for production)
 		</label>
-		{#if !isSqlite}
-			<label class="flex items-center gap-2 text-[12px] text-qc-subtle">
-				<input
-					type="checkbox"
-					class="qc-check"
-					checked={form.sshEnabled ?? false}
-					onchange={(event) => updateField('sshEnabled', event.currentTarget.checked)}
-				/>
-				Connect through an SSH tunnel
-			</label>
-		{/if}
-	</div>
 
-	{#if !isSqlite && form.sshEnabled}
-		<div class={hub ? 'grid grid-cols-2 gap-3' : 'sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-2.5'}>
-			<div>
-				<div class={labelClass}>SSH host</div>
-				<input
-					value={form.sshHost ?? ''}
-					oninput={(event) => updateField('sshHost', event.currentTarget.value)}
-					class={inputClass}
-					placeholder="bastion.example.com"
-				/>
-			</div>
-			<div>
-				<div class={labelClass}>SSH port</div>
-				<input
-					type="number"
-					value={form.sshPort ?? 22}
-					oninput={(event) =>
-						updateField('sshPort', Number(event.currentTarget.value) || 22)}
-					class={inputClass}
-				/>
-			</div>
-			<div>
-				<div class={labelClass}>SSH user</div>
-				<input
-					value={form.sshUser ?? ''}
-					oninput={(event) => updateField('sshUser', event.currentTarget.value)}
-					class={inputClass}
-					placeholder="ubuntu"
-				/>
-			</div>
-			<div>
-				<div class={labelClass}>SSH password</div>
-				<input
-					type="password"
-					value={form.sshPassword ?? ''}
-					oninput={(event) => updateField('sshPassword', event.currentTarget.value)}
-					class={inputClass}
-					placeholder={passwordPlaceholder}
-					autocomplete="off"
-				/>
-			</div>
-			<div class={hub ? 'col-span-2' : 'sm:col-span-2'}>
-				<div class={labelClass}>Private key (optional)</div>
-				<div class="flex items-center gap-2">
+		<div
+			class={`space-y-3 pt-1 transition-opacity ${
+				form.sshEnabled ? '' : 'opacity-45 pointer-events-none'
+			}`}
+		>
+			<div class="grid grid-cols-[1fr_6.5rem] gap-2.5">
+				<label class="flex flex-col gap-1.5 min-w-0">
+					<span class={labelClass}>SSH host</span>
 					<input
-						value={form.sshPrivateKeyPath ?? ''}
-						oninput={(event) =>
-							updateField('sshPrivateKeyPath', event.currentTarget.value)}
-						class={`${inputClass} ${hub ? 'font-mono' : ''}`}
-						placeholder="C:/Users/me/.ssh/id_ed25519"
+						value={form.sshHost ?? ''}
+						oninput={(event) => updateField('sshHost', event.currentTarget.value)}
+						class={inputClass}
+						placeholder="bastion.example.com"
 					/>
-					<button
-						type="button"
-						onclick={chooseSshKey}
-						class="toolbar-icon shrink-0"
-						data-tip="Choose private key"
-						aria-label="Choose private key"
-					>
-						<FolderOpen size={14} />
-					</button>
+				</label>
+				<label class="flex flex-col gap-1.5 min-w-0">
+					<span class={labelClass}>SSH port</span>
+					<input
+						type="text"
+						inputmode="numeric"
+						value={String(form.sshPort ?? 22)}
+						oninput={(event) => handlePortInput('sshPort', event)}
+						onblur={(event) => handlePortBlur('sshPort', 22, event)}
+						class={`${inputClass} font-mono`}
+					/>
+				</label>
+			</div>
+
+			<div class="grid grid-cols-2 gap-2.5 items-end">
+				<label class="flex flex-col gap-1.5 min-w-0">
+					<span class={labelClass}>SSH user</span>
+					<input
+						value={form.sshUser ?? ''}
+						oninput={(event) => updateField('sshUser', event.currentTarget.value)}
+						class={inputClass}
+						placeholder="ubuntu"
+					/>
+				</label>
+				<div class="flex flex-col gap-1.5 min-w-0">
+					<span class={labelClass}>Authentication</span>
+					<div class="qc-segmented w-full grid grid-cols-2 h-9">
+						<button
+							type="button"
+							class={`qc-seg-btn justify-center h-[30px] ${sshAuth === 'password' ? 'is-on' : ''}`}
+							onclick={() => (sshAuth = 'password')}
+						>
+							Password
+						</button>
+						<button
+							type="button"
+							class={`qc-seg-btn justify-center h-[30px] ${sshAuth === 'key' ? 'is-on' : ''}`}
+							onclick={() => (sshAuth = 'key')}
+						>
+							Private Key
+						</button>
+					</div>
 				</div>
 			</div>
-			<div class={hub ? 'col-span-2' : 'sm:col-span-2'}>
-				<div class={labelClass}>Key passphrase</div>
-				<input
-					type="password"
-					value={form.sshKeyPassphrase ?? ''}
-					oninput={(event) =>
-						updateField('sshKeyPassphrase', event.currentTarget.value)}
-					class={inputClass}
-					placeholder={passwordPlaceholder}
-					autocomplete="off"
-				/>
-			</div>
-		</div>
-	{/if}
 
-	{#if showString}
-		<div class={hub ? '' : 'sm:col-span-2 mt-2 pt-1'}>
-			{#if !hub}
-				<div class="relative py-2">
-					<div class="absolute inset-0 flex items-center" aria-hidden="true">
-						<div class="w-full border-t border-qc-border"></div>
-					</div>
-					<div class="relative flex justify-center">
-						<span
-							class="bg-qc-elevated px-2 text-[10px] font-semibold uppercase tracking-wider text-qc-muted"
-							>Or paste a connection string to auto-fill</span
-						>
-					</div>
+			{#if sshAuth === 'password'}
+				<label class="flex flex-col gap-1.5 min-w-0">
+					<span class={labelClass}>SSH password</span>
+					<input
+						type="password"
+						value={form.sshPassword ?? ''}
+						oninput={(event) => updateField('sshPassword', event.currentTarget.value)}
+						class={inputClass}
+						placeholder={passwordPlaceholder}
+						autocomplete="off"
+					/>
+				</label>
+			{:else}
+				<div class="grid grid-cols-[1.4fr_1fr] gap-2.5">
+					<label class="flex flex-col gap-1.5 min-w-0">
+						<span class={labelClass}>Private key</span>
+						<div class="flex items-center gap-1.5">
+							<input
+								value={form.sshPrivateKeyPath ?? ''}
+								oninput={(event) =>
+									updateField('sshPrivateKeyPath', event.currentTarget.value)}
+								class={`${inputClass} font-mono`}
+								placeholder="~/.ssh/id_ed25519"
+							/>
+							<button
+								type="button"
+								onclick={chooseSshKey}
+								aria-label="Browse private key"
+								data-tip="Browse private key"
+								class="btn-secondary w-9 h-9 inline-flex items-center justify-center shrink-0"
+							>
+								<FolderOpen size={14} />
+							</button>
+						</div>
+					</label>
+					<label class="flex flex-col gap-1.5 min-w-0">
+						<span class={labelClass}>Passphrase</span>
+						<input
+							type="password"
+							value={form.sshKeyPassphrase ?? ''}
+							oninput={(event) =>
+								updateField('sshKeyPassphrase', event.currentTarget.value)}
+							class={inputClass}
+							placeholder={passwordPlaceholder}
+							autocomplete="off"
+						/>
+					</label>
 				</div>
 			{/if}
-			<input
+		</div>
+	</div>
+{:else}
+	<div class="space-y-3">
+		<div>
+			<div class="flex items-center justify-between mb-1.5">
+				<label class={labelClass} for="modal-connection-url">
+					Connection URL
+				</label>
+				<button
+					type="button"
+					onclick={pasteClipboard}
+					class="btn-secondary h-7 px-2.5 text-[11.5px] font-medium"
+				>
+					Paste clipboard
+				</button>
+			</div>
+			<textarea
+				id="modal-connection-url"
+				rows={3}
 				value={connectionString}
 				oninput={(event) => handleStringInput(event.currentTarget.value)}
 				placeholder={connectionStringPlaceholder(form.databaseType)}
-				class={hub ? `${inputClass} font-mono mt-2` : `${inputClass} mt-1`}
-			/>
+				class="field-input w-full p-2.5 text-[12.5px] font-mono leading-relaxed placeholder:text-qc-muted resize-none"
+			></textarea>
+			<p class="mt-1.5 text-[11px] text-qc-muted">
+				Supports postgres://, mysql://, sqlserver://, sqlite://, and ADO.NET strings. Changes sync live with General fields.
+			</p>
 		</div>
-	{/if}
-</div>
+
+		<div
+			class="rounded-lg border border-qc-border-subtle bg-qc-panel px-3 py-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px]"
+		>
+			<span class="inline-flex items-center gap-1.5 font-medium text-qc-fg">
+				<DatabaseIcon
+					type={form.databaseType}
+					size={13}
+					tone={isSqlite ? 'ink' : 'brand'}
+				/>
+				{engineDisplayName(form.databaseType)}
+			</span>
+			<span class="text-qc-muted font-mono truncate max-w-[200px]">{summaryTarget}</span>
+			{#if !isSqlite && form.database}
+				<span class="text-qc-subtle font-mono">db: {form.database}</span>
+			{/if}
+			{#if !isSqlite && form.user}
+				<span class="text-qc-muted font-mono">user: {form.user}</span>
+			{/if}
+		</div>
+	</div>
+{/if}
